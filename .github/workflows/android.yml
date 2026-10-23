@@ -11,6 +11,8 @@ on:
     # feature branches build + test; only main and tags publish a release
     branches: [main, 'arena/**']
     tags: ['v*']
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: write
@@ -24,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
@@ -57,6 +60,31 @@ jobs:
         run: |
           set -o pipefail
           npm run test:ci 2>&1 | tee ci-test.log
+
+      - name: Browser smoke test (real headless Chrome)
+        run: |
+          npm i --no-save puppeteer@25 >/dev/null 2>&1 || true
+          node tests/browser.mjs --seconds 8 --out ci/screenshots 2>&1 | tee browser-test.log
+
+      - name: Upload screenshots + browser report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-screenshots
+          path: |
+            ci/screenshots
+            ci/browser-report.md
+            browser-test.log
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Comment browser results on the pull request
+        if: always() && github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body-file ci/browser-report.md
 
       - name: Build APK
         run: |

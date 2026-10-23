@@ -2,7 +2,7 @@
   "name": "imperial-crown-3d",
   "private": true,
   "version": "2.0.0",
-  "description": "Imperial Crown 3D — a hand-built, mobile-first real-time strategy engine for Android (Realme 9i tuned).",
+  "description": "Imperial Crown 3D \u2014 a hand-built, mobile-first real-time strategy engine for Android (Realme 9i tuned).",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
@@ -17,7 +17,8 @@
     "test:app": "node tests/app.test.mjs",
     "test:dist": "node tests/dist.test.mjs",
     "balance": "node tests/balance.test.mjs --full",
-    "apk": "bash scripts/build-apk.sh"
+    "apk": "bash scripts/build-apk.sh",
+    "test:browser": "node tests/browser.mjs"
   },
   "devDependencies": {
     "@shaderfrog/glsl-parser": "^7.0.1",
