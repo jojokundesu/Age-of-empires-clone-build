@@ -138,7 +138,61 @@ try {
     };
   });
 
+  /* The menu only appears after the boot screen fades, and this used to
+     photograph the boot screen instead. Wait for the real menu, then assert it
+     is actually usable: mode cards, civ chips, an enabled start button. */
+  await page.waitForFunction(
+    () => {
+      const m = document.getElementById('menuScreen');
+      const b = document.getElementById('bootScreen');
+      return m && !m.classList.contains('hidden') && (!b || b.classList.contains('hidden'));
+    },
+    { timeout: 120000, polling: 200 }
+  );
+  await new Promise((r) => setTimeout(r, 600));
+  results.menu = await page.evaluate(() => {
+    const vis = (el) => !!el && el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0;
+    const rect = document.getElementById('btnStart').getBoundingClientRect();
+    const cards = [...document.querySelectorAll('.modeCard')];
+    const inFrame = (r) => r.top >= -1 && r.bottom <= window.innerHeight + 1;
+    return {
+      modes: cards.length,
+      civs: document.getElementById('civGrid').children.length,
+      startVisible: vis(document.getElementById('btnStart')) && inFrame(rect),
+      menuScrolls: (() => {
+        const left = document.querySelector('.menuLeft');
+        return !!left && left.scrollHeight > left.clientHeight;
+      })(),
+      startBottom: Math.round(rect.bottom),
+      viewport: window.innerHeight,
+      startDisabled: document.getElementById('btnStart').disabled,
+      artPainted: document.getElementById('artTitle').textContent.trim().length > 0
+    };
+  });
   results.menuShot = await shot('01-menu');
+  expect(results.menu.modes >= 4, `menu shows ${results.menu.modes} game modes`);
+  expect(results.menu.civs >= 4, `menu shows ${results.menu.civs} civilisations`);
+  expect(results.menu.startVisible,
+    `the start button is out of frame (bottom ${results.menu.startBottom} of ${results.menu.viewport}px)`);
+  expect(!results.menu.startDisabled, 'the start button is disabled');
+  expect(results.menu.artPainted, 'the menu art panel is empty');
+
+  /* The start button has to stay reachable on short landscape screens: a
+     900x414 phone, a 720x360 and a 640x360 handset. */
+  results.menuSizes = [];
+  for (const [w, h] of [[720, 360], [640, 360], [1024, 600]]) {
+    await page.setViewport({ width: w, height: h, deviceScaleFactor: DPR, isMobile: true, hasTouch: true });
+    await new Promise((r) => setTimeout(r, 220));
+    const fit = await page.evaluate(() => {
+      const r = document.getElementById('btnStart').getBoundingClientRect();
+      return { bottom: Math.round(r.bottom), vh: window.innerHeight, top: Math.round(r.top) };
+    });
+    results.menuSizes.push(`${w}x${h}:${fit.bottom}/${fit.vh}`);
+    expect(fit.bottom <= fit.vh + 1 && fit.top >= -1,
+      `the start button is out of frame at ${w}x${h} (${fit.bottom} of ${fit.vh}px)`);
+  }
+  await page.setViewport({ width: 900, height: 414, deviceScaleFactor: DPR, isMobile: true, hasTouch: true });
+  await new Promise((r) => setTimeout(r, 220));
 
   await page.click('#btnStart');
   await page.waitForFunction('window.__imperial.running === true', { timeout: 120000 });
@@ -328,6 +382,7 @@ const md = [
   `- Frame: **${fmt(f.fps)} fps** avg ${fmt(f.avgMs)} ms · p95 ${fmt(f.p95Ms)} ms · worst ${fmt(f.worstMs)} ms (${f.samples} samples)`,
   `- World: ${f.units} units, ${f.buildings} buildings, game time ${fmt(f.time, 0)} s`,
   `- UI: ${results.ui?.cards ?? '?'} command cards · glError ${results.afterUi?.glError ?? '?'}`,
+  `- Menu: ${results.menu?.modes ?? '?'} modes · ${results.menu?.civs ?? '?'} civs · start button ends at ${results.menu?.startBottom ?? '?'}px of ${results.menu?.viewport ?? '?'}px`,
   `- Day/night: noon luma ${fmt(results.daylight?.luma)} → night luma ${fmt(results.night?.luma)} (screenshots 05/06)`,
   `- Night sky: brightest sky pixel ${fmt(results.sky?.best.max, 0)} · ${results.sky?.best.stars ?? '?'} bright pixels · ${results.sky?.fires?.night ?? '?'} braziers (screenshot 07)`,
   `- Console errors: ${results.errors?.console.length ?? '?'} · page errors: ${results.errors?.page.length ?? '?'} · failed requests: ${results.errors?.requests.length ?? '?'}`,
