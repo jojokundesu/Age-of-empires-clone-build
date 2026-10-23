@@ -82,6 +82,12 @@ The night sky is its own piece of work rather than a darker blue:
 * **Braziers at every firelight.** The four `uTownLight` slots are now visible objects: a stone-and-iron brazier with glowing coals, one instanced draw call, placed at a fixed spot beside each chosen building's door. The ironwork stands there by day; only the flame and its additive halo switch on after dark.
 * **You can look up.** The camera pitch floor dropped from 0.42 to 0.22 rad and the rail gained tilt buttons (`T`/`G` on a keyboard), because before this no control could point the camera high enough to see any sky at all.
 
+Terrain pass, for both halves of the clock:
+
+* two octaves of procedural ground detail that fade out with distance — the meadow no longer reads as a flat green plane at RTS zoom, and it does not alias into confetti the way a second texture repeat did
+* a saturation lift and less blown-out daytime exposure (1.72 → 1.40) so grass keeps its colour after the tonemap
+* the fog-of-war rim is a long gradient instead of a spotlight edge around the town
+
 ## Controls (touch)
 
 | Gesture | Action |

@@ -144,8 +144,11 @@ vec3 applyFoW(vec3 color, vec3 worldPos){
   vec3 shown = mix(color, memory, clamp((1.0 - vis) * 1.35, 0.0, 0.55));
   // After dark, visibility matters more than tone: an unexplored-but-seen area
   // only dims to 40 %, while unseen ground still drops to a near-black 16 %.
-  float dark = smoothstep(0.015, 0.30, vis);
-  vec3 floorC = mix(vec3(0.16), vec3(0.16, 0.20, 0.30), uNight);
+  // A wide transition: the old 0.015..0.30 ramp drew a bright disc with a
+  // visible rim around the town. Unseen ground stays dark, but the rim is now a
+  // long gradient instead of a spotlight edge.
+  float dark = smoothstep(0.02, 0.62, vis);
+  vec3 floorC = mix(vec3(0.26), vec3(0.16, 0.20, 0.30), uNight);
   return shown * mix(floorC, vec3(1.0), dark);
 }
 `;
@@ -376,16 +379,33 @@ vec3 terrainSample(vec2 uv){
   col += cobble * we.x;
   col += snow * we.y;
   float sum = w.x + w.y + w.z + w.w + we.x + we.y;
-  return col / max(sum, 0.0001);
+  col /= max(sum, 0.0001);
+  /* High-frequency detail pass. At RTS distance one terrain texture repeat
+     spans several metres, so without this the meadow reads as a flat green
+     wash. It fades out with distance, which is both cheaper on the eye and a
+     free anti-aliasing trick. */
+  float fade = 1.0 - smoothstep(26.0, 90.0, vDist);
+  if (fade > 0.01) {
+    // procedural, not another texture repeat: a 0.6 m tile of grain aliases
+    // into confetti at this zoom, while two noise octaves stay smooth
+    float g = vnoise(vWorld.xz * 2.3) * 0.62 + vnoise(vWorld.xz * 7.3) * 0.38;
+    col *= mix(1.0, 0.90 + g * 0.20, 0.75 * fade);
+  }
+  return col;
 }
 
 void main(){
   vec2 uv = vWorld.xz * uLayerScale;
   vec3 albedo = srgbToLinear(terrainSample(uv));
-  // macro tint + micro breakup
+  // macro tint + micro breakup: a little extra contrast here is what separates
+  // "grass" from "a green plane" once the tonemap has flattened it
   float micro = texture(uClouds, vWorld.xz * 0.021).a;
-  albedo *= 0.92 + micro * 0.16;
+  float fine = texture(uClouds, vWorld.xz * 0.11).a;
+  albedo *= 0.84 + micro * 0.24 + fine * 0.10;
   albedo *= uDetail;
+  // saturation lift (keeps the meadow from reading as grey-green dust)
+  float lum = dot(albedo, vec3(0.299, 0.587, 0.114));
+  albedo = max(vec3(0.0), mix(vec3(lum), albedo, 1.18));
 
   vec3 N = normalize(vNormal);
   float ndl = max(dot(N, uSunDir), 0.0);
@@ -410,7 +430,7 @@ void main(){
   color = applyFoW(color, vWorld);
   // the terrain runs a hotter exposure than the models by day; after dark that
   // same curve turns night into a green-grey soup, so it comes down at night
-  fragColor = vec4(tonemap(color, mix(1.72, 1.06, uNight)), 1.0);
+  fragColor = vec4(tonemap(color, mix(1.40, 1.06, uNight)), 1.0);
 }
 `;
 
