@@ -72,21 +72,30 @@ jobs:
           (google-chrome --version || chromium --version || chromium-browser --version) 2>&1 | tee -a browser-test.log
           node tests/browser.mjs --seconds 8 --dpr 1.5 --out ci/screenshots 2>&1 | tee -a browser-test.log
 
-      # Everything that can go wrong with a headless WebGL run happens inside
-      # that step, so its log goes into the job summary where it can be read.
+      # The runner log is not always downloadable, so the interesting part of
+      # it is posted on the pull request (and into the job summary) instead.
       - name: Publish browser diagnostics
         if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           {
-            echo '### Browser step log (tail)'
+            echo '### Browser diagnostics'
+            echo
+            echo "step outcome: \`${{ steps.browser.outcome }}\`"
+            echo
             echo '```'
-            tail -n 120 browser-test.log 2>/dev/null || echo 'no log written'
+            tail -n 100 browser-test.log 2>/dev/null || echo 'no log written'
             echo '```'
             echo
-            echo '### Browser report'
-            cat ci/browser-report.md 2>/dev/null || echo 'no report written'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "browser step outcome: ${{ steps.browser.outcome }}"
+            cat ci/browser-report.md 2>/dev/null || echo '_no report written_'
+          } > ci/browser-diagnostics.md
+          cat ci/browser-diagnostics.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file ci/browser-diagnostics.md
+          fi
 
       # A browser run that produced no report must fail the job. Before this
       # the step "passed" on a 191-byte artifact and silently skipped every
@@ -110,13 +119,6 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      - name: Comment browser results on the pull request
-        if: always() && github.event_name == 'pull_request' && hashFiles('ci/browser-report.md') != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh pr comment "$PR_NUMBER" --body-file ci/browser-report.md
 
       - name: Build APK
         run: |
