@@ -1,0 +1,136 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish / update the GitHub release with this APK'
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android build-tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          ls "$ANDROID_HOME/build-tools"
+          echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0" >> "$GITHUB_ENV"
+          echo "PLATFORM=$ANDROID_HOME/platforms/android-34" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Unit + integration tests
+        run: |
+          set -o pipefail
+          npm run test:ci 2>&1 | tee ci-test.log
+
+      - name: Build APK
+        run: |
+          chmod +x scripts/build-apk.sh
+          ./scripts/build-apk.sh 2>&1 | tee apk-build.log
+
+      - name: Verify APK
+        run: |
+          APK=$(ls build/imperial-crown-*.apk | head -1)
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | head -12
+          cp "$APK" "imperial-crown.apk"
+          ls -lh imperial-crown.apk
+          sha256sum imperial-crown.apk | tee apk-sha256.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: imperial-crown-apk
+          path: |
+            imperial-crown.apk
+            apk-sha256.txt
+          retention-days: 90
+
+      - name: Publish release
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(node -p "require('./package.json').version")-mobile"
+          NOTES="Imperial Crown 3D — mobile build.
+
+          * Fully offline: the entire game ships inside the APK (procedural art, no downloads).
+          * Custom WebGL2 engine tuned for the Realme 9i / Adreno 610.
+          * Sideload with \`adb install imperial-crown.apk\` or tap the download on your phone.
+
+          Built from \`${GITHUB_SHA::7}\` on $(date -u +%Y-%m-%d)."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" imperial-crown.apk apk-sha256.txt --clobber
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" imperial-crown.apk apk-sha256.txt \
+              --title "Imperial Crown 3D — $TAG" --notes "$NOTES"
+          fi
+          gh release view "$TAG" --json assets,url -q '.url, .assets[].url'
+
+      - name: Publish browser build as a release asset
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(node -p "require('./package.json').version")-mobile"
+          (cd dist && zip -qr ../imperial-crown-web.zip .)
+          gh release upload "$TAG" imperial-crown-web.zip --clobber
+
+      - name: Collect logs into the repo (for offline debugging)
+        if: always()
+        run: |
+          mkdir -p ci/logs
+          {
+            echo "run: $GITHUB_RUN_ID  sha: $GITHUB_SHA  branch: $GITHUB_REF_NAME"
+            echo "date: $(date -u)"
+            echo "status: ${{ job.status }}"
+            echo
+            echo "=== tests ==="
+            tail -60 ci-test.log 2>/dev/null || echo "(no test log)"
+            echo
+            echo "=== apk ==="
+            tail -40 apk-build.log 2>/dev/null || echo "(no apk log)"
+            echo
+            cat apk-sha256.txt 2>/dev/null || true
+          } > ci/logs/last-build.txt
+          git config user.name  "ci-bot"
+          git config user.email "ci@users.noreply.github.com"
+          git add ci/logs/last-build.txt
+          git diff --cached --quiet || git commit -m "ci: build log for $GITHUB_SHA [skip ci]"
+          git push || echo "[ci-artifacts] push failed (read-only ref?)"
