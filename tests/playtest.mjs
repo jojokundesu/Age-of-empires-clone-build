@@ -695,7 +695,7 @@ try {
   const rows = checks.map((c) => `| ${c.ok ? '✅' : '❌'} | ${c.name} | ${c.detail || ''} | ${c.ms} ms |`).join('\n');
   const md = `### Play test
 
-${failed === 0 ? '**All play checks passed.**' : `**${failed} play check(s) failed.**`}
+**PLAYTEST ${failed === 0 ? 'PASSED' : 'FAILED'} — ${passed}/${checks.length} checks**
 
 | | check | result | time |
 |---|---|---|---|

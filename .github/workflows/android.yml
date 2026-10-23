@@ -108,6 +108,8 @@ jobs:
             echo
             cat ci/browser-report.md 2>/dev/null || echo '_no report written_'
             echo
+            cat ci/playtest-report.md 2>/dev/null || echo '_no play test report written_'
+            echo
             cat ci/soak-report.md 2>/dev/null || echo '_no soak report written_'
             echo
             echo '### Soak log'
@@ -119,6 +121,23 @@ jobs:
           if [ -n "$PR_NUMBER" ]; then
             gh pr comment "$PR_NUMBER" --body-file ci/browser-diagnostics.md
           fi
+
+      # The play test drives the real bundle like a player: tap, box drag,
+      # gather, build a house, queue a villager, earn and spend an age advance,
+      # night, the whole camera rail, the minimap, pause, then a barracks and a
+      # battle to the death -- 12 checks, plus the frame budget at the end.
+      - name: Play test (a whole session in Chrome)
+        id: playtest
+        continue-on-error: true
+        run: |
+          node tests/playtest.mjs --out ci/screenshots 2>&1 | tee -a playtest.log
+
+      - name: Check the play test passed
+        run: |
+          test -s ci/playtest-report.md || { echo "::error::ci/playtest-report.md missing"; exit 1; }
+          grep -qi "PLAYTEST PASSED" ci/playtest-report.md || {
+            echo "::error::the play test did not pass"; cat ci/playtest-report.md; exit 1; }
+          grep -c '✅' ci/playtest-report.md
 
       # A browser run that produced no report must fail the job. Before this
       # the step "passed" on a 191-byte artifact and silently skipped every
@@ -143,8 +162,10 @@ jobs:
           path: |
             ci/screenshots
             ci/browser-report.md
+            ci/playtest-report.md
             ci/soak-report.md
             browser-test.log
+            playtest.log
             soak.log
           retention-days: 30
           if-no-files-found: error
