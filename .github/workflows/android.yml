@@ -33,7 +33,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: actions/setup-java@v4
@@ -115,6 +115,7 @@ jobs:
 
       - name: Collect logs into the repo (for offline debugging)
         if: always()
+        continue-on-error: true
         run: |
           mkdir -p ci/logs
           {
