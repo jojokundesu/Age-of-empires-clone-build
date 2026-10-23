@@ -198,7 +198,13 @@ jobs:
             echo '```'
           } > apk-failure.md
           cat apk-failure.md >> "$GITHUB_STEP_SUMMARY"
+          # push events carry no PR number; find the open PR for this branch
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --json number -q '.[0].number' 2>/dev/null || true)
+          fi
           if [ -n "$PR_NUMBER" ]; then gh pr comment "$PR_NUMBER" --body-file apk-failure.md; fi
+          # annotations survive even when the log download is unreachable
+          tail -n 60 apk-build.log 2>/dev/null | sed 's/^/::error::/' || true
 
       - name: Verify APK
         run: |
