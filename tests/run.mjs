@@ -13,6 +13,7 @@ const SUITES = [
   ['sim', 'tests/sim.test.mjs'],
   ['combat', 'tests/combat.test.mjs'],
   ['renderer', 'tests/render.test.mjs'],
+  ['perf', 'tests/perf.test.mjs'],
   ['hud', 'tests/ui.test.mjs'],
   ['application', 'tests/app.test.mjs'],
   ['bundle', 'tests/dist.test.mjs', true]

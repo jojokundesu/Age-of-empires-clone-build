@@ -104,7 +104,8 @@ Measured headless on this repo: 0.23 ms average tick for a 600 s AI-vs-AI match,
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # static bundle in dist/
-npm test           # 6 suites: sim, combat, renderer, HUD, app, bundle
+npm test           # 11 suites: contract, geo, audio, shaders, sim, combat,
+                   # renderer, perf budgets, HUD, app, bundle
 npm run balance    # headless battle matrix (counter triangle)
 npm run apk        # needs JDK 17 + Android SDK build-tools
 ```
@@ -120,6 +121,11 @@ npm run apk        # needs JDK 17 + Android SDK build-tools
 | `tests/app.test.mjs` | boot → match → taps/drag/pinch → pause/save/end (jsdom) |
 | `tests/dist.test.mjs` | the minified production bundle boots and renders |
 | `tests/ai.test.mjs` | long AI-vs-AI soak; tick cost, no errors |
+| `tests/contract.test.mjs` | UI/input ↔ simulation API, HUD ids, state literals, data-attributes |
+| `tests/geo.test.mjs` | every primitive is wound outwards, normals are unit length, tri budget |
+| `tests/audio.test.mjs` | the WebAudio graph against a strict fake (wrong-node calls throw) |
+| `tests/shaders.test.mjs` | GLSL parses, versions/precision/interface/uniform rules |
+| `tests/perf.test.mjs` | hard CPU budgets: tick percentiles, frame prep, draw calls, heap growth |
 
 ## Repository layout
 
