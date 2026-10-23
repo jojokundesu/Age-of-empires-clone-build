@@ -107,6 +107,27 @@ fi
 "$BUILD_TOOLS/apksigner" verify --print-certs "$OUT/$NAME.apk" | head -4
 
 echo
+echo "== verify contents =="
+"$BUILD_TOOLS/aapt2" dump badging "$OUT/$NAME.apk" | grep -E "package:|launchable-activity|sdkVersion|targetSdkVersion" || true
+python3 - "$OUT/$NAME.apk" <<'PYVERIFY'
+import sys, zipfile
+apk = sys.argv[1]
+z = zipfile.ZipFile(apk)
+names = z.namelist()
+need = ['classes.dex', 'AndroidManifest.xml', 'resources.arsc',
+        'assets/www/index.html']
+missing = [n for n in need if n not in names]
+www = [n for n in names if n.startswith('assets/www/')]
+size = sum(i.file_size for i in z.infolist() if i.filename.startswith('assets/www/'))
+print(f"   entries: {len(names)}  web assets: {len(www)} files, {size/1024:.0f} kB raw")
+if missing:
+    sys.exit("MISSING from APK: " + ", ".join(missing))
+if len(www) < 3:
+    sys.exit("web bundle is not inside the APK")
+print("   APK contents OK")
+PYVERIFY
+
+echo
 echo "== done =="
 ls -lh "$OUT/$NAME.apk"
 echo "APK_PATH=$OUT/$NAME.apk"
