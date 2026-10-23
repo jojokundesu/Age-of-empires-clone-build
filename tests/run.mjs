@@ -1,6 +1,7 @@
 /* Runs the whole suite in order and prints a single verdict.
-   `node tests/run.mjs`          — everything that works offline
-   `node tests/run.mjs --ci`     — same, non-zero exit on failure
+   `node tests/run.mjs`            — everything that works offline
+   `node tests/run.mjs --ci`       — same, non-zero exit on failure
+   `node tests/run.mjs --browser`  — plus the Chromium play-test and soak-lite
    The APK build itself is exercised by GitHub Actions. */
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -12,6 +13,7 @@ const SUITES = [
   ['audio', 'tests/audio.test.mjs'],
   ['shaders', 'tests/shaders.test.mjs'],
   ['sim', 'tests/sim.test.mjs'],
+  ['survey', 'tests/survey.test.mjs'],
   ['combat', 'tests/combat.test.mjs'],
   ['daynight', 'tests/daynight.test.mjs'],
   ['renderer', 'tests/render.test.mjs'],
@@ -28,7 +30,7 @@ const results = [];
 function run(name, file, arg) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const args = arg ? [file, arg] : [file];
+    const args = Array.isArray(arg) ? [file, ...arg] : arg ? [file, arg] : [file];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -53,6 +55,22 @@ for (const [name, file, argOrOptional] of SUITES) {
   }
   if (!existsSync(file)) { console.log(`SKIP  ${name.padEnd(12)} (missing ${file})`); continue; }
   await run(name, file, arg);
+}
+
+/* ---- the suites that need a real browser ---------------------------------
+   Play-testing is not optional, but it needs Chromium, a built bundle and two
+   minutes of wall clock, so it is opt-in: `node tests/run.mjs --browser`.
+   These drive the actual game in an actual page -- taps, box drags, camera
+   buttons, the build menu, an age advance, a battle and the frame budget. */
+if (process.argv.includes('--browser')) {
+  const BROWSER_SUITES = [
+    ['browse', 'tests/browser.mjs', ['--seconds', '6', '--dpr', '1.5']],
+    ['playtest', 'tests/playtest.mjs', []]
+  ];
+  for (const [name, file, args] of BROWSER_SUITES) {
+    if (!existsSync(file)) { console.log(`SKIP  ${name.padEnd(12)} (missing ${file})`); continue; }
+    await run(name, file, args);
+  }
 }
 
 const failed = results.filter((r) => r.code !== 0);

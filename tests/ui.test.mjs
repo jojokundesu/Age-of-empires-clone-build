@@ -156,6 +156,29 @@ check('camera rail: rotate, zoom and tilt', () => {
   camera.desiredPitch = camera.pitch = 0.86;
 });
 
+check('the clock explains what the current phase is worth', () => {
+  const wt = document.getElementById('worldTime');
+  game.setTimeOfDay(12);
+  ui.update(0.2);
+  const day = wt.title;
+  const dl = game.daylight;
+  const wantGather = Math.round((0.86 + 0.24 * dl) * 100);
+  const wantMelee = Math.round((1 + 0.16 * (1 - dl)) * 100);
+  assert(day.includes(`Gathering ${wantGather}%`), 'no gathering figure by day: ' + JSON.stringify(day));
+  assert(day.includes(`Melee damage ${wantMelee}%`), 'no melee figure by day: ' + JSON.stringify(day));
+  assert(wantGather >= 109, 'noon is not the best gathering window: ' + wantGather);
+  game.setTimeOfDay(23);
+  ui.update(0.2);
+  const night = wt.title;
+  assert(/Night/.test(night), 'night is not named: ' + JSON.stringify(night));
+  assert(/Melee damage 116%/.test(night), 'night does not advertise the melee bonus: ' + JSON.stringify(night));
+  assert(/Gathering 86%/.test(night), 'night does not advertise the gathering penalty: ' + JSON.stringify(night));
+  const aria = wt.getAttribute('aria-label') || '';
+  assert(aria.includes('Melee damage') && !aria.includes('\n'), 'aria-label missing or not flattened');
+  game.setTimeOfDay(9);
+  ui.update(0.2);
+});
+
 check('resources render', () => {
   const food = document.getElementById('resFood').textContent;
   assert(food !== '0' || game.teams.get(1).res.food > 0, 'food not shown');
@@ -303,6 +326,85 @@ check('end screen', () => {
   assert(!document.getElementById('endScreen').classList.contains('hidden'), 'end hidden');
   assert(document.getElementById('endTitle').textContent.length > 3, 'no end title');
 });
+/* ---- command card regressions -------------------------------------------
+   The card is a grid of long-lived <button> nodes whose click handlers are
+   closures over a snapshot of the command list. Three bugs came out of that
+   arrangement: a stale closure that kept saying "not enough resources" after
+   the resources arrived, two stacked sets of cards after re-entering a match,
+   and a build menu that was overwritten by the selection on the next tick. */
+const cardLabels = () => [...document.querySelectorAll('#cmdGrid .cmdBtn')]
+  .filter((el) => el.style.display !== 'none')
+  .map((el) => el.querySelector('.lbl').textContent);
+const ageCard = () => [...document.querySelectorAll('#cmdGrid .cmdBtn')]
+  .find((el) => /^Age \d$/.test(el.querySelector('.lbl').textContent));
+
+check('the command card never stacks two sets of buttons', () => {
+  const tc = game.buildings.find((b) => b.team === 1 && b.def.ageAdvance);
+  game.setSelection([tc]);
+  ui.sig = '';
+  ui.refreshCommands(); ui.update(0.2);
+  const first = cardLabels();
+  assert(first.length > 0, 'no command cards for the town centre');
+  assert(new Set(first).size === first.length, 'duplicate cards: ' + first.join(','));
+  // the card reuses a pool of buttons, so hidden spares are expected -- but a
+  // hidden spare must never be on screen, and no label may appear twice
+  for (const el of document.querySelectorAll('#cmdGrid .cmdBtn')) {
+    if (el.style.display !== 'none') continue;
+    assert(!el.classList.contains('primary'), 'a hidden spare is still styled as active');
+  }
+  // quitting to the menu and starting again reuses the same DOM grid
+  ui.setGame(game);
+  const again = cardLabels();
+  assert(again.length === first.length, `grid grew from ${first.length} to ${again.length} on re-entry`);
+  assert(new Set(again).size === again.length, 'duplicate cards after re-entry: ' + again.join(','));
+});
+
+check('a card that becomes affordable rebuilds its click handler', () => {
+  const t = game.teams.get(1);
+  const stash = { food: t.res.food, wood: t.res.wood, gold: t.res.gold, stone: t.res.stone };
+  /* earlier checks clicked every button on every building, which may already
+     have an age in progress -- reset that so the assertion is about this click */
+  const age0 = t.age;
+  t.ageResearch = null;
+  t.age = Math.min(t.age, 2);
+  const tc = game.buildings.find((b) => b.team === 1 && b.def.ageAdvance);
+  t.res.food = 0; t.res.gold = 0;
+  game.setSelection([tc]);
+  ui.sig = '';
+  ui.refreshCommands(); ui.update(0.2);
+  const poor = ageCard();
+  assert(poor, 'no age card on the town centre');
+  assert(poor.classList.contains('poor'), 'an unaffordable age card is not marked poor');
+  poor.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert(!t.ageResearch, 'clicking an unaffordable age card started the research');
+  const said = document.getElementById('toastLayer').textContent || '';
+  assert(/Not enough resources/.test(said), 'the disabled card gave no reason: ' + JSON.stringify(said));
+  // the economy catches up while the card stays mounted: the same button must work
+  t.res.food = 5000; t.res.gold = 5000;
+  ui.refreshCommands(); ui.update(0.2);
+  const rich = ageCard();
+  assert(rich && !rich.classList.contains('poor'), 'the age card stayed poor after the resources arrived');
+  rich.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert(t.ageResearch, 'the affordable age card still swallowed its click');
+  t.ageResearch = null;
+  t.age = age0;
+  t.res.food = stash.food; t.res.wood = stash.wood; t.res.gold = stash.gold; t.res.stone = stash.stone;
+  ui.sig = '';
+  ui.refreshCommands();
+});
+
+check('the build menu stays open long enough to tap it', () => {
+  const v = game.units.find((u) => !u.dead && u.team === 1 && u.type === 'villager');
+  game.setSelection([v]);
+  ui.openBuildMenu([v]);
+  assert(cardLabels().includes('House'), 'build menu did not open: ' + cardLabels().join(','));
+  ui.update(0.25); ui.update(0.25);   // half a second of HUD ticks later
+  assert(cardLabels().includes('House'), 'the build menu closed itself: ' + cardLabels().join(','));
+  ui._adHocUntil = 0; ui.sig = '';
+  game.setSelection([v]);
+  ui.refreshCommands();
+});
+
 check('survives 1500 mixed frames', () => {
   for (let i = 0; i < 1500; i++) {
     game.update(1 / 60);

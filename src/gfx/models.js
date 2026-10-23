@@ -275,7 +275,7 @@ B('lumber_camp', () => {
   g.material(M.BARK).color(0.48, 0.36, 0.24);
   for (let i = 0; i < 6; i++) {
     const row = Math.floor(i / 3);
-    g.cyl(-1.1 + (i % 3) * 0.5, 0.18 + row * 0.34, 1.7, 0.18, 0.18, 1.5, 7, { rot: Math.PI / 2 });
+    g.cyl(-1.1 + (i % 3) * 0.5 - 0.75, 0.18 + row * 0.34, 1.7, 0.18, 0.18, 1.5, 7, { axis: 'x' });
   }
   // chopping block + axe
   g.material(M.WOOD).color(0.6, 0.46, 0.3);
@@ -374,8 +374,8 @@ B('stable', () => {
   g.gable(0, 2.2, d / 2 + 0.9, 4.6, 0.5, 1.8);
   // hay bales
   g.material(M.THATCH).color(0.9, 0.8, 0.48);
-  g.cyl(-2.4, 0.2, -1.2, 0.5, 0.5, 0.9, 8, { rot: Math.PI / 2 });
-  g.cyl(2.3, 0.2, -1.5, 0.5, 0.5, 0.9, 8, { rot: Math.PI / 2 });
+  g.cyl(-2.4, 0.5, -1.2, 0.5, 0.5, 0.9, 8, { axis: 'z' });
+  g.cyl(2.3, 0.5, -1.5, 0.5, 0.5, 0.9, 8, { axis: 'z' });
   g.color(1, 1, 1);
   return { geo: g, height: 4.4 };
 });
@@ -615,10 +615,10 @@ B('siege_workshop', () => {
   for (let i = 0; i < 6; i++) g.box(-1.1 + i * 0.45, 1.85, d / 2 + 0.02, 0.05, 2.9, 0.05);
   // timber stock
   g.material(M.BARK).color(0.5, 0.38, 0.26);
-  for (let i = 0; i < 4; i++) g.cyl(-w / 2 - 0.9, 0.22 + (i % 2) * 0.36, -1.2 + Math.floor(i / 2) * 0.5, 0.18, 0.18, 2.4, 6, { rot: 0 });
+  for (let i = 0; i < 4; i++) g.cyl(-w / 2 - 3.3, 0.22 + (i % 2) * 0.36, -1.2 + Math.floor(i / 2) * 0.5, 0.18, 0.18, 2.4, 6, { axis: 'x' });
   // wheels leaning
   g.material(M.WOOD).color(0.5, 0.38, 0.26);
-  g.cyl(w / 2 + 0.8, 0.85, 0.6, 0.85, 0.85, 0.16, 10, { rot: Math.PI / 2 });
+  g.cyl(w / 2 + 0.8, 0.85, 0.52, 0.85, 0.85, 0.16, 10, { axis: 'z' });
   return { geo: g, height: 4.9 };
 });
 
@@ -770,9 +770,9 @@ const bow = (g, dx, dy, dz) => {
 
 const shield = (g, dx, dy, dz, r = 0.3, col = [0.6, 0.25, 0.2]) => {
   g.material(M.WOOD).color(0.46, 0.34, 0.22);
-  g.cyl(dx, dy, dz, r, r, 0.07, 10, { rot: Math.PI / 2 });
+  g.cyl(dx, dy, dz - 0.035, r, r, 0.07, 10, { axis: 'z' });
   g.material(M.CLOTH).color(col);
-  g.cyl(dx, dy, dz + 0.05, r * 0.92, r * 0.92, 0.03, 10, { rot: Math.PI / 2 });
+  g.cyl(dx, dy, dz + 0.02, r * 0.92, r * 0.92, 0.03, 10, { axis: 'z' });
   g.material(M.METAL).color(0.7, 0.7, 0.72);
   g.sphere(dx, dy, dz + 0.09, 0.07, 5, 3);
 };
@@ -1071,9 +1071,9 @@ U('ram', () => {
   // ram head
   g.part_(PART.EXTRA, 0, 1.1, 0);
   g.material(M.BARK).color(0.42, 0.32, 0.22);
-  g.cyl(0, 1.0, 0.2, 0.3, 0.34, 3.6, 8, { rot: Math.PI / 2, capTop: false });
+  g.cyl(0, 1.0, 0.2, 0.3, 0.34, 3.6, 8, { axis: 'z', capTop: false });
   g.material(M.METAL).color(0.4, 0.4, 0.42);
-  g.cone(0, 1.0, 3.7, 0.36, 0.5, 7);
+  g.cone(0, 1.0, 3.8, 0.36, 0.5, 7, { axis: 'z' });
   // wheels
   for (const [part, sx, sz] of [[PART.LEG_L, -1.1, 1.2], [PART.LEG_L, -1.1, -1.2], [PART.LEG_R, 1.1, 1.2], [PART.LEG_R, 1.1, -1.2]]) {
     g.part_(part, sx, 0.55, sz);
@@ -1137,9 +1137,9 @@ U('bombard_cannon', () => {
   g.material(M.WOOD).color(0.48, 0.36, 0.24);
   g.box(0, 0.7, 0, 1.2, 0.4, 2.2);
   g.material(M.METAL).color(0.3, 0.3, 0.32);
-  g.cyl(0, 1.0, -0.2, 0.28, 0.42, 2.4, 8, { rot: Math.PI / 2, capTop: false });
+  g.cyl(0, 1.0, -0.2, 0.28, 0.42, 2.4, 8, { axis: 'z', capTop: false });
   g.material(M.METAL).color(0.22, 0.22, 0.24);
-  g.cyl(0, 1.0, 2.0, 0.34, 0.34, 0.2, 8, { rot: Math.PI / 2 });
+  g.cyl(0, 1.0, 2.0, 0.34, 0.34, 0.2, 8, { axis: 'z' });
   for (const [part, sx, sz] of [[PART.LEG_L, -0.75, 0.7], [PART.LEG_L, 0.75, 0.7], [PART.LEG_R, -0.75, -0.7], [PART.LEG_R, 0.75, -0.7]]) {
     g.part_(part, sx, 0.45, sz);
     g.material(M.WOOD).color(0.42, 0.32, 0.22);
@@ -1323,7 +1323,7 @@ const P = (name, fn) => { PROPS[name] = fn; };
 function pine(g, h = 5, r = 1.2, tiers = 3) {
   g.material(M.BARK).color(0.36, 0.28, 0.2);
   g.cyl(0, 0, 0, 0.12, 0.22, h * 0.55, 6, { capTop: false });
-  g.material(M.LEAF).color(0.24, 0.42, 0.26);
+  g.material(M.LEAF).color(0.26, 0.38, 0.23);
   for (let i = 0; i < tiers; i++) {
     const y = h * 0.3 + i * h * 0.22;
     g.cone(0, y, 0, r * (1 - i * 0.24), h * 0.42, 7);
@@ -1342,24 +1342,26 @@ function broadleaf(g, h = 4.6, r = 1.6, col = [0.3, 0.5, 0.26]) {
   g.color(1, 1, 1);
 }
 
-P('tree0', () => { const g = new Geo(); broadleaf(g, 5.2, 1.85, [0.28, 0.48, 0.25]); return { geo: g, height: 6.4 }; });
-P('tree1', () => { const g = new Geo(); broadleaf(g, 4.4, 1.6, [0.34, 0.46, 0.22]); return { geo: g, height: 5.6 }; });
+P('tree0', () => { const g = new Geo(); broadleaf(g, 5.2, 1.85, [0.30, 0.42, 0.21]); return { geo: g, height: 6.4 }; });
+P('tree1', () => { const g = new Geo(); broadleaf(g, 4.4, 1.6, [0.36, 0.43, 0.19]); return { geo: g, height: 5.6 }; });
 P('tree2', () => { const g = new Geo(); pine(g, 6.4, 1.5, 4); return { geo: g, height: 7.2 }; });
 P('tree3', () => { const g = new Geo(); pine(g, 5.4, 1.2, 3); return { geo: g, height: 6.2 }; });
 P('tree_lod', () => { const g = new Geo(); pine(g, 5.6, 1.3, 2); return { geo: g, height: 6.4 }; });
 P('bush', () => {
+  /* A low, flattish scrub of four uneven lobes. Three fat spheres in a row read
+     as a mossy boulder, which is what every bush in the valley looked like. */
   const g = new Geo();
-  g.material(M.LEAF).color(0.3, 0.46, 0.24);
-  g.sphere(0, 0.5, 0, 0.6, 7, 4);
-  g.sphere(0.45, 0.35, 0.2, 0.42, 6, 4);
-  g.material(M.STONE).color(0.4, 0.38, 0.34);
-  g.sphere(-0.3, 0.2, -0.3, 0.16, 5, 3);
+  g.material(M.LEAF).color(0.33, 0.42, 0.20);
+  g.sphere(0, 0.38, 0, 0.52, 7, 4);
+  g.sphere(0.40, 0.28, 0.16, 0.34, 6, 4);
+  g.sphere(-0.36, 0.30, -0.10, 0.30, 6, 3);
+  g.sphere(0.05, 0.26, -0.38, 0.26, 6, 3);
   g.color(1, 1, 1);
-  return { geo: g, height: 1.1 };
+  return { geo: g, height: 0.9 };
 });
 P('berry_bush', () => {
   const g = new Geo();
-  g.material(M.LEAF).color(0.28, 0.44, 0.24);
+  g.material(M.LEAF).color(0.30, 0.41, 0.21);
   g.sphere(0, 0.55, 0, 0.62, 7, 4);
   g.sphere(0.4, 0.42, 0.25, 0.4, 6, 4);
   g.material(M.CLOTH).color(0.75, 0.16, 0.22);
@@ -1431,9 +1433,9 @@ P('pebble', () => {
 P('log', () => {
   const g = new Geo();
   g.material(M.BARK).color(0.42, 0.32, 0.22);
-  g.cyl(0, 0.16, 0, 0.16, 0.18, 1.5, 6, { rot: Math.PI / 2 });
+  g.cyl(-0.75, 0.17, 0, 0.16, 0.18, 1.5, 6, { axis: 'x' });
   g.material(M.WOOD).color(0.6, 0.46, 0.3);
-  g.cyl(0, 0.16, 0.76, 0.16, 0.16, 0.02, 6, { rot: Math.PI / 2 });
+  g.cyl(0.75, 0.17, 0, 0.16, 0.16, 0.02, 6, { axis: 'x' });
   g.color(1, 1, 1);
   return { geo: g, height: 0.4 };
 });
@@ -1511,21 +1513,141 @@ P('brazier', () => {
   const g = new Geo();
   g.material(M.STONE).color(0.66, 0.64, 0.60);
   g.cyl(0, 0.05, 0, 0.30, 0.36, 0.10, 8);
-  g.material(M.IRON).color(0.30, 0.29, 0.28);
+  // the legs are thick enough to read as a tripod from 30 m, and warm enough
+  // in colour that daylight does not turn the brazier into a black post
+  g.material(M.IRON).color(0.52, 0.48, 0.43);
   for (let i = 0; i < 3; i++) {
     const a = (i / 3) * Math.PI * 2 + 0.4;
-    const sx = Math.sin(a) * 0.30, sz = Math.cos(a) * 0.30;
-    g.beam(sx, 0.09, sz, sx * 0.62, 1.20, sz * 0.62, 0.045);
+    const sx = Math.sin(a) * 0.34, sz = Math.cos(a) * 0.34;
+    g.beam(sx, 0.09, sz, sx * 0.58, 1.16, sz * 0.58, 0.075);
   }
-  g.material(M.IRON).color(0.38, 0.36, 0.34);
-  g.cyl(0, 1.30, 0, 0.20, 0.36, 0.30, 10);
-  g.material(M.IRON).color(0.46, 0.43, 0.40);
-  g.cyl(0, 1.45, 0, 0.38, 0.35, 0.06, 10);
-  g.material(M.GLOW).color(1.0, 0.52, 0.14);
-  g.sphere(0, 1.42, 0, 0.28, 8, 5);
-  g.material(M.GLOW).color(1.0, 0.74, 0.30);
-  g.sphere(0, 1.58, 0, 0.19, 7, 4);
+  // a brace ring between the legs: silhoutte, and it catches the sun
+  g.cyl(0, 0.68, 0, 0.30, 0.30, 0.05, 8);
+  g.material(M.IRON).color(0.44, 0.41, 0.37);
+  g.cyl(0, 1.26, 0, 0.24, 0.44, 0.34, 10);
+  g.material(M.IRON).color(0.58, 0.54, 0.48);
+  g.cyl(0, 1.44, 0, 0.48, 0.44, 0.07, 10);
+  g.material(M.GLOW).color(1.0, 0.44, 0.10);
+  g.sphere(0, 1.40, 0, 0.40, 8, 5);
+  g.material(M.GLOW).color(1.0, 0.66, 0.22);
+  g.sphere(0, 1.62, 0, 0.28, 7, 4);
+  g.material(M.GLOW).color(1.0, 0.86, 0.52);
+  g.sphere(0, 1.78, 0, 0.15, 6, 4);
   return { geo: g, height: 1.72 };
+});
+
+/* ------------------------------------------------------------------
+   VILLAGE CLUTTER
+   A town made only of buildings reads as a diorama. These are the things a
+   settlement accumulates: barrels, crates, a hay cart, stacked firewood, a
+   well with a bucket, fence runs and a drying rack. They are static decor, so
+   they stream in with the prop chunks and cost no draw calls of their own.
+   ------------------------------------------------------------------ */
+P('crate', () => {
+  const g = new Geo();
+  g.material(M.WOOD).color(0.66, 0.52, 0.35);
+  g.box(0, 0.26, 0, 0.62, 0.52, 0.62);
+  g.material(M.WOOD_DARK).color(0.36, 0.27, 0.18);
+  for (const s of [-1, 1]) {
+    g.box(s * 0.27, 0.26, 0, 0.07, 0.54, 0.66);
+    g.box(0, 0.26, s * 0.27, 0.66, 0.54, 0.07);
+  }
+  g.box(0, 0.53, 0, 0.68, 0.05, 0.68);
+  return { geo: g, height: 0.55 };
+});
+P('barrel', () => {
+  const g = new Geo();
+  g.material(M.WOOD).color(0.62, 0.45, 0.28);
+  g.cyl(0, 0.02, 0, 0.23, 0.19, 0.72, 10);
+  g.material(M.IRON).color(0.32, 0.30, 0.28);
+  for (const y of [0.14, 0.58]) g.cyl(0, y, 0, 0.245, 0.245, 0.055, 10);
+  g.material(M.WOOD_DARK).color(0.38, 0.28, 0.18);
+  g.cyl(0, 0.73, 0, 0.20, 0.20, 0.04, 10);
+  return { geo: g, height: 0.76 };
+});
+P('haystack', () => {
+  const g = new Geo();
+  g.material(M.THATCH).color(0.78, 0.66, 0.34);
+  g.cyl(0, 0, 0, 0.55, 0.72, 1.10, 10);
+  g.cone(0, 1.10, 0, 0.62, 0.62, 10);
+  g.material(M.WOOD_DARK).color(0.36, 0.28, 0.18);
+  g.beam(-0.2, 1.62, 0, 0.1, 2.0, 0.1, 0.05);
+  return { geo: g, height: 1.9 };
+});
+P('firewood', () => {
+  const g = new Geo();
+  // six split rounds, bark on the outside and pale sawn ends so the stack reads
+  // as cut timber instead of six brown tubes
+  for (let i = 0; i < 6; i++) {
+    const row = i < 3 ? 0 : 1;
+    const x = (i % 3) * 0.19 - 0.19;
+    const y = 0.11 + row * 0.19;
+    g.material(M.BARK).color(0.42, 0.32, 0.20);
+    g.cyl(x, y, 0, 0.09, 0.09, 0.62, 6, { axis: 'z' });
+    g.material(M.WOOD).color(0.80, 0.66, 0.44);
+    g.cyl(x, y, 0.62, 0.092, 0.092, 0.02, 6, { axis: 'z' });
+    g.cyl(x, y, -0.02, 0.092, 0.092, 0.02, 6, { axis: 'z' });
+    g.material(M.BARK).color(0.42, 0.32, 0.20);
+  }
+  g.color(1, 1, 1);
+  return { geo: g, height: 0.4 };
+});
+P('cart', () => {
+  const g = new Geo();
+  g.material(M.WOOD).color(0.68, 0.52, 0.34);
+  g.box(0, 0.58, 0, 1.25, 0.16, 0.78);
+  for (const s of [-1, 1]) {
+    g.box(0, 0.72, s * 0.38, 1.25, 0.30, 0.07);
+    g.box(s * 0.60, 0.72, 0, 0.07, 0.30, 0.78);
+  }
+  g.material(M.WOOD_DARK).color(0.38, 0.29, 0.19);
+  for (const s of [-1, 1]) {
+    g.cyl(0, 0.36, -0.485, 0.36, 0.36, 0.09, 10, { axis: 'z' });
+    g.cyl(0, 0.36, 0.395, 0.36, 0.36, 0.09, 10, { axis: 'z' });
+  }
+  g.beam(0.62, 0.62, 0, 1.30, 0.50, 0, 0.06);
+  // a load of hay
+  g.material(M.THATCH).color(0.80, 0.68, 0.36);
+  g.box(0, 0.86, 0, 1.05, 0.34, 0.62);
+  return { geo: g, height: 1.05 };
+});
+P('well', () => {
+  const g = new Geo();
+  g.material(M.STONE).color(0.62, 0.60, 0.55);
+  g.cyl(0, 0, 0, 0.62, 0.68, 0.72, 12);
+  g.material(M.STONE_LIGHT).color(0.78, 0.76, 0.70);
+  g.cyl(0, 0.72, 0, 0.60, 0.62, 0.09, 12);
+  g.material(M.WOOD_DARK).color(0.40, 0.30, 0.20);
+  for (const s of [-1, 1]) g.beam(s * 0.58, 0.78, 0, s * 0.58, 1.72, 0, 0.075);
+  g.material(M.THATCH).color(0.74, 0.62, 0.32);
+  g.gable(0, 1.74, 0, 1.5, 0.52, 1.0);
+  g.material(M.WOOD).color(0.52, 0.40, 0.27);
+  g.cyl(-0.58, 1.48, 0, 0.05, 0.05, 1.16, 6, { axis: 'x' });
+  g.beam(0, 1.48, 0, 0, 1.02, 0, 0.02);
+  g.material(M.IRON).color(0.42, 0.40, 0.36);
+  g.cyl(0, 0.95, 0, 0.15, 0.13, 0.22, 8);
+  return { geo: g, height: 2.0 };
+});
+P('fence', () => {
+  const g = new Geo();
+  g.material(M.WOOD).color(0.62, 0.49, 0.32);
+  for (const x of [-1.05, 0, 1.05]) g.beam(x, 0, 0, x, 1.02, 0, 0.065);
+  g.material(M.WOOD_DARK).color(0.40, 0.31, 0.20);
+  g.beam(-1.1, 0.78, 0, 1.1, 0.78, 0, 0.045);
+  g.beam(-1.1, 0.44, 0, 1.1, 0.44, 0, 0.045);
+  return { geo: g, height: 1.05 };
+});
+P('drying_rack', () => {
+  const g = new Geo();
+  g.material(M.WOOD).color(0.48, 0.37, 0.25);
+  for (const s of [-1, 1]) {
+    g.beam(s * 0.55, 0, 0, s * 0.55, 1.18, 0, 0.055);
+    g.beam(s * 0.55, 1.0, 0, s * 0.75, 1.18, 0, 0.035);
+  }
+  g.beam(-0.6, 1.16, 0, 0.6, 1.16, 0, 0.045);
+  g.material(M.CLOTH).color(0.82, 0.76, 0.62);
+  for (let i = 0; i < 3; i++) g.panel(-0.34 + i * 0.34, 0.92, 0, 0.26, 0.42, 0);
+  return { geo: g, height: 1.25 };
 });
 
 P('relic', () => {

@@ -193,11 +193,21 @@ export class Renderer {
     // decor (static, bucketed) and resource nodes (dynamic) get separate batches
     this.propBatches = new Map();
     this.resBatches = new Map();
-    const decorNames = ['bush', 'rock', 'stump', 'reed', 'tuft', 'flower', 'pebble', 'log', 'ruin'];
+    const decorNames = ['bush', 'rock', 'stump', 'reed', 'tuft', 'flower', 'pebble', 'log', 'ruin',
+      'crate', 'barrel', 'haystack', 'firewood', 'cart', 'well', 'fence', 'drying_rack'];
+    /* Ground clutter smaller than a dog casts a shadow nobody can see at an
+       RTS camera, and the shadow pass would redraw every one of those batches.
+       Skipping them roughly halves the cost of the prop set. */
     for (const name of decorNames) {
       const res = buildProp(name);
       if (!res) continue;
-      this.propBatches.set(name, new InstanceBatch(gl, res.geo.finish(), 900));
+      const batch = new InstanceBatch(gl, res.geo.finish(), 900);
+      /* Static decor never enters the shadow pass. A rock or a barrel casts a
+         two-pixel shadow at an RTS camera, while each batch costs a whole draw
+         call in the depth pass -- the trees, buildings and units still cast,
+         which is where the shadows actually read. */
+      batch.noShadow = true;
+      this.propBatches.set(name, batch);
     }
     // one instanced brazier per firelight slot: four instances, one draw call
     const fireRes = buildProp('brazier');
@@ -957,6 +967,8 @@ export class Renderer {
     const list = this._activeBatches;
     for (let i = 0; i < list.length; i++) {
       const b = list[i];
+      // small clutter opts out of the shadow pass (see buildWorld)
+      if (b.noShadow) continue;
       b.draw();
       this.stats.drawCalls++;
     }

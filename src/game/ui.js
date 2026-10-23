@@ -167,6 +167,13 @@ export class UI {
     this.game = game;
     this.sig = '';
     this.last = { food: -1, wood: -1, gold: -1, stone: -1, favor: -1, pop: '', age: -1, clock: '', idle: -1 };
+    /* A new match gets a new UI instance, but the DOM grid survives the one
+       before it: without this, quitting to the menu and starting again left two
+       sets of command cards stacked in the same grid, and the top ones still
+       pointed at the match that had just been closed. */
+    if (this.el.cmdGrid) this.el.cmdGrid.replaceChildren();
+    this.cmdButtons.length = 0;
+    this._adHocUntil = 0;
     this.buildMinimapBase();
     this.refreshCommands();
   }
@@ -174,7 +181,7 @@ export class UI {
   /* ---------------- command card ---------------- */
   refreshCommands() {
     const list = this.commandsForSelection();
-    const sig = list.map((c) => `${c.icon}|${c.label}|${c.cost || ''}|${c.enabled ? 1 : 0}|${c.active ? 1 : 0}`).join('~');
+    const sig = list.map((c) => `${c.icon}|${c.label}|${c.cost || ''}|${c.enabled === false ? 0 : 1}|${c.active ? 1 : 0}`).join('~');
     if (sig === this.sig) {
       // still refresh the disabled state so costs light up as resources arrive
       this._applyEnabled(list);
@@ -206,10 +213,15 @@ export class UI {
       slot.cost.textContent = c.cost || '';
       slot.el.classList.toggle('primary', !!c.primary);
       slot.el.classList.toggle('toggled', !!c.active);
-      slot.el.classList.toggle('poor', !c.enabled);
+      /* Only an explicit `enabled: false` blocks a command. Most commands --
+         Build, Gather, Stop, Atk-Move, the whole utility card -- carry no
+         enabled flag at all, and `!c.enabled` made every one of them swallow
+         its own click with a "not enough resources" toast. */
+      slot.el.classList.toggle('poor', c.enabled === false);
+      slot.el.setAttribute('aria-disabled', c.enabled === false ? 'true' : 'false');
       slot.el.onclick = (e) => {
         e.preventDefault();
-        if (!c.enabled) { this.audio?.play('warn'); this.toast(c.reason || 'Not enough resources', 'warn'); return; }
+        if (c.enabled === false) { this.audio?.play('warn'); this.toast(c.reason || 'Not enough resources', 'warn'); return; }
         this.audio?.play('click');
         c.action();
       };
@@ -220,7 +232,7 @@ export class UI {
     for (let i = 0; i < list.length && i < this.cmdButtons.length; i++) {
       const c = list[i], slot = this.cmdButtons[i];
       if (!slot) continue;
-      slot.el.classList.toggle('poor', !c.enabled);
+      slot.el.classList.toggle('poor', c.enabled === false);
       slot.el.classList.toggle('toggled', !!c.active);
       slot.cost.textContent = c.cost || '';
     }
@@ -427,14 +439,20 @@ export class UI {
         reason: req > age ? 'Requires a later age' : 'Not enough resources',
         primary: type === 'house',
         action: () => {
-          g.placing = { type, x: this.camera.target[0], z: this.camera.target[2], y: g.heightAt(this.camera.target[0], this.camera.target[2]), footprint: def.size || 3, valid: true };
+          g.placing = {
+            type, x: this.camera.target[0], z: this.camera.target[2],
+            y: g.heightAt(this.camera.target[0], this.camera.target[2]),
+            footprint: def.size || 3, valid: true,
+            builders: villagers.slice()   // the crew that opened the menu
+          };
           this.toast(`Tap the ground to place the ${def.name}`, 'gold');
+          this._adHocUntil = 0;
           this.sig = '';
           this.refreshCommands();
         }
       });
     }
-    out.push({ icon: 'close', label: 'Back', action: () => { this.sig = ''; this.refreshCommands(); } });
+    out.push({ icon: 'close', label: 'Back', action: () => { this._adHocUntil = 0; this.sig = ''; this.refreshCommands(); } });
     // render this ad-hoc list into the card without disturbing selection state
     this._renderAdHoc(out);
   }
@@ -718,12 +736,26 @@ export class UI {
       this.tAcc = 0;
       this.updateText();
       this.updateInspector();
-      if (!this.el.cmdGrid?.childElementCount || performance.now() > (this._adHocUntil || 0)) {
-        // keep the card in sync with affordability every refresh
-        const list = this.commandsForSelection();
-        const sig = list.map((c) => `${c.icon}|${c.label}|${c.cost || ''}|${c.active ? 1 : 0}`).join('~');
-        if (sig !== this.sig) { this._adHocUntil = 0; this.sig = sig; this.refreshCommands(); }
-        else this._applyEnabled(list);
+      /* An open build menu is modal. This used to overwrite it with the
+         selection's own commands on the very next tick -- a quarter of a second
+         on a phone -- which made the Build button look broken: the panel
+         flashed and closed before a thumb could reach a card. */
+      const adHoc = performance.now() < (this._adHocUntil || 0);
+      if (!adHoc) {
+        if (this._adHocUntil) { this._adHocUntil = 0; this.sig = ''; }
+        if (!this.el.cmdGrid?.childElementCount) {
+          this.refreshCommands();
+        } else {
+          /* Keep the card in sync with affordability. The signature must
+             include the enabled flag, and the rebuild must go through
+             refreshCommands (which stamps this.sig itself): stamping it here
+             first made refreshCommands return early, so a card that became
+             affordable kept its old "not enough resources" onclick. */
+          const list = this.commandsForSelection();
+          const sig = list.map((c) => `${c.icon}|${c.label}|${c.cost || ''}|${c.enabled === false ? 0 : 1}|${c.active ? 1 : 0}`).join('~');
+          if (sig !== this.sig) { this._adHocUntil = 0; this.sig = ''; this.refreshCommands(); }
+          else this._applyEnabled(list);
+        }
       }
     }
     if (this.mAcc >= 1 / MINI_HZ) {
@@ -774,6 +806,25 @@ export class UI {
       if (this._lastPhase !== phase) {
         this._lastPhase = phase;
         el.worldTime.dataset.phase = phase;
+      }
+      /* Say what the phase is *worth*, not just that it is dark: the rules
+         table is the whole point of the cycle and it is not discoverable from a
+         moon icon. Rewritten only when the numbers actually move (in ~2 %
+         steps), so this is not a per-frame DOM write. */
+      const dl = typeof g.daylight === 'number' ? g.daylight : 1;
+      const gather = Math.round((0.86 + 0.24 * dl) * 100);
+      const melee = Math.round((1 + 0.16 * (1 - dl)) * 100);
+      const sight = Math.round((0.84 + 0.16 * dl) * 100);
+      const dayKey = `${phase}|${gather}|${melee}|${sight}`;
+      if (this._lastDayKey !== dayKey) {
+        this._lastDayKey = dayKey;
+        const when = phase === 'night' ? 'Night — raiding hours'
+          : phase === 'dusk' ? 'Dusk — raid or defend'
+          : phase === 'dawn' ? 'Dawn — back to work'
+          : 'Day — working hours';
+        const text = `${when}\nMelee damage ${melee}%\nGathering ${gather}%\nSight ${sight}%`;
+        el.worldTime.title = text;
+        el.worldTime.setAttribute('aria-label', text.replace(/\n/g, ', '));
       }
     }
     // age hint

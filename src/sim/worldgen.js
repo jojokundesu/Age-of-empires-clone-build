@@ -349,6 +349,9 @@ export function generateWorld(seed = 20261, opts = {}) {
     else if (r < 0.42) type = 'tuft';
     else if (r < 0.62) type = 'flower';
     else if (r < 0.74) type = 'pebble';
+    // pebbles reuse the rock mesh at a small scale: one less instanced batch,
+    // and at RTS distance a 0.2 m stone and a 0.2 m boulder look the same
+    if (type === 'pebble') { type = 'rock'; }
     else if (r < 0.84) type = 'log';
     else if (r < 0.9) type = 'stump';
     else type = 'rock';
@@ -376,6 +379,102 @@ export function generateWorld(seed = 20261, opts = {}) {
       roadPts.push([x, z]);
     }
     for (const [x, z] of roadPts) stampRoad(splat, hf, x, z, 1);
+  }
+
+  /* A town is not dropped onto untouched meadow: it stands on ground that has
+     been walked, carted over and cleared. A soft, noisy apron of trodden earth
+     around each base does more for the scene than any amount of extra grass
+     detail -- it tells the eye where the settlement ends. */
+  for (const base of [playerBase, enemyBase]) {
+    for (let i = 0; i < 130; i++) {
+      const a = rng() * TAU;
+      const d = Math.sqrt(rng()) * 17;
+      const x = base.x + Math.cos(a) * d, z = base.z + Math.sin(a) * d;
+      if (hfSample(hf, x, z) < -0.4) continue;
+      const falloff = 1 - d / 19;
+      stampRoad(splat, hf, x, z, 0.45 + falloff * 0.45, 2.2 + rng() * 2.0);
+    }
+  }
+
+  /* Decor in clumps, not an even sprinkle. Meadow life comes in patches --
+     a tussock, a rock, a stand of flowers -- and the eye reads a cluster as
+     "a place" where it reads an even sprinkle as noise. */
+  const clumpKinds = ['tuft', 'tuft', 'flower', 'bush', 'flower', 'stump', 'tuft', 'rock'];
+  for (let c = 0; c < 260; c++) {
+    const nearBase = c < 90;
+    const base = c % 2 === 0 ? playerBase : enemyBase;
+    const a = rng() * TAU;
+    const d = nearBase ? 12 + rng() * 30 : 26 + rng() * 190;
+    const cx = (nearBase ? base.x : 0) + Math.cos(a) * d;
+    const cz = (nearBase ? base.z : 0) + Math.sin(a) * d;
+    const kind = clumpKinds[(rng() * clumpKinds.length) | 0];
+    const n = 2 + ((rng() * 4) | 0);
+    for (let i = 0; i < n; i++) {
+      const x = cx + (rng() - 0.5) * 5.5, z = cz + (rng() - 0.5) * 5.5;
+      const h = hfSample(hf, x, z);
+      if (h < -0.6) continue;
+      decor.push({ type: kind, x, z, y: h, scale: 0.7 + rng() * 0.75, rot: rng() * TAU, tint: rng() });
+    }
+  }
+
+  /* Village clutter. A base is a place where people live: a well, a cart with
+     the hay still on it, firewood stacked by the door, barrels by the store.
+     Placed on a ring outside the starting houses (9.5 m) and inside the tree
+     line, and kept clear of resource nodes so nothing grows through a barrel. */
+  const nearResource = (x, z, r) => {
+    for (const res of resources) {
+      if (res.x === undefined) continue;
+      const dx = res.x - x, dz = res.z - z;
+      if (dx * dx + dz * dz < r * r) return true;
+    }
+    return false;
+  };
+  for (const base of [playerBase, enemyBase]) {
+    const face = Math.atan2(-base.x, -base.z);
+    const put = (type, ang, rad, rot, scale = 1) => {
+      const x = base.x + Math.sin(ang) * rad;
+      const z = base.z + Math.cos(ang) * rad;
+      const h = hfSample(hf, x, z);
+      if (h < -0.5) return false;
+      if (nearResource(x, z, 2.6)) return false;
+      decor.push({ type, x, z, y: h, scale, rot, tint: rng() });
+      return true;
+    };
+    // the well sits on the open side of the square
+    put('well', face + 2.15, 6.9, face + 0.3);
+    // carts and stores on the road side of the town
+    put('cart', face + 0.35, 12.6, face + 1.5);
+    put('cart', face + 3.5, 14.2, face + 4.4, 0.95);
+    put('haystack', face + 3.05, 15.5, 0.0);
+    put('haystack', face + 2.72, 13.4, 0.0, 0.85);
+    put('haystack', face + 0.72, 16.6, 0.0, 1.05);
+    // firewood by the houses, crates and barrels by the door
+    for (let i = 0; i < 3; i++) {
+      const a = face + 0.78 * Math.PI + i * 0.55;
+      put('firewood', a - 0.10, 11.2, a + 0.6);
+      put('crate', a + 0.09, 11.6, a + 1.2, 0.95);
+      put('barrel', a - 0.17, 11.9, a + 0.2, 0.95);
+      put('barrel', a + 0.02, 12.4, a + 1.1, 0.9);
+    }
+    put('crate', face + 5.3, 10.4, face + 2.0);
+    put('crate', face + 5.45, 11.1, face + 2.6, 0.9);
+    put('barrel', face + 5.2, 11.6, face + 1.0);
+    put('fence', face + 4.1, 12.2, face + 2.3);
+    put('fence', face + 1.55, 12.8, face + 4.0, 0.95);
+    // broken fence runs: three fences along an arc read as one enclosure
+    for (let run = 0; run < 3; run++) {
+      const a0 = face + 0.9 + run * 2.0;
+      const segs = 3 + (run % 2);
+      for (let i = 0; i < segs; i++) {
+        const a = a0 + i * 0.112;
+        const rad = 17.4;
+        const x = base.x + Math.sin(a) * rad, z = base.z + Math.cos(a) * rad;
+        if (nearResource(x, z, 2.2)) continue;
+        const h = hfSample(hf, x, z);
+        if (h < -0.5) continue;
+        decor.push({ type: 'fence', x, z, y: h, scale: 1, rot: a + Math.PI / 2, tint: rng() });
+      }
+    }
   }
 
   // POIs: neutral shrines for vision / favour
@@ -474,11 +573,10 @@ function stampDisc(grid, hf, wx, wz, radius, value) {
   }
 }
 
-function stampRoad(splat, hf, wx, wz, strength) {
+function stampRoad(splat, hf, wx, wz, strength, radius = 2.6) {
   const res = WORLD.segments;
   const n = res + 1;
   const cell = WORLD.size / res;
-  const radius = 2.6;
   const cx0 = Math.floor((wx - radius + WORLD.half) / cell);
   const cx1 = Math.ceil((wx + radius + WORLD.half) / cell);
   const cz0 = Math.floor((wz - radius + WORLD.half) / cell);
@@ -491,11 +589,21 @@ function stampRoad(splat, hf, wx, wz, strength) {
       if (d > radius) continue;
       const i = z * n + x;
       if (hf.h[i] < -0.4) continue;
+      /* The splat byte is the weight of the *listed* layer, so laying down
+         dirt means raising it, not lowering it. (Lowering it was why the
+         base-to-base road was invisible: the cells were tagged as dirt with
+         almost no dirt in them.) */
       const k = smoothstep(1 - d / radius) * strength;
-      const b = splat[i * 2 + 1];
-      const nb = Math.max(0, b - k * 70) | 0;
-      splat[i * 2 + 1] = nb;
-      if (k > 0.45) splat[i * 2] = TERRAIN_LAYER.DIRT;
+      const b = splat[i * 2];
+      const w = k;
+      if (w <= 0.02) continue;
+      const prev = splat[i * 2 + 1];
+      if (b !== TERRAIN_LAYER.DIRT) {
+        splat[i * 2] = TERRAIN_LAYER.DIRT;
+        splat[i * 2 + 1] = Math.min(255, Math.round(w * 240)) | 0;
+      } else {
+        splat[i * 2 + 1] = Math.max(prev, Math.min(255, Math.round(w * 240))) | 0;
+      }
     }
   }
 }

@@ -201,7 +201,10 @@ class App {
     // apply a saved campaign on top of the fresh world
     if (opts.load) this.applySave(game, opts.load);
 
-    const ai = new AIController(game, 2, {
+    /* Sandbox has no opponent: team 2 is never set up, so an AI controller
+       there has no base to defend and would grab any team-2 unit that appeared
+       (a spawned raid, a scenario) and march it across the map. */
+    const ai = opts.mode === 'sandbox' ? null : new AIController(game, 2, {
       aggression: DIFFICULTY[opts.difficulty]?.aggression ?? 0.85
     });
     this.fx = fx;
@@ -523,7 +526,11 @@ class App {
     const buf = this.fogBuf, tmp = this.fogTmp;
     for (let i = 0; i < fow.length; i++) {
       const v = fow[i];
-      buf[i] = v === 2 ? 255 : v === 1 ? 118 : 0;
+      /* Explored ground stays almost fully lit: a three-zone brightness ramp
+         (bright vision disc / dim memory / black unknown) is what made the
+         town look like a spotlight on a dark field. Keeping memory near full
+         brightness leaves one honest boundary -- the edge of the known world. */
+      buf[i] = v === 2 ? 255 : v === 1 ? 200 : 0;
     }
     // separable 3-tap blur: turns the blocky cell grid into a soft sight edge
     for (let y = 0; y < size; y++) {

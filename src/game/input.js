@@ -326,8 +326,26 @@ export class Input {
     // 2. placement mode
     if (game.placing) {
       const p = game.placing;
-      const ok = game.placeBuilding(p.type, 1, g[0], g[2]);
-      if (ok) {
+      /* Legality was never checked on this path: the ghost knew where a
+         foundation was legal, but a tap placed the building anyway, on top of
+         a house or in the sea. */
+      const spot = game.canPlaceAt(p.type, 1, g[0], g[2]);
+      if (!spot.ok) {
+        this.ui?.toast(spot.reason === 'blocked' ? 'Something is already there'
+          : spot.reason === 'water' ? 'Cannot build in the water'
+          : spot.reason === 'slope' ? 'The ground is too steep'
+          : spot.reason === 'resource' ? 'Resources are in the way' : 'Cannot build there', 'warn');
+        this.audio?.play('warn');
+        return;
+      }
+      const built = game.placeBuilding(p.type, 1, g[0], g[2]);
+      if (built) {
+        /* And the villagers who opened the build menu actually go and build
+           it. Without this the foundation sat at 2 % forever unless the player
+           guessed that they had to order it a second time. */
+        const crew = (p.builders && p.builders.length ? p.builders : game.selectionOfTeam(1))
+          .filter((u) => u && !u.dead && u.type === 'villager');
+        if (crew.length) game.orderBuild(crew, built);
         this.audio?.play('build');
         game.placing = null;
         this.ui?.refreshCommands();

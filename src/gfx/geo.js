@@ -146,32 +146,46 @@ export class Geo {
     return this;
   }
 
+  /* `opts.axis` lays the cylinder along X or Z instead of Y. `opts.rot` is the
+     angular start (a UV seam offset), *not* a tip-over: a log, a cannon barrel
+     and a cart axle were all written as { rot: Math.PI / 2 } in the belief that
+     it rotated them, which is why every log pile in the game stood on end. */
   cyl(x, y, z, rTop, rBot, h, seg = 8, opts = {}) {
     const capTop = opts.capTop !== false, capBottom = opts.capBottom === true;
     const rot = opts.rot || 0;
-    const py = y + h / 2;
+    const axis = opts.axis || 'y';
+    /* Proper rotations (det +1) so the winding -- and with it the face normals
+       -- stay outward-facing: Rz(-90) sends local +Y to +X, Rx(+90) sends it
+       to +Z. */
+    const M = axis === 'x' ? (lx, ly, lz) => [x + ly, y - lx, z + lz]
+      : axis === 'z' ? (lx, ly, lz) => [x + lx, y - lz, z + ly]
+        : (lx, ly, lz) => [x + lx, y + ly, z + lz];
     for (let i = 0; i < seg; i++) {
       const a0 = rot + (i / seg) * TAU;
       const a1 = rot + ((i + 1) / seg) * TAU;
       const c0 = Math.cos(a0), s0 = Math.sin(a0);
       const c1 = Math.cos(a1), s1 = Math.sin(a1);
-      const x0b = x + c0 * rBot, z0b = z + s0 * rBot;
-      const x1b = x + c1 * rBot, z1b = z + s1 * rBot;
-      const x0t = x + c0 * rTop, z0t = z + s0 * rTop;
-      const x1t = x + c1 * rTop, z1t = z + s1 * rTop;
+      const b0 = M(c0 * rBot, 0, s0 * rBot);
+      const b1 = M(c1 * rBot, 0, s1 * rBot);
+      const t0 = M(c0 * rTop, h, s0 * rTop);
+      const t1 = M(c1 * rTop, h, s1 * rTop);
       const u0 = (i / seg) * TAU * Math.max(rTop, rBot), u1 = ((i + 1) / seg) * TAU * Math.max(rTop, rBot);
-      this.quad(x0b, y, z0b, x0t, y + h, z0t, x1t, y + h, z1t, x1b, y, z1b, [u0, 0, u0, h, u1, h, u1, 0]);
+      this.quad(b0[0], b0[1], b0[2], t0[0], t0[1], t0[2], t1[0], t1[1], t1[2], b1[0], b1[1], b1[2], [u0, 0, u0, h, u1, h, u1, 0]);
       if (capTop && rTop > 0.001) {
-        this.tri(x, y + h, z, x1t, y + h, z1t, x0t, y + h, z0t, 0, 0, 1, 0, 0, 1);
+        const c = M(0, h, 0);
+        this.tri(c[0], c[1], c[2], t1[0], t1[1], t1[2], t0[0], t0[1], t0[2], 0, 0, 1, 0, 0, 1);
       }
       if (capBottom && rBot > 0.001) {
-        this.tri(x, y, z, x0b, y, z0b, x1b, y, z1b, 0, 0, 0, 1, 1, 1);
+        const c = M(0, 0, 0);
+        this.tri(c[0], c[1], c[2], b0[0], b0[1], b0[2], b1[0], b1[1], b1[2], 0, 0, 0, 1, 1, 1);
       }
     }
     return this;
   }
 
-  cone(x, y, z, r, h, seg = 8) { return this.cyl(x, y, z, 0, r, h, seg, { capTop: false }); }
+  cone(x, y, z, r, h, seg = 8, opts = {}) {
+    return this.cyl(x, y, z, 0, r, h, seg, { ...opts, capTop: false });
+  }
 
   sphere(x, y, z, r, seg = 8, rings = 5) {
     // Pole rows are emitted as triangle fans: a quad whose top edge has zero

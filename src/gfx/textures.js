@@ -52,6 +52,22 @@ function paintGrass(lush) {
     const cA = lush ? [70, 92, 44] : [110, 108, 62];
     const cB = lush ? [104, 130, 60] : [142, 134, 76];
     const cC = lush ? [52, 74, 36] : [92, 92, 54];   // shade between blades
+    /* Blade structure. A smooth noise field alone reads as green felt once the
+       camera is close enough to see individual metres, so the texture carries
+       real blades: 2 px columns of differing length and lean, lighter at the
+       tip where the sun catches them, darker in the gaps between clumps. The
+       pattern is computed from a per-column hash so it stays crisp and cheap
+       (no per-pixel allocation, one pass at boot). */
+    const cols = S >> 1;
+    const phase = new Float32Array(cols);
+    const len = new Float32Array(cols);
+    const lean = new Float32Array(cols);
+    for (let c = 0; c < cols; c++) {
+      const r = mulberry32(0x51ed + c * 2654435761 % 100000);
+      phase[c] = r() * 32;
+      len[c] = 8 + r() * 16;
+      lean[c] = r() * 2 - 1;
+    }
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
         const i = (y * S + x) * 4;
@@ -68,6 +84,26 @@ function paintGrass(lush) {
         r = lerp(r, cA[0] + 46, bleach * 0.6);
         g = lerp(g, cA[1] + 40, bleach * 0.6);
         b = lerp(b, cA[2] + 12, bleach * 0.6);
+
+        // a blade every ~2 px, each with its own height and lean
+        const c = x >> 1;
+        const t01 = ((y + phase[c]) % 32) / 32;          // position along a blade
+        const hgt = len[c] / 32;                         // how far up it reaches
+        let blade = 0;
+        if (t01 < hgt) {
+          const up = 1 - t01 / Math.max(0.001, hgt);
+          blade = Math.pow(up, 0.55);                    // brightest at the tip
+        }
+        // the left edge of each column catches a little more light
+        const side = (x & 1) === 0 ? 1 : 0.72;
+        const lit = blade * side * (0.55 + clump * 0.55);
+        r += lit * 26 * (lush ? 1.0 : 1.1);
+        g += lit * 34 * (lush ? 1.0 : 1.05);
+        b += lit * 12 * (lush ? 0.9 : 1.0);
+        // shadow pocket between blades: keeps the field from flattening out
+        const gap = (1 - blade) * (0.10 + clump * 0.16);
+        r *= 1 - gap; g *= 1 - gap * 0.9; b *= 1 - gap * 0.8;
+
         d[i] = clamp(r, 0, 255); d[i + 1] = clamp(g, 0, 255); d[i + 2] = clamp(b, 0, 255);
         d[i + 3] = 255;
       }
@@ -318,12 +354,14 @@ function paintPlaster() {
     const base = [206, 190, 160];
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
-      // long trowel sweeps (anisotropic fbm) read as hand-applied render
-      const sweep = fbm2(x * 0.012, y * 0.075, 4) * 0.5 + 0.5;
+      /* Long trowel sweeps, but gently anisotropic: a 6:1 ratio at 0.42
+         amplitude painted the houses as horizontal zebra stripes, which is
+         exactly what every wall in the town looked like. */
+      const sweep = fbm2(x * 0.016, y * 0.030, 4) * 0.5 + 0.5;
       const grit = noise2(x * 0.85, y * 0.85) * 0.5 + 0.5;
       const stain = Math.max(0, fbm2(x * 0.017 + 7, y * 0.023, 3) - 0.34) * 1.9;
       const chip = Math.max(0, fbm2(x * 0.05 + 19, y * 0.05, 2) - 0.62) * 3.4;
-      const v = 0.70 + sweep * 0.42 + grit * 0.09 - stain * 0.30;
+      const v = 0.86 + sweep * 0.21 + grit * 0.07 - stain * 0.26;
       // chipped render shows the rubble core underneath
       const chipMix = Math.min(1, chip);
       d[i] = clamp(base[0] * v * (1 - chipMix) + 96 * chipMix, 0, 255);

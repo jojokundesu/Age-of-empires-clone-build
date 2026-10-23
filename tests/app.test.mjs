@@ -243,6 +243,37 @@ check('quit to menu', () => {
   assert(!document.getElementById('menuScreen').classList.contains('hidden'), 'menu not shown');
 });
 
+/* Sandbox is the mode a player uses to look at the game, build freely and try
+   a fight. It has no opponent, so it must not start an AI controller: that
+   controller had no base to defend, adopted the first team-2 unit it saw and
+   marched a hand-placed sparring partner off across the island. */
+await acheck('a sandbox match has no opponent and leaves your sparring partners alone', async () => {
+  // startMatch waits on one animation frame, and the harness stubbed rAF out
+  // after the first match; give it a real one back for the boot, then take it
+  // away again so the test drives the loop itself
+  const raf = (fn) => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf;
+  window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'sandbox', civ: 'franks', difficulty: 'standard', seed: 20261, quality: 'low' });
+  globalThis.requestAnimationFrame = () => 0;
+  window.requestAnimationFrame = () => 0;
+  assert(app.running && app.game, 'the sandbox match did not start');
+  assert(app.ai === null, 'a sandbox match started an AI controller');
+  const g = app.game;
+  assert(!g.buildings.some((b) => b.team === 2 && !b.dead), 'the sandbox has an enemy town');
+  const base = g.world.playerBase;
+  const u = g.spawnUnitRaw('huskarl', 2, base.x + 20, base.z + 15);
+  assert(u, 'could not place a sparring partner');
+  const x0 = u.x, z0 = u.z;
+  for (let i = 0; i < 600; i++) step();
+  const moved = Math.hypot(u.x - x0, u.z - z0);
+  assert(moved < 5, `the sandbox enemy walked ${moved.toFixed(1)} m without being ordered to`);
+});
+check('quit the sandbox', () => {
+  app.quitToMenu();
+  assert(!document.getElementById('menuScreen').classList.contains('hidden'), 'menu not shown');
+});
+
 console.log('');
 if (fails.length) { console.log(`FAILURES (${fails.length}):`); for (const f of fails) console.log(' - ' + f); process.exit(1); }
 console.log('APPLICATION CHECKS PASSED');

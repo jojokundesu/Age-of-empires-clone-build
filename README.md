@@ -134,12 +134,31 @@ Measured headless on this repo: 0.23 ms average tick for a 600 s AI-vs-AI match,
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # static bundle in dist/
-npm test           # 14 suites: shell, contract, geo, audio, shaders, sim, combat,
-                   # day/night, renderer, perf budgets, AI soak, HUD, app, bundle
+npm test           # 15 suites: shell, contract, geo, audio, shaders, sim, survey,
+                   # combat, day/night, renderer, perf budgets, AI soak, HUD, app, bundle
+npm test -- --browser   # ...plus the Chromium play-test and the browser smoke test
+npm run test:play  # one end-to-end play session in Chrome: 12 checks (see below)
 npm run test:soak  # real Chrome: 260-unit battle, heap after GC, tick cost, DOM growth
 npm run balance    # headless battle matrix (counter triangle)
 npm run apk        # needs JDK 17 + Android SDK build-tools
 ```
+
+The browser suites need Chromium. On a machine without NSS installed,
+`npm run browser:deps` unpacks the shared libraries that ship with
+`@sparticuz/chromium` and prints an `LD_LIBRARY_PATH`; `npm run test:play` and
+`npm run test:soak` call it for you.
+
+### The play-test
+
+`tests/playtest.mjs` drives the built game in Chromium the way a thumb does:
+tap a villager, drag a box, send them to the woodline, open the build menu,
+place a house, let villagers finish it, queue a villager at the town centre,
+earn and spend an age advance, wind the clock to night, walk the whole camera
+rail, use the minimap, open the pause menu, then build a barracks, train
+soldiers and fight a raid to the death. Every step is asserted against the
+simulation or the DOM, the frame budget is measured at the end, and any console
+or page error fails the run. It writes `ci/playtest-report.md` and a screenshot
+per checkpoint.
 
 ### Tests
 
@@ -159,6 +178,8 @@ npm run apk        # needs JDK 17 + Android SDK build-tools
 | `tests/perf.test.mjs` | hard CPU budgets: tick percentiles, frame prep, draw calls, heap growth |
 | `tests/daynight.test.mjs` | the day cycle: gather/melee/sight multipliers, fog radius, phase events, renderer sun + firelight |
 | `tests/ai.test.mjs` | AI-vs-AI soak with assertions (no dead economy, no idle army, age progression, tick budget) |
+| `tests/survey.test.mjs` | the starting valley is known ground: size, ragged edge, enemy base still hidden |
+| `tests/playtest.mjs` | a full session in Chrome: select, gather, build, train, age up, night, camera, minimap, battle, frame budget |
 | `tests/browser.mjs` | real headless Chrome: boot, play, taps, day/night pixels, night-sky pixels |
 | `tests/soak.mjs` | phone-profile soak: 260-unit battle, post-GC heap, tick cost, draw calls, DOM growth |
 

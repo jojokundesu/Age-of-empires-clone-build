@@ -18,7 +18,7 @@
     "test:dist": "node tests/dist.test.mjs",
     "balance": "node tests/balance.test.mjs --full",
     "apk": "bash scripts/build-apk.sh",
-    "test:browser": "node tests/browser.mjs",
+    "test:browser": "eval \"$(node scripts/browser-libs.mjs --export)\" && node tests/browser.mjs --seconds 8 --dpr 1.5",
     "test:geo": "node tests/geo.test.mjs",
     "test:audio": "node tests/audio.test.mjs",
     "test:shaders": "node tests/shaders.test.mjs",
@@ -27,7 +27,9 @@
     "test:ai": "node tests/ai.test.mjs 900",
     "shot": "node tests/shot.mjs",
     "test:daynight": "node tests/daynight.test.mjs",
-    "test:soak": "node tests/soak.mjs"
+    "test:soak": "eval \"$(node scripts/browser-libs.mjs --export)\" && node tests/soak.mjs --seconds 40 --units 260",
+    "browser:deps": "node scripts/browser-libs.mjs --export",
+    "test:play": "eval \"$(node scripts/browser-libs.mjs --export)\" && node tests/playtest.mjs"
   },
   "devDependencies": {
     "@shaderfrog/glsl-parser": "^7.0.1",

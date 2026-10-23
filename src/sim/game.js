@@ -206,6 +206,7 @@ export class Game {
     if (this.mode !== 'sandbox') this.setupTeam(TEAM_ENEMY, w.enemyBase, this.enemyCiv);
     this.initialised = true;
     this.recomputePop();
+    this.surveyHome(w.playerBase);
     this.updateFog(1);
     this.onEvent('start', {});
     return this;
@@ -1107,12 +1108,20 @@ export class Game {
   /* ==========================================================
      research / ages
      ========================================================== */
+  /* Returns { ok, reason }: the HUD needs to know *why* the crown is dim, and
+     it was reading `.ok` off a boolean, so the age card was disabled for the
+     whole match and no player could ever advance an age from the UI. */
   canAdvanceAge(team) {
     const st = this.teams.get(team);
-    if (st.age >= 3) return false;
+    if (!st) return { ok: false, reason: 'No such team' };
+    if (st.ageResearch) return { ok: false, reason: 'Already advancing' };
+    if (st.age >= 3) return { ok: false, reason: 'Final age' };
     const next = st.age + 1;
     const cost = AGES[next].cost;
-    return this.canAfford(team, cost);
+    if (!this.canAfford(team, cost)) return { ok: false, reason: 'Not enough resources' };
+    const tc = this.buildings.find((b) => !b.dead && b.team === team && b.def.ageAdvance);
+    if (!tc) return { ok: false, reason: 'Needs a town centre' };
+    return { ok: true, reason: '' };
   }
 
   startAgeAdvance(team) {
@@ -1299,6 +1308,32 @@ export class Game {
     this.resources = this.resources.filter((r) => !r.dead || r.deadT < 3);
     // selection cleanup
     if (this.selection.length) this.selection = this.selection.filter((e) => !e.dead);
+  }
+
+  /* The starting valley is known ground, not a circle of torchlight. A fresh
+     match used to reveal a ~22 m disc, which read as a spotlight parked on a
+     dark field; the settlement has been here for years, so its people know the
+     near country. The edge is noisy and irregular, and it stops well short of
+     the enemy base -- exploring is still the opening move. 68 m also keeps
+     the boundary off-screen at the default camera distance, so the town does
+     not sit inside a visible lit ellipse. */
+  surveyHome(base) {
+    const fow = this.fow;
+    const size = WORLD.fowCell;
+    const half = WORLD.half;
+    for (let cz = 0; cz < FOW; cz++) {
+      for (let cx = 0; cx < FOW; cx++) {
+        const wx = (cx + 0.5) * size - half;
+        const wz = (cz + 0.5) * size - half;
+        const dx = wx - base.x, dz = wz - base.z;
+        const d = Math.hypot(dx, dz);
+        const a = Math.atan2(dz, dx);
+        // three cheap harmonics: a ragged, organic edge, identical every match
+        const wob = Math.sin(a * 3.1 + 1.7) * 5.5 + Math.sin(a * 7.3 - 0.4) * 3.2
+          + Math.sin(a * 13.7 + 2.2) * 1.8;
+        if (d < 68 + wob * 1.4) fow[cz * FOW + cx] = 1;
+      }
+    }
   }
 
   /* ==========================================================

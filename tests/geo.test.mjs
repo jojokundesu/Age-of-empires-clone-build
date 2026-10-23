@@ -130,6 +130,73 @@ check('distant props are cheap and the town centre is rich', () => {
   assert(c.buildings.town_center >= c.props.rock, 'the hero building should carry more detail than a rock');
 });
 
+/* The village dressing that turned the town apron from clipped grass into a
+   working settlement. They are tiny, they are instanced by the hundred, and
+   they are the easiest thing in the project to break by accident: a prop with
+   no material variety reads as a coloured lump, a prop taller than it claims
+   floats or sinks, and one that blows the triangle budget costs every frame. */
+check('the eight village props are cheap, varied and the right size', () => {
+  const want = {
+    crate: [0.3, 0.9], barrel: [0.4, 1.1], haystack: [1.2, 2.4], firewood: [0.2, 0.8],
+    cart: [0.7, 1.6], well: [1.4, 2.6], fence: [0.7, 1.5], drying_rack: [0.8, 1.8]
+  };
+  for (const [type, [lo, hi]] of Object.entries(want)) {
+    assert(PROP_TYPES.includes(type), `${type} missing from the prop catalogue`);
+    const res = buildProp(type);
+    const g = res.geo.finish ? res.geo.finish() : res.geo;
+    const tris = g.i.length / 3;
+    assert(tris >= 30 && tris <= 400, `${type} is ${tris} tris`);
+    assert(g.i.length > 0 && g.v.length > 0, `${type} has no geometry`);
+    assert(res.height >= lo && res.height <= hi, `${type} height ${res.height} outside ${lo}..${hi}`);
+    const mats = new Set();
+    for (let i = 8; i < g.v.length; i += 16) mats.add(g.v[i]);
+    assert(mats.size >= 2, `${type} is painted with a single material: ${[...mats].join(',')}`);
+  }
+});
+
+/* Props are placed with their origin on the terrain, so a prop whose geometry
+   starts half a metre up is a floating barrel. And a "log" written with the
+   cylinder helper's angular-start option instead of its axis option is not a
+   log at all -- it is a 1.5 m pole standing in the grass, which is exactly what
+   the meadows were full of. */
+check('every prop stands on the ground it is placed on', () => {
+  const floating = [];
+  for (const type of PROP_TYPES) {
+    const res = buildProp(type);
+    if (!res) continue;
+    const g = res.geo.finish ? res.geo.finish() : res.geo;
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 1; i < g.v.length; i += STRIDE) { lo = Math.min(lo, g.v[i]); hi = Math.max(hi, g.v[i]); }
+    // mines and boulders are allowed to sink into the hillside
+    if (lo > 0.12) floating.push(`${type} floats at ${lo.toFixed(2)} m`);
+    if (lo < -0.7) floating.push(`${type} sinks to ${lo.toFixed(2)} m`);
+    assert(hi <= res.height * 1.45 + 0.05, `${type} reaches ${hi.toFixed(2)} m but declares ${res.height}`);
+  }
+  assert(!floating.length, floating.join(', '));
+});
+
+check('a log lies down and a fence stays thin', () => {
+  const box = (type) => {
+    const g = buildProp(type).geo;
+    const geo = g.finish ? g.finish() : g;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < geo.v.length; i += STRIDE) {
+      x0 = Math.min(x0, geo.v[i]); x1 = Math.max(x1, geo.v[i]);
+      y0 = Math.min(y0, geo.v[i + 1]); y1 = Math.max(y1, geo.v[i + 1]);
+      z0 = Math.min(z0, geo.v[i + 2]); z1 = Math.max(z1, geo.v[i + 2]);
+    }
+    return { x: x1 - x0, y: y1 - y0, z: z1 - z0, low: y0 };
+  };
+  const log = box('log');
+  assert(log.x > 1.2, `the log is only ${log.x.toFixed(2)} m long`);
+  assert(log.y < 0.55, `the log stands ${log.y.toFixed(2)} m tall -- it is a pole, not a log`);
+  assert(log.low < 0.1, 'the log floats');
+  const fence = box('fence');
+  assert(fence.x > 1.8 && fence.z < 0.2, `the fence run is ${fence.x.toFixed(2)} x ${fence.z.toFixed(2)} m`);
+  const firewood = box('firewood');
+  assert(firewood.z > 0.5 && firewood.y < 0.5, 'the firewood stack is a bundle of poles');
+});
+
 check('the brazier is a cheap prop whose flame sits at the firelight height', () => {
   const res = buildProp('brazier');
   const g = res.geo.finish();

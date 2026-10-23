@@ -96,7 +96,7 @@ vec3 townGlow(vec3 p){
     float d2 = dot(L, L);
     sum += 1.0 / (1.0 + d2 * 0.020 + d2 * d2 * 0.00030);
   }
-  return uTownLightColor * sum * uTownLightI * 0.030;
+  return uTownLightColor * sum * uTownLightI * 0.075;
 }
 `;
 
@@ -118,9 +118,12 @@ float shadowFactor(vec3 worldPos, float ndl){
   return mix(1.0, s, uShadowStrength);
 }
 float cloudShadow(vec2 worldXZ){
-  vec2 uv = worldXZ * 0.0011 + uCloudOffset;
+  /* Broad, soft and shallow. At 0.80 strength over a ~900 m wavelength this
+     painted large grey smudges across the meadow that read as dirty footprints
+     rather than passing cloud. */
+  vec2 uv = worldXZ * 0.0017 + uCloudOffset;
   float c = texture(uClouds, uv).a;
-  return mix(1.0, 0.80, clamp(c*1.25, 0.0, 1.0));
+  return mix(1.0, 0.90, clamp(c * 1.2, 0.0, 1.0));
 }
 float fogOfWar(vec3 worldPos, out float explored){
   if (uFogEnabled < 0.5) { explored = 1.0; return 1.0; }
@@ -139,17 +142,29 @@ vec3 applyFoW(vec3 color, vec3 worldPos){
   if (uFogEnabled < 0.5) return color;
   // Explored-but-not-visible ground keeps its shapes: desaturate and cool it
   // slightly instead of sinking it into black, so the map stays readable.
+  /* A sight boundary is not a circle. Two octaves of world-space noise at
+     ~14 m and ~4 m break the rim into an organic edge, so the town reads as
+     "seen country" instead of a spotlight sitting on a dark field. */
+  vis += (vnoise(worldPos.xz * 0.072) - 0.5) * 0.10
+       + (vnoise(worldPos.xz * 0.245) - 0.5) * 0.045;
   float l = dot(color, vec3(0.299, 0.587, 0.114));
-  vec3 memory = mix(vec3(l), color, 0.52) * vec3(0.80, 0.84, 0.93);
-  vec3 shown = mix(color, memory, clamp((1.0 - vis) * 1.35, 0.0, 0.55));
+  vec3 memory = mix(vec3(l), color, 0.56) * vec3(0.82, 0.86, 0.95);
+  vec3 shown = mix(color, memory, clamp((1.0 - vis) * 1.25, 0.0, 0.48));
   // After dark, visibility matters more than tone: an unexplored-but-seen area
   // only dims to 40 %, while unseen ground still drops to a near-black 16 %.
   // A wide transition: the old 0.015..0.30 ramp drew a bright disc with a
   // visible rim around the town. Unseen ground stays dark, but the rim is now a
   // long gradient instead of a spotlight edge.
-  float dark = smoothstep(0.02, 0.62, vis);
-  vec3 floorC = mix(vec3(0.26), vec3(0.16, 0.20, 0.30), uNight);
-  return shown * mix(floorC, vec3(1.0), dark);
+  float dark = smoothstep(0.0, 0.78, vis);
+  /* Unseen country is not black paint: it is country under haze. Keeping a
+     little of the ground colour plus a cool veil reads as distance, and it
+     stops the explored disc from looking like a spotlight on a dark field. */
+  /* Unseen country is still dark -- it is the one honest boundary on the map --
+     but it reaches black over ~30 m of gradient rather than at a rim, and it is
+     veiled toward cool blue instead of multiplied to a flat grey. */
+  vec3 unseen = mix(shown * mix(vec3(0.19, 0.22, 0.26), vec3(0.12, 0.15, 0.21), uNight),
+                    vec3(0.008, 0.011, 0.019), 0.62);
+  return mix(unseen, shown, dark);
 }
 `;
 
@@ -380,16 +395,62 @@ vec3 terrainSample(vec2 uv){
   col += snow * we.y;
   float sum = w.x + w.y + w.z + w.w + we.x + we.y;
   col /= max(sum, 0.0001);
+
+  /* --- the meadow as a patchwork of fields -------------------------------
+     The 3 m texture repeat is invisible from an RTS camera: the whole screen
+     is only ~50 m wide, so the eye only reads structure at 10-90 m. These
+     three world-space bands (slow fields, mid clumps, a fine grain) are what
+     turn "a green plane" into ground with weather and soil in it. All of it is
+     procedural and faded by distance, so it costs no texture memory and never
+     aliases into confetti. */
+  float field = fbm2(vWorld.xz * 0.0105 + vec2(3.0));      // ~95 m regions
+  float patchy = fbm2(vWorld.xz * 0.038 - vec2(7.0));      // ~26 m patches
+  float clumps = vnoise(vWorld.xz * 0.185 + 11.0);         // ~5 m tussocks
+  float meadow = fbm2(vWorld.xz * 0.085 - vec2(19.0));     // ~12 m drifts
+  // sun-dried straw: warm, lighter, a little desaturated
+  float dry = smoothstep(0.34, 0.78, patchy * 0.72 + field * 0.46);
+  col = mix(col, col * vec3(1.32, 1.10, 0.60) + vec3(0.034, 0.030, 0.004), dry * 0.70);
+  // shaded lush pockets, greener and darker, where the soil holds water
+  float lushPocket = smoothstep(0.62, 0.22, patchy * 0.66 + field * 0.54);
+  col = mix(col, col * vec3(0.62, 0.88, 0.66) + vec3(0.004, 0.022, 0.006), lushPocket * 0.56);
+  // tussocks: the same clump scale as the painted blades so the two agree
+  col *= 0.90 + clumps * 0.20;
+  // wind-blown drift at 12 m: the band the eye actually reads from 40 m up
+  col *= 0.88 + meadow * 0.26;
+  // a field left tall and yellow for a season, mown into bands
+  float band = smoothstep(0.62, 0.92, fbm2(vWorld.xz * 0.055 + vec2(41.0)));
+  col = mix(col, col * vec3(1.16, 1.02, 0.66), band * 0.30);
+
+  /* --- slope and altitude -------------------------------------------------
+     Bare soil on steep faces and a dry, stony tint up high. The splat map
+     already paints rock on cliffs, but it is a worldgen guess; this follows
+     the real triangle normal, so a hill reads as a hill from any angle. */
+  float steep = 1.0 - smoothstep(0.60, 0.90, normalize(vNormal).y);
+  col = mix(col, col * vec3(0.74, 0.66, 0.56) + vec3(0.030, 0.024, 0.016), steep * 0.55);
+  float high = smoothstep(5.0, 27.0, vWorld.y);
+  col = mix(col, col * vec3(1.14, 1.02, 0.78), high * 0.32);
   /* High-frequency detail pass. At RTS distance one terrain texture repeat
      spans several metres, so without this the meadow reads as a flat green
      wash. It fades out with distance, which is both cheaper on the eye and a
      free anti-aliasing trick. */
-  float fade = 1.0 - smoothstep(26.0, 90.0, vDist);
+  float fade = 1.0 - smoothstep(38.0, 120.0, vDist);
   if (fade > 0.01) {
     // procedural, not another texture repeat: a 0.6 m tile of grain aliases
     // into confetti at this zoom, while two noise octaves stay smooth
     float g = vnoise(vWorld.xz * 2.3) * 0.62 + vnoise(vWorld.xz * 7.3) * 0.38;
-    col *= mix(1.0, 0.90 + g * 0.20, 0.75 * fade);
+    col *= mix(1.0, 0.88 + g * 0.24, 0.80 * fade);
+    /* Meadow flowers: a scattered speck that catches the sun. Hashed on a
+       40 cm lattice and faded with distance, so it is a scatter of petals up
+       close and disappears before it can shimmer. */
+    vec2 fcell = floor(vWorld.xz * 3.4);
+    float fsel = hash12(fcell + 3.7);
+    if (fsel > 0.978) {
+      vec2 foff = vec2(hash12(fcell + 1.3), hash12(fcell + 8.1)) - 0.5;
+      float fd = length(fract(vWorld.xz * 3.4) - 0.5 - foff * 0.55);
+      float petal = smoothstep(0.26, 0.10, fd);
+      vec3 petalCol = mix(vec3(0.95, 0.93, 0.80), vec3(0.92, 0.86, 0.42), hash12(fcell + 4.9));
+      col = mix(col, petalCol, petal * 0.55 * fade * fade);
+    }
   }
   return col;
 }
@@ -405,7 +466,10 @@ void main(){
   albedo *= uDetail;
   // saturation lift (keeps the meadow from reading as grey-green dust)
   float lum = dot(albedo, vec3(0.299, 0.587, 0.114));
-  albedo = max(vec3(0.0), mix(vec3(lum), albedo, 1.18));
+  // A meadow is olive, not emerald. Saturation is kept close to neutral and
+  // pushed a little warm, which is what separates sunlit grass from a
+  // saturated green plane under a tonemap.
+  albedo = max(vec3(0.0), mix(vec3(lum), albedo, 1.02) * vec3(1.05, 1.02, 0.92));
 
   vec3 N = normalize(vNormal);
   float ndl = max(dot(N, uSunDir), 0.0);
@@ -419,8 +483,11 @@ void main(){
   vec3 skyFill = mix(uSkyColor * 0.86, vec3(0.30, 0.31, 0.30), 0.5);
   vec3 ambient = mix(uGroundColor * 1.15, skyFill, N.y * 0.5 + 0.5) * (0.66 + 0.46 * N.y);
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.02 + ambient);
-  color += albedo * townLights(vWorld, N) * 0.9;
-  color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5) * 0.8;
+  /* Firelight needs a warm base of its own. Multiplying the night-coloured
+     albedo by the fire term -- as this used to -- gave a few percent of extra
+     brightness, which is why the braziers lit nothing but themselves. */
+  color += mix(albedo, vec3(0.58, 0.40, 0.22), 0.42) * townLights(vWorld, N) * 2.0;
+  color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5) * 1.1;
 
   // wet sheen near the waterline
   float wet = smoothstep(0.55, 0.0, vWorld.y);
@@ -430,7 +497,7 @@ void main(){
   color = applyFoW(color, vWorld);
   // the terrain runs a hotter exposure than the models by day; after dark that
   // same curve turns night into a green-grey soup, so it comes down at night
-  fragColor = vec4(tonemap(color, mix(1.40, 1.06, uNight)), 1.0);
+  fragColor = vec4(tonemap(color, mix(1.32, 1.06, uNight)), 1.0);
 }
 `;
 
@@ -588,6 +655,19 @@ void main(){
 
   vec3 N = normalize(vNormal);
   if (!gl_FrontFacing) N = -N;
+  /* Canopy depth. A leaf mesh with one flat colour reads as a green ball; two
+     noise octaves break the mass into clusters of leaves, and an ambient
+     darkening toward the underside gives the crown volume without a single
+     extra triangle. The per-instance seed shifts the hue so a forest is not
+     one colour repeated twelve hundred times. */
+  if (layer == M_LEAF) {
+    vec3 lp = vWorld * 0.62 + vec3(vState.w * 7.0);
+    float dapple = vnoise(lp.xz + lp.y * 0.7) * 0.66 + vnoise(lp.xz * 2.7) * 0.34;
+    albedo *= 0.80 + dapple * 0.40;
+    albedo *= mix(0.60, 1.05, clamp(N.y * 0.62 + 0.5, 0.0, 1.0));
+    albedo *= mix(vec3(1.0), vec3(1.10, 1.0, 0.78), vState.w);
+    albedo *= vec3(0.95 + hash12(vec2(vState.w, 3.1)) * 0.14, 1.0, 0.92 + hash12(vec2(vState.w, 7.7)) * 0.12);
+  }
   float ndl = max(dot(N, uSunDir), 0.0);
   float sh = shadowFactor(vWorld, ndl);
   float cl = cloudShadow(vWorld.xz);
@@ -606,14 +686,18 @@ void main(){
   if (layer == M_GLASS) {
     // window panes and brazier coals: warm, never clipped to white. The old
     // 3.4x night multiplier blew every flame out into a flat white blob.
-    emissive = vec3(1.0, 0.54, 0.20) * (0.16 + uNight * 1.9) * (0.55 + 0.45 * fbm2(vWorld.xz * 3.0));
+    // hot core, deep orange edge: a flame that keeps its hue instead of
+    // clipping to the white point
+    float flicker = 0.86 + 0.14 * sin(uTime * 9.0 + vWorld.x * 2.3 + vWorld.z * 1.7);
+    emissive = vec3(1.0, 0.42, 0.10) * (0.14 + uNight * 2.3) * flicker
+             * (0.55 + 0.45 * fbm2(vWorld.xz * 3.0));
   } else if (layer == M_GOLD) {
     emissive = vec3(1.0, 0.62, 0.22) * uNight * 0.22;
   }
 
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
-  color += albedo * townLights(vWorld, N);
-  color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5);
+  color += mix(albedo, vec3(0.62, 0.44, 0.26), 0.55) * townLights(vWorld, N) * 2.4;
+  color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5) * 1.15;
   color += uSunColor * spec * sh * cl * 1.4;
   color += emissive;
 

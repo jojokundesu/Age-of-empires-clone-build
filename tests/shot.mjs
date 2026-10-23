@@ -75,6 +75,12 @@ const pose = async (p) => {
     cam.pitch = cam.desiredPitch = p.pitch ?? 0.62;
     cam.dist = cam.desiredDist = p.dist ?? 46;
     a.camera.setTarget(tc.x + (p.dx || 0), tc.z + (p.dz || 0), true);
+    // diagnostic: drop a decor kind entirely (e.g. hide:["tuft"]) to see what
+    // a single prop family contributes to the ground clutter
+    if (p.hide && p.hide.length) {
+      for (const kind of p.hide) a.renderer.propCells.get(kind)?.clear();
+      a.renderer.propDirty = true;
+    }
   }, p);
   // headless software GL runs at a couple of frames per second, so "wait
   // 2 s" is not the same as "the renderer has drawn the new time of day".
