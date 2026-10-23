@@ -97,7 +97,8 @@ page.on('pageerror', (e) => pageErrors.push(String(e && e.stack ? e.stack.split(
 
 const results = {};
 const fail = [];
-const expect = (cond, msg) => { if (!cond) fail.push(msg); };
+let checksRun = 0;
+const expect = (cond, msg) => { checksRun++; if (!cond) fail.push(msg); };
 const shot = async (name) => {
   const p = join(OUT, name + '.png');
   await page.screenshot({ path: p });
@@ -184,6 +185,47 @@ try {
     return { glError: a.renderer.gl.getError(), errors: a.errors ? a.errors.slice(0, 3) : null };
   });
 
+  // ---- day / night: the same camera, eight hours later -------------------
+  // Reads the actual framebuffer, so it catches "night is a black screen" and
+  // "the sun never moves" rather than just checking that a uniform was set.
+  const sampleLuma = () => page.evaluate(() => {
+    const a = window.__imperial;
+    const gl = a.renderer.gl;
+    const w = 96, h = 54;
+    const px = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    let sum = 0, warm = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const r = px[i], g = px[i + 1], b = px[i + 2];
+      sum += 0.299 * r + 0.587 * g + 0.114 * b;
+      warm += r - b;
+    }
+    const n = px.length / 4;
+    return { luma: sum / n, warmth: warm / n };
+  });
+  const setHour = async (hour) => {
+    await page.evaluate((hour) => window.__imperial.game.setTimeOfDay(hour), hour);
+    await page.waitForFunction(
+      (hour) => Math.abs(window.__imperial.renderer.worldTime - hour) < 0.05,
+      { timeout: 30000, polling: 120 }, hour,
+    );
+    await new Promise((r) => setTimeout(r, 900));
+    return sampleLuma();
+  };
+  results.daylight = await setHour(12);
+  results.daylightShot = await shot('05-daylight');
+  results.night = await setHour(22.5);
+  results.nightShot = await shot('06-night');
+
+  expect(results.daylight.luma > 45, `daytime frame is nearly black (${results.daylight.luma.toFixed(1)})`);
+  expect(results.night.luma > 5, `night frame is black (${results.night.luma.toFixed(1)})`);
+  expect(results.night.luma < results.daylight.luma * 0.8,
+    `night is not darker than day (${results.night.luma.toFixed(1)} vs ${results.daylight.luma.toFixed(1)})`);
+  expect(results.nightShot > 12000, 'night screenshot looks blank');
+  expect(results.daylight.warmth > results.night.warmth,
+    `daylight is not warmer than moonlight (${results.daylight.warmth.toFixed(1)} vs ${results.night.warmth.toFixed(1)})`);
+  await setHour(10);
+
   results.errors = { console: consoleErrors.slice(0, 10), page: pageErrors.slice(0, 10) };
 
   expect(results.errors.page.length === 0, 'page errors: ' + results.errors.page.join(' | '));
@@ -215,7 +257,9 @@ const md = [
   `- Frame: **${fmt(f.fps)} fps** avg ${fmt(f.avgMs)} ms · p95 ${fmt(f.p95Ms)} ms · worst ${fmt(f.worstMs)} ms (${f.samples} samples)`,
   `- World: ${f.units} units, ${f.buildings} buildings, game time ${fmt(f.time, 0)} s`,
   `- UI: ${results.ui?.cards ?? '?'} command cards · glError ${results.afterUi?.glError ?? '?'}`,
+  `- Day/night: noon luma ${fmt(results.daylight?.luma)} → night luma ${fmt(results.night?.luma)} (screenshots 05/06)`,
   `- Console errors: ${results.errors?.console.length ?? '?'} · page errors: ${results.errors?.page.length ?? '?'}`,
+  `- Checks: ${checksRun} run · ${fail.length} failed`,
   results.errors?.page.length ? `  - ${results.errors.page.join('\n  - ')}` : '',
   results.errors?.console.length ? `  - ${results.errors.console.join('\n  - ')}` : '',
   fail.length ? `\n**FAILURES**\n${fail.map((x) => '- ' + x).join('\n')}` : '\n**All browser checks passed.**'
