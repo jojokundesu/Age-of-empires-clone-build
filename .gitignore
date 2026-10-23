@@ -1,0 +1,10 @@
+node_modules/
+dist/
+ci/
+*.log
+.DS_Store
+android/build/
+android/app/build/
+*.apk
+*.aab
+*.keystore

@@ -1,0 +1,297 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish / update the GitHub release with this APK'
+        type: boolean
+        default: true
+  push:
+    # feature branches build + test; only main and tags publish a release
+    branches: [main, 'arena/**']
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android build-tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          ls "$ANDROID_HOME/build-tools"
+          echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0" >> "$GITHUB_ENV"
+          echo "PLATFORM=$ANDROID_HOME/platforms/android-34" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Unit + integration tests
+        run: |
+          set -o pipefail
+          npm run test:ci 2>&1 | tee ci-test.log
+
+      # The browser test serves dist/, so it has to exist before the test — the
+      # old workflow only built inside the APK script, so every browser run was
+      # silently testing a 404 page.
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Browser smoke test (real headless Chrome)
+        id: browser
+        continue-on-error: true
+        run: |
+          # puppeteer-core drives the Chrome the runner already has; the install
+          # is only needed when the dev dependency tree is missing it.
+          (npm ls puppeteer-core >/dev/null 2>&1 || npm i --no-save puppeteer-core@23) 2>&1 | tee -a browser-test.log
+          node -e "import('puppeteer-core').then(() => console.log('puppeteer-core ok')).catch((e) => { console.error(e); process.exit(1); })" 2>&1 | tee -a browser-test.log
+          (google-chrome --version || chromium --version || chromium-browser --version) 2>&1 | tee -a browser-test.log
+          node tests/browser.mjs --seconds 8 --dpr 1.5 --out ci/screenshots 2>&1 | tee -a browser-test.log
+
+      # 260-entity battle on the phone profile: heap after forced GC, tick cost,
+      # draw calls, DOM size. This is the regression guard for the original
+      # build's hangs, leaks and DOM thrash.
+      - name: Soak test (phone profile)
+        id: soak
+        continue-on-error: true
+        run: |
+          node tests/soak.mjs --seconds 30 --units 220 2>&1 | tee -a soak.log
+
+      # The runner log is not always downloadable, so the interesting part of
+      # it is posted on the pull request (and into the job summary) instead.
+      - name: Publish browser diagnostics
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo '### Browser diagnostics'
+            echo
+            echo "step outcome: \`${{ steps.browser.outcome }}\`"
+            echo
+            echo '```'
+            tail -n 100 browser-test.log 2>/dev/null || echo 'no log written'
+            echo '```'
+            echo
+            cat ci/browser-report.md 2>/dev/null || echo '_no report written_'
+            echo
+            cat ci/playtest-report.md 2>/dev/null || echo '_no play test report written_'
+            echo
+            cat ci/soak-report.md 2>/dev/null || echo '_no soak report written_'
+            echo
+            echo '### Soak log'
+            echo '```'
+            tail -n 40 soak.log 2>/dev/null || echo 'no soak log'
+            echo '```'
+          } > ci/browser-diagnostics.md
+          cat ci/browser-diagnostics.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file ci/browser-diagnostics.md
+          fi
+
+      # The play test drives the real bundle like a player: tap, box drag,
+      # gather, build a house, queue a villager, earn and spend an age advance,
+      # night, the whole camera rail, the minimap, pause, then a barracks and a
+      # battle to the death -- 12 checks, plus the frame budget at the end.
+      - name: Play test (a whole session in Chrome)
+        id: playtest
+        continue-on-error: true
+        run: |
+          node tests/playtest.mjs --out ci/screenshots 2>&1 | tee -a playtest.log
+
+      - name: Check the play test passed
+        run: |
+          test -s ci/playtest-report.md || { echo "::error::ci/playtest-report.md missing"; exit 1; }
+          grep -qi "PLAYTEST PASSED" ci/playtest-report.md || {
+            echo "::error::the play test did not pass"; cat ci/playtest-report.md; exit 1; }
+          grep -c '✅' ci/playtest-report.md
+
+      # A browser run that produced no report must fail the job. Before this
+      # the step "passed" on a 191-byte artifact and silently skipped every
+      # real WebGL assertion.
+      - name: Check the browser run actually reported
+        run: |
+          test -s ci/browser-report.md || { echo "::error::ci/browser-report.md missing or empty"; exit 1; }
+          test -d ci/screenshots || { echo "::error::no screenshots written"; exit 1; }
+          ls -la ci/screenshots | head -20
+          grep -qi "all browser checks passed" ci/browser-report.md || { echo "::error::browser checks did not pass"; cat ci/browser-report.md; exit 1; }
+
+      - name: Check the soak actually passed
+        run: |
+          test -s ci/soak-report.md || { echo "::error::ci/soak-report.md missing"; exit 1; }
+          grep -qi "soak passed" ci/soak-report.md || { echo "::error::soak checks did not pass"; cat ci/soak-report.md; exit 1; }
+
+      - name: Upload screenshots + browser report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-screenshots
+          path: |
+            ci/screenshots
+            ci/browser-report.md
+            ci/playtest-report.md
+            ci/soak-report.md
+            browser-test.log
+            playtest.log
+            soak.log
+          retention-days: 30
+          if-no-files-found: error
+
+
+      - name: Build APK
+        run: |
+          chmod +x scripts/build-apk.sh
+          # pipefail matters: without it the pipeline reports tee's status, so a
+          # failed build looked like a successful step and only the next step
+          # complained, with no reason anywhere in the log.
+          set -o pipefail
+          ./scripts/build-apk.sh 2>&1 | tee apk-build.log
+
+      # The runner log is not always downloadable from the sandbox this project
+      # is developed in, so a failed APK build reports itself on the pull
+      # request instead of only in the job log.
+      - name: Post APK build log on failure
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo '### APK build failed'
+            echo
+            echo '```'
+            tail -n 80 apk-build.log 2>/dev/null || echo 'no apk-build.log'
+            echo '```'
+          } > apk-failure.md
+          cat apk-failure.md >> "$GITHUB_STEP_SUMMARY"
+          # push events carry no PR number; find the open PR for this branch
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --json number -q '.[0].number' 2>/dev/null || true)
+          fi
+          if [ -n "$PR_NUMBER" ]; then gh pr comment "$PR_NUMBER" --body-file apk-failure.md; fi
+          # annotations survive even when the log download is unreachable
+          tail -n 60 apk-build.log 2>/dev/null | sed 's/^/::error::/' || true
+
+      - name: Verify APK
+        run: |
+          APK=$(ls build/imperial-crown-*.apk | head -1)
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          # every scheme a phone might ask for, and the exact certificate, so a
+          # key change (which breaks upgrade installs) cannot slip through
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee apk-verify.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apk-verify.txt
+          grep "Signer #1 certificate SHA-256" apk-verify.txt
+          "$BUILD_TOOLS/zipalign" -c -p 4 "$APK"
+          # no classes.dex means the package installs as "app not installed,
+          # package appears to be invalid" on every Android since 5
+          unzip -l "$APK" | grep -q "classes.dex" || { echo "::error::APK contains no classes.dex"; exit 1; }
+          unzip -l "$APK" | grep -q "assets/www/index.html" || { echo "::error::APK contains no game"; exit 1; }
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | head -12
+          cp "$APK" "imperial-crown.apk"
+          ls -lh imperial-crown.apk
+          sha256sum imperial-crown.apk | tee apk-sha256.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: imperial-crown-apk
+          path: |
+            imperial-crown.apk
+            apk-sha256.txt
+          retention-days: 90
+
+      - name: Publish release
+        if: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/arena/486bc82a-age-of-empires-clone-build') || (github.event_name == 'workflow_dispatch' && inputs.release) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(node -p "require('./package.json').version")-mobile"
+          NOTES="Imperial Crown 3D — mobile build.
+
+          * Fully offline: the entire game ships inside the APK (procedural art, no downloads).
+          * Custom WebGL2 engine tuned for the Realme 9i / Adreno 610.
+          * Sideload with \`adb install imperial-crown.apk\` or tap the download on your phone.
+
+          Built from \`${GITHUB_SHA::7}\` on $(date -u +%Y-%m-%d)."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" imperial-crown.apk apk-sha256.txt --clobber
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" imperial-crown.apk apk-sha256.txt \
+              --title "Imperial Crown 3D — $TAG" --notes "$NOTES"
+          fi
+          gh release view "$TAG" --json assets,url -q '.url, .assets[].url'
+
+      - name: Publish browser build as a release asset
+        if: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/arena/486bc82a-age-of-empires-clone-build') || (github.event_name == 'workflow_dispatch' && inputs.release) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(node -p "require('./package.json').version")-mobile"
+          (cd dist && zip -qr ../imperial-crown-web.zip .)
+          gh release upload "$TAG" imperial-crown-web.zip --clobber
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            ci-test.log
+            apk-build.log
+            apk-sha256.txt
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Job summary
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "### Imperial Crown 3D build"
+            echo '```'
+            echo "sha:    $GITHUB_SHA"
+            echo "branch: $GITHUB_REF_NAME"
+            echo
+            echo "== tests =="
+            tail -12 ci-test.log 2>/dev/null || echo "(no test log)"
+            echo
+            echo "== apk =="
+            tail -22 apk-build.log 2>/dev/null || echo "(no apk log)"
+            cat apk-sha256.txt 2>/dev/null || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

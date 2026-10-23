@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<meta name="theme-color" content="#0a0d10" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="description" content="Imperial Crown 3D — a mobile-first real-time strategy engine with a custom WebGL2 renderer." />
+<title>Imperial Crown 3D</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+<link rel="manifest" href="./manifest.webmanifest" />
+<link rel="stylesheet" href="./src/styles/ui.css" />
+</head>
+<body>
+
+<!-- ============================ ICON SPRITE ============================ -->
+<svg id="iconSprite" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-sword" viewBox="0 0 24 24"><path d="M14.5 3.5 20 3l-.5 5.5-9 9-2-2z"/><path d="M9.6 14.4 4 20"/><path d="m6.2 12.7 5.1 5.1"/><path d="M3.5 20.5 5 19"/></symbol>
+    <symbol id="i-spear" viewBox="0 0 24 24"><path d="M4 20 19 5"/><path d="m17 3 4 0 0 4-4-4z"/><path d="m6.5 15.5 2.2 2.2"/></symbol>
+    <symbol id="i-bow" viewBox="0 0 24 24"><path d="M5 19C3 13 6 6 15 4"/><path d="M5 19 20 4"/><path d="m15 4 5-1-1 5"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 20 6v6c0 4.5-3.4 7.6-8 9-4.6-1.4-8-4.5-8-9V6z"/><path d="M12 7v10"/></symbol>
+    <symbol id="i-axe" viewBox="0 0 24 24"><path d="M14 20 6 5"/><path d="M4 3c4 0 7 2 8 6-3 2-6 2-8 0z"/><path d="M11 20h6"/></symbol>
+    <symbol id="i-hammer" viewBox="0 0 24 24"><path d="m14 10 7 7-3 3-7-7"/><path d="M6 4h5l4 4-4 4-4-4z"/><path d="m9 9-5 5 3 3 5-5"/></symbol>
+    <symbol id="i-pick" viewBox="0 0 24 24"><path d="M4 20 14 10"/><path d="M4 6c5-3 12-3 16 0-5-1-9 1-12 4"/><path d="M16 20l4-4"/></symbol>
+    <symbol id="i-wheat" viewBox="0 0 24 24"><path d="M12 21V9"/><path d="M12 12c-3 0-4-2-4-4 2 0 4 1 4 4zM12 12c3 0 4-2 4-4-2 0-4 1-4 4z"/><path d="M12 17c-3 0-4-2-4-4 2 0 4 1 4 4zM12 17c3 0 4-2 4-4-2 0-4 1-4 4z"/><path d="M12 8c0-3 1-4 3-5-1 3-1 5-3 5z"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="m3 21 6-6"/><path d="M14 3l7 7-2 2-7-7z"/><path d="M10 10l4 4-6 6H4v-4z"/></symbol>
+    <symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M9.5 10h5M9.5 14h5"/></symbol>
+    <symbol id="i-stone" viewBox="0 0 24 24"><path d="m4 15 3-7 6-2 6 5-2 8H7z"/><path d="m7 8 5 5 7-2"/></symbol>
+    <symbol id="i-tree" viewBox="0 0 24 24"><path d="M12 21v-6"/><path d="M12 3 6 12h3l-3 5h12l-3-5h3z"/></symbol>
+    <symbol id="i-house" viewBox="0 0 24 24"><path d="m3 11 9-7 9 7"/><path d="M6 10v10h12V10"/><path d="M10 20v-5h4v5"/></symbol>
+    <symbol id="i-tower" viewBox="0 0 24 24"><path d="M7 21V6h10v15"/><path d="M6 6h12l-1-3H7z"/><path d="M9 10h2v3H9zM13 10h2v3h-2z"/><path d="M9 16h6v5H9z"/></symbol>
+    <symbol id="i-castle" viewBox="0 0 24 24"><path d="M3 21V9h3V7h3v2h2V7h2v2h3V7h3v2h2v12z"/><path d="M10 21v-5h4v5"/><path d="M3 12h18"/></symbol>
+    <symbol id="i-temple" viewBox="0 0 24 24"><path d="M4 21h16"/><path d="M6 21V10h12v11"/><path d="m12 3 8 6H4z"/><path d="M10 21v-5a2 2 0 0 1 4 0v5"/></symbol>
+    <symbol id="i-market" viewBox="0 0 24 24"><path d="M4 21V9h16v12"/><path d="M3 9 5 4h14l2 5z"/><path d="M8 21v-7h8v7"/></symbol>
+    <symbol id="i-anvil" viewBox="0 0 24 24"><path d="M3 9h12c0 3-2 4-4 4h-3l-1 6h6"/><path d="M7 21h10"/><path d="M16 9h4l-1 3h-3"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5c3-1 6-1 8 1 2-2 5-2 8-1v14c-3-1-6-1-8 1-2-2-5-2-8-1z"/><path d="M12 6v14"/></symbol>
+    <symbol id="i-dock" viewBox="0 0 24 24"><path d="M4 8h16"/><path d="M8 8v10M16 8v10"/><path d="M4 3v13a4 4 0 0 0 4 4h8a4 4 0 0 0 4-4V3"/></symbol>
+    <symbol id="i-ship" viewBox="0 0 24 24"><path d="M3 14h18l-3 6H6z"/><path d="M12 4v10"/><path d="M12 5 19 12h-7z"/></symbol>
+    <symbol id="i-ram" viewBox="0 0 24 24"><path d="M3 15h18l-3 5H6z"/><path d="M6 15l2-6h8l2 6"/><circle cx="9" cy="19" r="2"/><circle cx="15" cy="19" r="2"/></symbol>
+    <symbol id="i-catapult" viewBox="0 0 24 24"><path d="M4 21V11h16v10"/><path d="m6 11 8-7 2 2-6 5"/><circle cx="9" cy="19" r="2"/><circle cx="16" cy="19" r="2"/></symbol>
+    <symbol id="i-cannon" viewBox="0 0 24 24"><path d="M3 15h13l4-4-3-3-4 4H3z"/><circle cx="7" cy="18" r="2.5"/><circle cx="14" cy="18" r="2.5"/></symbol>
+    <symbol id="i-monk" viewBox="0 0 24 24"><path d="M9 21v-7a3 3 0 0 1 6 0v7"/><circle cx="12" cy="6" r="3"/><path d="M18 4v7"/><path d="M16 6h4"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M5 21V3"/><path d="M5 4c5-2 9 2 14 0v8c-5 2-9-2-14 0z"/></symbol>
+    <symbol id="i-crown" viewBox="0 0 24 24"><path d="M3 8l4 4 5-7 5 7 4-4v10H3z"/><circle cx="12" cy="15" r="1"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M12 3c4 5 6 7 6 10a6 6 0 0 1-12 0c0-2 1-3 3-5 0 2 1 3 2 3 0-3 0-5 1-8z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 4v16M15 4v16"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4 12 8-12 8z"/></symbol>
+    <symbol id="i-sound" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 8a5 5 0 0 1 0 8"/><path d="M19 5a9 9 0 0 1 0 14"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="m17 9 4 6M21 9l-4 6"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m5 5 14 14M19 5 5 19"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 14 6-6 6 6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 10 6 6 6-6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-heart" viewBox="0 0 24 24"><path d="M12 20S3 15 3 9a5 5 0 0 1 9-3 5 5 0 0 1 9 3c0 6-9 11-9 11z"/></symbol>
+    <symbol id="i-hourglass" viewBox="0 0 24 24"><path d="M6 3h12M6 21h12"/><path d="M7 3c0 5 5 6 5 9s-5 4-5 9M17 3c0 5-5 6-5 9s5 4 5 9"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="m3 6 6-2 6 2 6-2v14l-6 2-6-2-6 2z"/><path d="M9 4v14M15 6v14"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
+    <symbol id="i-boot" viewBox="0 0 24 24"><path d="M7 3v9c0 3-2 4-2 7h14a4 4 0 0 0-4-4h-3V3z"/><path d="M5 19h14"/></symbol>
+    <symbol id="i-people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v2"/><circle cx="17" cy="9" r="2.4"/><path d="M17 14a4 4 0 0 1 4 4v2"/></symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24"><path d="M3 6h3l2 9h10"/><circle cx="9" cy="19" r="2"/><circle cx="17" cy="19" r="2"/><path d="M19 15V9h-5"/></symbol>
+    <symbol id="i-fish" viewBox="0 0 24 24"><path d="M3 12c4-5 9-5 12 0-3 5-8 5-12 0z"/><path d="m15 12 6-4v8z"/><circle cx="7" cy="11" r="1"/></symbol>
+    <symbol id="i-deer" viewBox="0 0 24 24"><path d="M7 21v-6l-2-4 3-3 3 1 1-3 3 1 2-2"/><path d="M9 8 8 3M14 8l2-4"/><circle cx="13" cy="13" r="1"/></symbol>
+    <symbol id="i-relic" viewBox="0 0 24 24"><path d="M6 4h12v5a6 6 0 0 1-12 0z"/><path d="M12 15v6M8 21h8"/><path d="M9 4v5a3 3 0 0 0 6 0V4"/></symbol>
+    <symbol id="i-wall" viewBox="0 0 24 24"><path d="M3 20V9h4v4h3V9h4v4h3V9h4v11z"/><path d="M3 14h18"/></symbol>
+    <symbol id="i-gate" viewBox="0 0 24 24"><path d="M4 21V5h16v16"/><path d="M9 21v-6a3 3 0 0 1 6 0v6"/><path d="M4 8h3M17 8h3M4 13h2M18 13h2"/></symbol>
+    <symbol id="i-scroll" viewBox="0 0 24 24"><path d="M6 3h11a2 2 0 0 1 2 2v14a2 2 0 0 0 2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-helmet" viewBox="0 0 24 24"><path d="M5 13a7 7 0 0 1 14 0v5h-4l-1-4h-4l-1 4H5z"/><path d="M12 3v5"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 5 14h6l-1 8 8-12h-6z"/></symbol>
+    <symbol id="i-skull" viewBox="0 0 24 24"><path d="M12 3a8 8 0 0 0-5 14v4h10v-4a8 8 0 0 0-5-14z"/><circle cx="9" cy="11" r="1.6"/><circle cx="15" cy="11" r="1.6"/></symbol>
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"/><path d="M5 10v11h14V10"/></symbol>
+    <symbol id="i-mountain" viewBox="0 0 24 24"><path d="m3 20 6-12 4 7 3-4 5 9z"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M20 4C10 4 4 9 4 16c0 2 1 4 3 4 7 0 13-6 13-16z"/><path d="M6 19C9 14 13 10 18 7"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M4 4h13l3 3v13H4z"/><path d="M8 4v6h8V4"/><path d="M8 14h8v6H8z"/></symbol>
+    <symbol id="i-load" viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 13 5 5L20 6"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24"><path d="M12 3 2 21h20z"/><path d="M12 9v5M12 17v1"/></symbol>
+    <symbol id="i-villager" viewBox="0 0 24 24"><circle cx="12" cy="6" r="3"/><path d="M8 21v-6l-2-2 2-4h8l2 4-2 2v6"/><path d="m9 21 3-4 3 4"/></symbol>
+  </defs>
+</svg>
+
+<div id="app">
+  <!-- ============================ 3D STAGE ============================ -->
+  <div id="stage">
+    <canvas id="gl"></canvas>
+    <div id="vignette"></div>
+    <div id="tapFx"></div>
+    <div id="floatLayer"></div>
+    <div id="selBox"></div>
+  </div>
+
+  <!-- ============================ HUD ============================ -->
+  <div id="hud" class="hidden">
+    <header id="topBar">
+      <div class="panel resPanel">
+        <div class="resChip" data-res="food"><svg class="ic"><use href="#i-wheat"/></svg><b id="resFood">0</b><i class="resDot" id="dotFood"></i></div>
+        <div class="resChip" data-res="wood"><svg class="ic"><use href="#i-tree"/></svg><b id="resWood">0</b><i class="resDot" id="dotWood"></i></div>
+        <div class="resChip" data-res="gold"><svg class="ic"><use href="#i-coin"/></svg><b id="resGold">0</b><i class="resDot" id="dotGold"></i></div>
+        <div class="resChip" data-res="stone"><svg class="ic"><use href="#i-stone"/></svg><b id="resStone">0</b><i class="resDot" id="dotStone"></i></div>
+        <div class="resChip" data-res="favor" title="Imperial Favor — spent on Decrees"><svg class="ic"><use href="#i-bolt"/></svg><b id="resFavor">0</b></div>
+        <div class="resChip pop" title="Population"><svg class="ic"><use href="#i-people"/></svg><b id="resPop">0/0</b></div>
+      </div>
+
+      <div class="panel centerPanel">
+        <button class="ageBtn" id="ageBtn" title="Advance to the next Age">
+          <span id="ageName">Dark Age</span>
+          <small id="ageHint">Advance</small>
+        </button>
+        <div class="clockWrap">
+          <span id="clock">00:00</span>
+          <span id="worldTime" class="worldTime">☀ 12:00</span>
+        </div>
+      </div>
+
+      <div class="panel topActions">
+        <button class="iconBtn" id="btnIdle" title="Next idle villager"><svg class="ic"><use href="#i-villager"/></svg><span class="badge" id="idleBadge">0</span></button>
+        <button class="iconBtn" id="btnArmy" title="Select army"><svg class="ic"><use href="#i-sword"/></svg></button>
+        <button class="iconBtn" id="btnTech" title="Technology"><svg class="ic"><use href="#i-scroll"/></svg></button>
+        <button class="iconBtn" id="btnDecrees" title="Imperial Decrees"><svg class="ic"><use href="#i-crown"/></svg><span class="badge favor" id="decreeBadge">0</span></button>
+        <button class="iconBtn" id="btnSound" title="Sound"><svg class="ic"><use href="#i-sound"/></svg></button>
+        <button class="iconBtn" id="btnPause" title="Pause"><svg class="ic"><use href="#i-pause"/></svg></button>
+        <button class="iconBtn" id="btnMenu" title="Menu"><svg class="ic"><use href="#i-menu"/></svg></button>
+      </div>
+    </header>
+
+    <div id="alertStrip"></div>
+
+    <div id="leftRail">
+      <div class="railGroup" id="stanceBar">
+        <button class="railBtn" data-stance="aggressive" title="Aggressive stance"><svg class="ic"><use href="#i-sword"/></svg></button>
+        <button class="railBtn" data-stance="defensive" title="Defensive stance"><svg class="ic"><use href="#i-shield"/></svg></button>
+        <button class="railBtn" data-stance="stand" title="Stand ground"><svg class="ic"><use href="#i-boot"/></svg></button>
+      </div>
+      <div class="railGroup" id="camBar">
+        <button class="railBtn" id="camRotL" title="Rotate"><svg class="ic" style="transform:rotate(-45deg)"><use href="#i-up"/></svg></button>
+        <button class="railBtn" id="camRotR" title="Rotate"><svg class="ic" style="transform:rotate(45deg)"><use href="#i-up"/></svg></button>
+        <button class="railBtn" id="camHome" title="Centre on Town Centre"><svg class="ic"><use href="#i-home"/></svg></button>
+        <button class="railBtn" id="camZoomIn" title="Zoom in"><svg class="ic"><use href="#i-plus"/></svg></button>
+        <button class="railBtn" id="camZoomOut" title="Zoom out"><svg class="ic"><use href="#i-down"/></svg></button>
+        <button class="railBtn" id="camTiltUp" title="Tilt toward the horizon (look at the sky)"><svg class="ic"><use href="#i-eye"/></svg></button>
+        <button class="railBtn" id="camTiltDown" title="Tilt toward the ground"><svg class="ic" style="transform:rotate(180deg)"><use href="#i-eye"/></svg></button>
+      </div>
+    </div>
+
+    <div id="bottomBar">
+      <section class="panel miniPanel">
+        <div class="miniFrame">
+          <canvas id="minimap" width="320" height="320"></canvas>
+          <div class="miniGloss"></div>
+          <div class="miniStamp" id="miniStamp">MAP</div>
+        </div>
+        <div class="miniTools">
+          <button class="miniBtn" id="btnGotoTC"><svg class="ic"><use href="#i-home"/></svg></button>
+          <button class="miniBtn" id="btnMiniMode" title="Toggle minimap mode"><svg class="ic"><use href="#i-map"/></svg></button>
+          <button class="miniBtn" id="btnFormation" title="Formation"><svg class="ic"><use href="#i-people"/></svg></button>
+        </div>
+      </section>
+
+      <section class="panel inspector">
+        <div class="inspHead">
+          <div class="inspIcon" id="inspIcon"><svg class="ic"><use href="#i-eye"/></svg></div>
+          <div class="inspTitles">
+            <div class="inspName" id="inspName">Nothing selected</div>
+            <div class="inspSub" id="inspSub">Tap a unit or building</div>
+          </div>
+          <button class="inspMulti" id="inspMultiBtn" title="Select all of this type">×1</button>
+        </div>
+        <div class="hpWrap" id="hpWrap"><div class="hpTrack"><div class="hpFill" id="hpFill"></div></div><span id="hpText">0 / 0</span></div>
+        <div class="inspStats" id="inspStats"></div>
+        <div class="queueWrap" id="queueWrap">
+          <div class="queueTrack"><div class="queueFill" id="queueFill"></div></div>
+          <span id="queueText">Idle</span>
+        </div>
+        <div class="queueDots" id="queueDots"></div>
+      </section>
+
+      <section class="panel cmdPanel">
+        <div class="cmdBoot" id="cmdBoot">
+          <div class="cmdHint">Select something to command</div>
+        </div>
+        <div class="cmdGrid" id="cmdGrid"></div>
+      </section>
+    </div>
+
+    <div id="toastLayer"></div>
+    <div id="perfChip" class="hidden">—</div>
+    <button id="diagBtn" class="hidden" title="Diagnostics"><svg class="ic"><use href="#i-cog"/></svg></button>
+  </div>
+
+  <!-- ============================ BOOT ============================ -->
+  <div id="bootScreen">
+    <div class="bootGlow"></div>
+    <div class="bootInner">
+      <div class="crest">
+        <svg viewBox="0 0 64 64" class="crestSvg">
+          <path d="M8 22l10 9 8-15 6 12 6-12 8 15 10-9-4 30H12z" fill="url(#goldGrad)" stroke="#8a5c15" stroke-width="1.2"/>
+          <defs><linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a8"/><stop offset=".5" stop-color="#e8b84b"/><stop offset="1" stop-color="#9c6a1c"/></linearGradient></defs>
+          <circle cx="32" cy="40" r="4" fill="#4a1111" stroke="#ffd879" stroke-width="1"/>
+        </svg>
+      </div>
+      <h1 class="bootTitle">IMPERIAL CROWN</h1>
+      <div class="bootSub">A REAL-TIME EMPIRE, FORGED IN WEBGL 2</div>
+      <div class="bootBar"><div class="bootBarFill" id="bootBarFill"></div></div>
+      <div class="bootStatus" id="bootStatus">Heating the forge…</div>
+      <div class="bootTip" id="bootTip"></div>
+    </div>
+    <div class="bootFoot">REALME&nbsp;9i · ADRENO&nbsp;610 TUNED · NO ASSET DOWNLOADS · OFFLINE READY</div>
+  </div>
+
+  <!-- ============================ MAIN MENU ============================ -->
+  <div id="menuScreen" class="screen hidden">
+    <div class="menuBg"></div>
+    <div class="menuShell">
+      <div class="menuLeft">
+        <div class="menuBrand">
+          <svg viewBox="0 0 64 64" class="brandCrest"><path d="M8 22l10 9 8-15 6 12 6-12 8 15 10-9-4 30H12z" fill="url(#goldGrad2)" stroke="#8a5c15" stroke-width="1.2"/><defs><linearGradient id="goldGrad2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a8"/><stop offset=".5" stop-color="#e8b84b"/><stop offset="1" stop-color="#9c6a1c"/></linearGradient></defs></svg>
+          <div>
+            <h1>IMPERIAL CROWN</h1>
+            <p>Command an empire. Break a king.</p>
+          </div>
+        </div>
+
+        <div class="menuSection" id="modeSection">
+          <h2><span>01</span> Choose your campaign</h2>
+          <div class="modeGrid">
+            <button class="modeCard active" data-mode="campaign">
+              <svg class="ic big"><use href="#i-castle"/></svg>
+              <b>Imperial Conquest</b>
+              <small>Rival kingdoms, four ages, open warfare.</small>
+            </button>
+            <button class="modeCard" data-mode="regicide">
+              <svg class="ic big"><use href="#i-crown"/></svg>
+              <b>Regicide</b>
+              <small>Protect your King. Hunt theirs.</small>
+            </button>
+            <button class="modeCard" data-mode="wonder">
+              <svg class="ic big"><use href="#i-temple"/></svg>
+              <b>Wonder Race</b>
+              <small>Raise a wonder and hold it for 200s.</small>
+            </button>
+            <button class="modeCard" data-mode="sandbox">
+              <svg class="ic big"><use href="#i-leaf"/></svg>
+              <b>Grand Sandbox</b>
+              <small>Thousands of resources. Build freely.</small>
+            </button>
+          </div>
+        </div>
+
+        <div class="menuSection">
+          <h2><span>02</span> Your civilisation</h2>
+          <div class="civGrid" id="civGrid"></div>
+          <div class="civBrief" id="civBrief"></div>
+        </div>
+
+        <div class="menuSection">
+          <h2><span>03</span> Opposition</h2>
+          <div class="segRow" id="diffRow">
+            <button class="seg" data-diff="standard">Standard</button>
+            <button class="seg active" data-diff="hard">Hard</button>
+            <button class="seg" data-diff="extreme">Imperious</button>
+            <button class="seg" data-diff="sandbox">Peaceful</button>
+          </div>
+          <div class="seedRow">
+            <label for="seedInput">Map seed</label>
+            <input id="seedInput" type="text" inputmode="numeric" value="20261" maxlength="9" />
+            <button class="ghostBtn" id="btnRerollSeed"><svg class="ic"><use href="#i-map"/></svg> New world</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="menuRight">
+        <div class="menuArt">
+          <canvas id="menuArtCanvas" width="640" height="900"></canvas>
+          <div class="menuArtFade"></div>
+          <div class="menuArtText">
+            <div class="kicker">CAMPAIGN PREVIEW</div>
+            <div class="artTitle" id="artTitle">The Rhine Frontier</div>
+            <div class="artDesc" id="artDesc"></div>
+          </div>
+        </div>
+        <button class="startBtn" id="btnStart">
+          <span>BEGIN THE CAMPAIGN</span>
+          <small id="startSub">Franks · Hard · Imperial Conquest</small>
+        </button>
+        <div class="menuFootRow">
+          <button class="ghostBtn" id="btnLoad"><svg class="ic"><use href="#i-load"/></svg> Load</button>
+          <button class="ghostBtn" id="btnSettings"><svg class="ic"><use href="#i-cog"/></svg> Settings</button>
+          <button class="ghostBtn" id="btnHelp"><svg class="ic"><use href="#i-book"/></svg> Field manual</button>
+        </div>
+        <div class="menuMeta">
+          <span id="menuVersion">v2.0</span><span>·</span><span id="menuPerf">WebGL2</span><span>·</span><span>No downloads</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================ MODAL ============================ -->
+  <div id="modalScreen" class="screen hidden">
+    <div class="modalBackdrop" data-close="1"></div>
+    <div class="modalCard">
+      <header class="modalHead">
+        <div>
+          <div class="kicker" id="modalKicker">COUNCIL</div>
+          <h2 id="modalTitle">Title</h2>
+        </div>
+        <button class="iconBtn" id="modalClose"><svg class="ic"><use href="#i-close"/></svg></button>
+      </header>
+      <div class="modalTabs" id="modalTabs"></div>
+      <div class="modalBody" id="modalBody"></div>
+      <footer class="modalFoot" id="modalFoot"></footer>
+    </div>
+  </div>
+
+  <!-- ============================ END SCREEN ============================ -->
+  <div id="endScreen" class="screen hidden">
+    <div class="endCard">
+      <div class="endKicker" id="endKicker">VICTORY</div>
+      <h1 id="endTitle">The Empire Endures</h1>
+      <p id="endDesc"></p>
+      <div class="endStats" id="endStats"></div>
+      <div class="endBtns">
+        <button class="startBtn small" id="btnEndAgain"><span>PLAY AGAIN</span></button>
+        <button class="ghostBtn" id="btnEndMenu"><svg class="ic"><use href="#i-home"/></svg> Main menu</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="rotateHint" class="hidden">
+    <svg class="ic"><use href="#i-cog"/></svg>
+    <span>Rotate your phone for the full battlefield view</span>
+  </div>
+</div>
+
+<noscript><div style="padding:24px;color:#f5e6c8;font-family:serif">Imperial Crown needs JavaScript and WebGL2.</div></noscript>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
