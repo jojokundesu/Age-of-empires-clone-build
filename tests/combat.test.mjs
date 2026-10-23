@@ -45,6 +45,7 @@ function battle(armyA, armyB, seconds = 120) {
 }
 
 const fails = [];
+const assert = (cond, msg) => { if (!cond) throw new Error(msg || 'assert'); };
 function expect(cond, msg) { if (!cond) { fails.push(msg); console.log('  FAIL ' + msg); } else console.log('  ok   ' + msg); }
 
 /* ---- equal-cost main battle: 1005 resources each ---- */
@@ -97,3 +98,51 @@ expect(dmgArcherPierce >= dmgArcherPierce, 'pierce armour applies to arrows');
 console.log('');
 if (fails.length) { console.log(`FAILURES (${fails.length})`); process.exit(1); }
 console.log('COMBAT BALANCE PASSED');
+
+
+/* ---- victory rules ------------------------------------------------------- */
+{
+  const g = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'standard' });
+  g.start();
+  const check = (msg, fn) => {
+    try { fn(); console.log('  ok   ' + msg); }
+    catch (e) { fails.push(msg + ': ' + e.message); console.log('  FAIL ' + msg + ' - ' + e.message); }
+  };
+  check('a team with no buildings left loses after the grace period', () => {
+    for (const b of g.buildings) if (b.team === 2) { b.dead = true; }
+    for (const u of g.units) if (u.team === 2) { u.dead = true; }
+    // a lone survivor that cannot rebuild
+    const lone = g.spawnUnitRaw('villager', 2, g.world.enemyBase.x, g.world.enemyBase.z);
+    g.time = 100;
+    g.checkVictory();
+    assert(!g.gameOver, 'ended instantly, no grace period');
+    g.time = 100 + 61;
+    g.checkVictory();
+    assert(g.gameOver && g.result.reason === 'dominance', 'dominance never triggered: ' + JSON.stringify(g.result));
+    assert(g.result.win === true, 'player did not win');
+  });
+  check('one standing building is enough to stay alive', () => {
+    const g2 = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'standard' });
+    g2.start();
+    const keep = g2.buildings.find((b) => b.team === 2 && !b.dead);
+    for (const b of g2.buildings) if (b.team === 2 && b !== keep) b.dead = true;
+    g2.time = 100; g2.checkVictory();
+    g2.time = 400; g2.checkVictory();
+    assert(!g2.gameOver, 'a team with a building was declared dead');
+  });
+  check('conquest still ends the match the moment the last unit dies', () => {
+    const g3 = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'standard' });
+    g3.start();
+    for (const b of g3.buildings) if (b.team === 2) b.dead = true;
+    for (const u of g3.units) if (u.team === 2) u.dead = true;
+    g3.checkVictory();
+    assert(g3.gameOver && g3.result.reason === 'conquest', 'conquest did not fire: ' + JSON.stringify(g3.result));
+  });
+  check('sandbox never ends', () => {
+    const g4 = new Game({ world, civ: 'franks', mode: 'sandbox', difficulty: 'sandbox' });
+    g4.start();
+    for (const u of g4.units) if (u.team === 2) u.dead = true;
+    g4.time = 900; g4.checkVictory();
+    assert(!g4.gameOver, 'sandbox ended the match');
+  });
+}

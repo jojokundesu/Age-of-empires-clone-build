@@ -547,17 +547,27 @@ export class UI {
 
   openDecrees() {
     const g = this.game;
-    const favor = g.teams.get(1).favor || 0;
+    const t = g.teams.get(1);
+    const favor = t.favor || 0;
     const list = g.decrees || [];
-    const rows = list.map((d) => `
-      <div class="row">
+    const buffs = (t.buffs || []);
+    const buffRows = buffs.length ? `<div class="buffStrip">${buffs.map((b) => `
+      <span class="buffPill" title="${b.name}"><i style="width:${Math.round((g.buffProgress ? g.buffProgress(1, b.name) : 0) * 100)}%"></i>
+        ${b.name} · ${Math.ceil(b.time)}s</span>`).join('')}</div>` : '';
+    const rows = list.map((d) => {
+      const st = g.decreeState ? g.decreeState(1, d.id) : { ok: favor >= d.cost };
+      const why = st.ok ? `${d.cost} favour` : st.used ? 'Already done' : st.reason;
+      const cls = st.ok ? '' : 'locked';
+      return `
+      <div class="row ${cls}" data-decree-row="${d.id}">
         <b>${icon(d.icon)} ${d.name}</b>
         <span>${d.desc}<br>
-          <button class="ghostBtn" data-decree="${d.id}" ${favor < d.cost ? 'disabled' : ''}>${d.cost} favour</button>
+          <button class="ghostBtn" data-decree="${d.id}" ${st.ok ? '' : 'disabled'} title="${why}">${why}</button>
         </span>
-      </div>`).join('');
-    this.menu?.openModal('COUNCIL', `Imperial Decrees · ${Math.floor(favor)} favour`, rows ||
-      '<p class="dim">No decrees available.</p>',
+      </div>`;
+    }).join('');
+    this.menu?.openModal('COUNCIL', `Imperial Decrees · ${Math.floor(favor)} favour`,
+      `${buffRows}<div class="decreeList">${rows || '<p class="dim">No decrees available.</p>'}</div>`,
       '<span class="dim tiny">Favour accrues over time and from every kill.</span>');
     const body = document.getElementById('modalBody');
     body?.addEventListener('click', (e) => {
@@ -573,11 +583,26 @@ export class UI {
     const g = this.game;
     const t = g.teams.get(1);
     const price = (kind) => Math.max(1, Math.round((g.marketPrice ? g.marketPrice(kind, 1) : 100)));
-    const rows = ['food', 'wood', 'gold', 'stone'].map((k) => `
-      <div class="row"><b>${RES_META[k].name}</b><span>${Math.floor(t.res[k])} in store · ${price(k)} gold per 100
-        <br><button class="ghostBtn" data-buy="${k}">Buy 100</button>
-        <button class="ghostBtn" data-sell="${k}">Sell 100</button></span></div>`).join('');
-    this.menu?.openModal('MARKET', 'Trade goods', rows);
+    // the market is the one place the price of gold is visible, so show the
+    // live number and what the store can actually pay for
+    const gold = Math.floor(t.res.gold);
+    const rows = ['food', 'wood', 'gold', 'stone'].map((k) => {
+      const buy = price(k) * 100;
+      const sell = Math.max(1, Math.round(buy * 0.72));
+      const canBuy = gold >= buy;
+      const canSell = Math.floor(t.res[k]) >= 100;
+      const trend = (g.marketTrend ? g.marketTrend(k) : 0);
+      const arrow = trend > 0.02 ? '▲' : trend < -0.02 ? '▼' : '·';
+      return `
+      <div class="row marketRow">
+        <b>${RES_META[k].name}</b>
+        <span>${Math.floor(t.res[k])} in store · <em class="dim tiny">${arrow} ${buy} gold / 100</em>
+          <br><button class="ghostBtn" data-buy="${k}" ${canBuy ? '' : 'disabled'} title="${canBuy ? '' : 'Not enough gold'}">Buy 100 · ${buy}g</button>
+          <button class="ghostBtn" data-sell="${k}" ${canSell ? '' : 'disabled'} title="${canSell ? '' : 'Nothing to sell'}">Sell 100 · +${sell}g</button></span>
+      </div>`;
+    }).join('');
+    this.menu?.openModal('MARKET', `Trade goods · ${gold} gold`, rows,
+      '<span class="dim tiny">Prices rise as your stores run low; selling pays 72% of the buy price.</span>');
     const body = document.getElementById('modalBody');
     body?.addEventListener('click', (e) => {
       const buy = e.target.closest('[data-buy]');
@@ -1057,9 +1082,19 @@ export class UI {
     const t = g.teams.get(1);
     const title = win ? 'The Crown Is Yours' : 'The Empire Falls';
     const kicker = win ? 'VICTORY' : 'DEFEAT';
-    const desc = win
-      ? (reason === 'wonder' ? 'Your wonder stood unchallenged for two hundred seconds. History will remember.' : 'The enemy banners are down. Your rule begins.')
-      : 'Your last banner has fallen. The chronicles will record this defeat.';
+    const winDesc = {
+      wonder: 'Your wonder stood unchallenged for two hundred seconds. History will remember.',
+      regicide: 'The enemy king is dead. Their lords kneel before yours.',
+      dominance: 'Nothing of the enemy stands. The land is yours by right of arms.',
+      conquest: 'The enemy banners are down. Your rule begins.'
+    };
+    const loseDesc = {
+      wonder: 'Their wonder stood unchallenged. The chronicles will not be kind.',
+      regicide: 'Your king has fallen. The line ends here.',
+      dominance: 'Not one stone of yours still stands. There is nothing left to defend.',
+      conquest: 'Your last banner has fallen. The chronicles will record this defeat.'
+    };
+    const desc = win ? (winDesc[reason] || winDesc.conquest) : (loseDesc[reason] || loseDesc.conquest);
     const metrics = [
       ['Time', fmtTime(g.elapsed || g.time)],
       ['Units trained', t.trained || 0],

@@ -18,9 +18,9 @@ export const RES_META = {
 
 export const AGES = {
   0: { name: 'Dark Age', short: 'Dark', color: '#9c8f77' },
-  1: { name: 'Feudal Age', short: 'Feudal', color: '#b9a05e', cost: { food: 500, gold: 200 }, time: 24 },
-  2: { name: 'Castle Age', short: 'Castle', color: '#c9a86a', cost: { food: 800, gold: 450 }, time: 34 },
-  3: { name: 'Imperial Age', short: 'Imperial', color: '#e8c47a', cost: { food: 1200, gold: 800 }, time: 46 }
+  1: { name: 'Feudal Age', short: 'Feudal', color: '#b9a05e', cost: { food: 420, gold: 160 }, time: 22 },
+  2: { name: 'Castle Age', short: 'Castle', color: '#c9a86a', cost: { food: 700, gold: 380 }, time: 32 },
+  3: { name: 'Imperial Age', short: 'Imperial', color: '#e8c47a', cost: { food: 1000, gold: 650 }, time: 42 }
 };
 
 export const CLASSES = ['infantry', 'cavalry', 'archer', 'siege', 'building', 'ship', 'monk', 'villager', 'unique'];

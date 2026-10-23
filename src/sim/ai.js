@@ -146,12 +146,19 @@ export class AIController {
     const g = this.game;
     const my = this.myBuildings();
     // the market turns a gold mountain into the food the army actually eats
-    if (st.res.gold > 650 && my.some((b) => b.type === 'market' && b.buildProgress >= 1)) {
-      const spare = Math.min(3, Math.floor((st.res.gold - 500) / 700));
-      for (let i = 0; i < spare; i++) {
-        if (st.res.food > 500) break;
-        if (!g.marketTrade(this.team, 'food', 200, true).ok) break;
+    const hasMarket = my.some((b) => b.type === 'market' && b.buildProgress >= 1);
+    if (hasMarket) {
+      // gold mountains are useless unless they become food and wood
+      if (st.res.gold > 260) {
+        for (const k of ['food', 'wood']) {
+          let guard = 0;
+          while (st.res[k] < 300 && st.res.gold > 200 && guard++ < 4) {
+            if (!g.marketTrade(this.team, k, 200, true).ok) break;
+          }
+        }
       }
+      // surplus stone is dead weight; turn it into gold for techs
+      if (st.res.stone > 700 && st.res.gold < 300) g.marketTrade(this.team, 'stone', 200, false);
     }
     // decrees are spent the moment they pay off
     if (st.favor < 40) return;
@@ -170,71 +177,96 @@ export class AIController {
   }
 
   /* ---------------- economy ---------------- */
+  /** How many villagers each resource *should* have. Counts, not fractions:
+      a 26-villager town with 18 % on gold still starves food if it cannot see
+      that "1.7 workers" is really a hard constraint of two. */
+  workerTargets(st, total, age) {
+    const share = age >= 2
+      ? { food: 0.34, wood: 0.34, gold: 0.22, stone: 0.10 }
+      : age >= 1
+        ? { food: 0.36, wood: 0.40, gold: 0.16, stone: 0.08 }
+        : { food: 0.44, wood: 0.44, gold: 0.10, stone: 0.02 };
+    const want = {};
+    for (const k in share) want[k] = Number.isFinite(share[k]) ? Math.round(share[k] * total) : 0;
+    // never bank a resource you cannot spend: gold is only useful for units,
+    // techs and the market, so a full treasury means one miner, not six
+    if (st.res.gold > 520) want.gold = Math.min(want.gold, 1);
+    else if (st.res.gold > 320) want.gold = Math.min(want.gold, 2);
+    if (st.res.wood > 800) want.wood = Math.max(2, want.wood - 3);
+    // starvation rescue: food and wood run the war, so take workers from gold
+    if (st.res.food < 130) {
+      const need = Math.min(4, want.gold + Math.floor(want.stone * 0.5));
+      want.food += Math.max(1, need);
+      want.gold = Math.max(1, want.gold - need);
+      want.stone = Math.max(1, want.stone - 1);
+    }
+    if (st.res.wood < 130 && age >= 1) {
+      want.wood += 2;
+      want.gold = Math.max(1, want.gold - 2);
+    }
+    if (st.res.stone > 700) want.stone = 1;
+    // keep the totals honest after all the nudging
+    let sum = 0;
+    for (const k in want) { want[k] = Math.max(0, want[k]); sum += want[k]; }
+    if (sum > total) {
+      // trim the least urgent first: stone, then gold, then the biggest pile
+      for (const k of ['stone', 'gold', 'wood', 'food']) {
+        if (sum <= total) break;
+        const cut = Math.min(want[k], sum - total);
+        want[k] -= cut; sum -= cut;
+      }
+    }
+    return want;
+  }
+
   manageEconomy(st, age) {
     const g = this.game;
     const villagers = g.units.filter((u) => !u.dead && u.team === this.team && u.type === 'villager');
-    // count workers by carried resource
     const counts = { food: 0, wood: 0, gold: 0, stone: 0 };
-    let idle = 0;
     const byKind = { food: [], wood: [], gold: [], stone: [] };
     for (const v of villagers) {
-      if (v.state === STATE.GATHER || v.state === STATE.RETURN) {
-        const k = v.carry.kind || v.lastGatherKind;
-        if (k && counts[k] !== undefined) { counts[k]++; byKind[k].push(v); }
-        else idle++;
-      } else if (v.state === STATE.IDLE) idle++;
+      if (v.state !== STATE.GATHER && v.state !== STATE.RETURN) continue;
+      const k = v.carry.kind || v.lastGatherKind;
+      if (k && counts[k] !== undefined) { counts[k]++; byKind[k].push(v); }
     }
-    const wants = age >= 2
-      ? { wood: 0.32, food: 0.34, gold: 0.26, stone: 0.08 }
-      : age >= 1
-        ? { wood: 0.38, food: 0.36, gold: 0.18, stone: 0.08 }
-        : { wood: 0.42, food: 0.42, gold: 0.14, stone: 0.02 };
-    // dynamic correction: never let one pile grow while another starves
-    if (st.res.gold > 550) { wants.gold *= 0.35; wants.wood += 0.09; wants.food += 0.07; }
-    if (st.res.wood > 700) { wants.wood *= 0.55; wants.food += 0.1; wants.gold += 0.08; }
-    if (st.res.food > 800) { wants.food *= 0.6; wants.wood += 0.1; wants.gold += 0.08; }
-    if (st.res.stone > 500) wants.stone = 0.02;
-    if (age >= 1 && st.res.stone < 60) wants.stone = 0.1;
+    const want = this.workerTargets(st, Math.max(1, villagers.length), age);
 
-    // rebalance: pull a couple of workers off an over-staffed resource
-    const total = villagers.length || 1;
-    for (const k in wants) {
-      if (byKind[k].length > Math.ceil(wants[k] * total * 1.6) && byKind[k].length > 3) {
-        let best = null, bestGap = 0;
-        for (const k2 in wants) {
-          const gap = wants[k2] - (counts[k2] || 0) / total;
-          if (gap > bestGap) { bestGap = gap; best = k2; }
-        }
-        if (best) {
-          for (const v of byKind[k].slice(-2)) {
-            const node = g.findNearestResource(best, v.x, v.z, 80, v);
-            if (node) {
-              if (v.carry.amount > 0.5) v.returnResources();
-              else { v.gatherTarget = node; v.lastGatherKind = best; v.state = STATE.GATHER; v.moveTo(node.x, node.z, true); }
-              counts[k]--; counts[best] = (counts[best] || 0) + 1;
-            }
-          }
+    // One transfer per economy pass: cheap, and it never thrashes the whole
+    // workforce when a store crosses a threshold for a moment.
+    let overKind = null, overGap = 0, underKind = null, underGap = 0;
+    for (const k in want) {
+      const gap = want[k] - counts[k];
+      if (gap < -1 && -gap > overGap) { overGap = -gap; overKind = k; }
+      if (gap > 0 && gap > underGap) { underGap = gap; underKind = k; }
+    }
+    if (overKind && underKind && byKind[overKind].length > want[overKind]) {
+      const movable = byKind[overKind].filter((v) => v.state === STATE.GATHER || v.carry.amount < 6);
+      const v = movable[movable.length - 1];
+      if (v) {
+        const node = g.findNearestResource(underKind, v.x, v.z, 90, v);
+        if (node) {
+          if (v.carry.amount > 0.5) v.returnResources();
+          g.orderGather([v], node);
+          counts[overKind]--;
+          counts[underKind]++;
         }
       }
     }
 
-    // send idle villagers to the largest deficit
-    if (idle > 0) {
-      const total = villagers.length || 1;
-      let bestKind = 'wood', bestGap = -9;
-      for (const k in wants) {
-        const gap = wants[k] - counts[k] / total;
-        if (gap > bestGap) { bestGap = gap; bestKind = k; }
+    // villagers that are not producing at all go to the worst deficit
+    const idle = villagers.filter((v) => v.state === STATE.IDLE);
+    if (idle.length) {
+      let kind = 'wood', gap = -9;
+      for (const k in want) {
+        const d = want[k] - counts[k];
+        if (d > gap) { gap = d; kind = k; }
       }
-      const pool = villagers.filter((v) => v.state === STATE.IDLE);
-      for (const v of pool.slice(0, 3)) {
-        let node = g.findNearestResource(bestKind, v.x, v.z, 70, v);
-        if (!node && bestKind === 'food') node = g.findNearestResource('food', v.x, v.z, 90, v);
+      for (const v of idle.slice(0, 3)) {
+        let node = g.findNearestResource(kind, v.x, v.z, 75, v);
         if (!node) {
-          // no node of that kind nearby: try anything
           for (const k of ['wood', 'food', 'gold', 'stone']) {
-            node = g.findNearestResource(k, v.x, v.z, 120, v);
-            if (node) { bestKind = k; break; }
+            node = g.findNearestResource(k, v.x, v.z, 130, v);
+            if (node) break;
           }
         }
         if (node) g.orderGather([v], node);
@@ -255,6 +287,13 @@ export class AIController {
     if (popFree <= 6 && houses < 16) {
       if (this.tryBuild('house', st)) return;
     }
+    // Never boom while the army is thin: every plank spent on a second mill
+    // is a plank not spent on the two spearmen that would have held the gate.
+    const army = this.militaryUnits().length;
+    if (age >= 1 && army < 6 && this.count('barracks') === 0) {
+      if (this.tryBuild('barracks', st)) return;
+    }
+    if (age >= 1 && army < 6) return;
     // a town centre if we somehow lost ours
     if (this.count('town_center') === 0) {
       if (this.tryBuild('town_center', st)) return;
@@ -266,8 +305,13 @@ export class AIController {
       if (have >= step.want) continue;
       if (this.tryBuild(step.type, st)) return;
     }
-    // when rich in the late game, more farms and towers
-    if (age >= 2 && st.res.wood > 400 && this.count('farm') < 10) this.tryBuild('farm', st);
+    // food demand grows with the army: keep adding farms while wood allows
+    const farmCap = age >= 2 ? 12 : age >= 1 ? 9 : 6;
+    if (this.count('farm') < farmCap && st.res.food < 320 && this.tryBuild('farm', st)) return;
+    // a second lumber camp halves the walking distance once the first ring is bare
+    if (age >= 1 && this.count('lumber_camp') < 2 && st.res.wood < 200 && this.tryBuild('lumber_camp', st)) return;
+    // late game: more farms and towers
+    if (age >= 2 && st.res.wood > 400 && this.count('farm') < 12) this.tryBuild('farm', st);
   }
 
   tryBuild(type, st) {
@@ -278,6 +322,8 @@ export class AIController {
     const military = type === 'barracks' || type === 'archery_range' || type === 'stable' || type === 'castle' || type === 'siege_workshop';
     const eco = type === 'farm' || type === 'house' || type === 'market' || type === 'blacksmith';
     if (eco && this.needsMilitaryWood(st) && st.res.wood < (cost.wood || 0) + 130) return false;
+    // keep a wood float for units: a barracks can wait, a spearman cannot
+    if (eco && this.game.ageOf(this.team) >= 1 && st.res.wood < (cost.wood || 0) + 70) return false;
     if (g.ageOf(this.team) < (BUILDING_AGE[type] ?? 0)) return false;
     const spot = this.findSpot(type);
     if (!spot) return false;
@@ -457,9 +503,12 @@ export class AIController {
       if (!cost[k]) continue;
       readiness = Math.min(readiness, st.res[k] / cost[k]);
     }
-    // a floor of troops is never sacrificed for an age-up
+    // A floor of troops is never sacrificed for an age-up, and the reserve
+    // only switches on once the town is a real way towards the cost. The old
+    // 0.55 threshold deadlocked: the AI spent every coin on troops, so it
+    // never reached 55 % and therefore never saved for an age again.
     if (this.militaryUnits().length < 4) return null;
-    if (readiness < 0.55) return null;
+    if (readiness < 0.25) return null;
     const need = {};
     let any = false;
     for (const k of ['food', 'wood', 'gold', 'stone']) {

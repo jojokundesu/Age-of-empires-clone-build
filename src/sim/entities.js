@@ -622,7 +622,7 @@ export class Unit extends Entity {
 
   carryCapFor(kind) {
     const g = this.game;
-    let cap = 12;
+    let cap = 15;
     if (g.hasTech(this.team, 'wheelbarrow')) cap += 8;
     if (g.hasTech(this.team, 'hand_cart')) cap += 12;
     return cap;

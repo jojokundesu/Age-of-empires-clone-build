@@ -59,6 +59,22 @@ baked terrain splatting (grass/dirt/rock/sand/cobble/snow), animated water with 
 maps, fresnel and depth tint, a full day/night cycle with stars and a moon, a post pass
 with bloom-ish grade, vignette and film grain.
 
+## Day and night
+
+The clock is not decoration — it is a second set of rules.
+
+| Phase | Villager gathering | Melee damage | Sight |
+|---|---|---|---|
+| Noon (12:00) | 110 % | ×1.00 | 100 % |
+| Dusk / dawn | ~98 % | ×1.06 | 98 % |
+| Night (00:00) | 86 % | ×1.16 | 84 % |
+
+* **Day is for the economy.** Villagers produce 24 % more at noon than at midnight, so the daylight hours are when you pay for the army you will need at night.
+* **Night is for the raid.** Melee hits land 16 % harder and every vision radius shrinks by a sixth, which means a small force can slip between two watch posts and hit a wood line before the defender can see it coming. Ranged units get no damage bonus — the night belongs to spears, swords and cavalry.
+* A full cycle takes 15 minutes (`game.dayLength = 900`), so most matches see two or three nights. The HUD clock changes colour and icon with the phase, and a toast fires on each transition.
+
+Visually the phase drives the sun angle, sun colour, ambient hemisphere (cool fill by day, warm bounce at night), fog density, star field and a set of four flickering hearth lights that follow your most important buildings, so a defended town looks like a defended town after dark.
+
 ## Controls (touch)
 
 | Gesture | Action |
@@ -104,8 +120,8 @@ Measured headless on this repo: 0.23 ms average tick for a 600 s AI-vs-AI match,
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # static bundle in dist/
-npm test           # 11 suites: contract, geo, audio, shaders, sim, combat,
-                   # renderer, perf budgets, HUD, app, bundle
+npm test           # 13 suites: contract, geo, audio, shaders, sim, combat,
+                   # day/night, renderer, perf budgets, AI soak, HUD, app, bundle
 npm run balance    # headless battle matrix (counter triangle)
 npm run apk        # needs JDK 17 + Android SDK build-tools
 ```
@@ -126,6 +142,8 @@ npm run apk        # needs JDK 17 + Android SDK build-tools
 | `tests/audio.test.mjs` | the WebAudio graph against a strict fake (wrong-node calls throw) |
 | `tests/shaders.test.mjs` | GLSL parses, versions/precision/interface/uniform rules |
 | `tests/perf.test.mjs` | hard CPU budgets: tick percentiles, frame prep, draw calls, heap growth |
+| `tests/daynight.test.mjs` | the day cycle: gather/melee/sight multipliers, fog radius, phase events, renderer sun + firelight |
+| `tests/ai.test.mjs` | AI-vs-AI soak with assertions (no dead economy, no idle army, age progression, tick budget) |
 
 ## Repository layout
 

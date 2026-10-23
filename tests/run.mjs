@@ -15,6 +15,7 @@ const SUITES = [
   ['daynight', 'tests/daynight.test.mjs'],
   ['renderer', 'tests/render.test.mjs'],
   ['perf', 'tests/perf.test.mjs'],
+  ['ai', 'tests/ai.test.mjs', '240'],
   ['hud', 'tests/ui.test.mjs'],
   ['application', 'tests/app.test.mjs'],
   ['bundle', 'tests/dist.test.mjs', true]
@@ -23,10 +24,11 @@ const SUITES = [
 const ci = process.argv.includes('--ci');
 const results = [];
 
-function run(name, file) {
+function run(name, file, arg) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const p = spawn(process.execPath, [file], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const args = arg ? [file, arg] : [file];
+    const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { out += d; });
@@ -41,12 +43,15 @@ function run(name, file) {
   });
 }
 
-for (const [name, file, optional] of SUITES) {
-  if (optional && !existsSync(file.replace('dist.test.mjs', '../dist'))) {
-    if (!existsSync('dist')) { console.log(`SKIP  ${name.padEnd(12)} (run npm run build first)`); continue; }
+for (const [name, file, argOrOptional] of SUITES) {
+  const optional = argOrOptional === true;
+  const arg = typeof argOrOptional === 'string' ? argOrOptional : null;
+  if (optional && !existsSync('dist')) {
+    console.log(`SKIP  ${name.padEnd(12)} (run npm run build first)`);
+    continue;
   }
   if (!existsSync(file)) { console.log(`SKIP  ${name.padEnd(12)} (missing ${file})`); continue; }
-  await run(name, file);
+  await run(name, file, arg);
 }
 
 const failed = results.filter((r) => r.code !== 0);

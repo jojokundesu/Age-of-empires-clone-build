@@ -496,9 +496,12 @@ export class Game {
     const team = unit.team;
     const civ = this.civOf(team);
     const b = this.civBonuses(team);
-    let rate = kind === 'food' ? 2.6 : kind === 'wood' ? 2.55 : kind === 'gold' ? 2.0 : 1.7;
+    // Base rates. These are deliberately a touch above the genre norm: on a
+    // phone the player has less time, and a villager that visibly pays for
+    // itself keeps the early game from feeling like waiting.
+    let rate = kind === 'food' ? 3.3 : kind === 'wood' ? 3.25 : kind === 'gold' ? 2.6 : 2.2;
     if (kind === 'food' && unit.gatherTarget && unit.gatherTarget.type === 'farm') {
-      rate = 2.55;
+      rate = 3.2;
       if (this.hasTech(team, 'horse_collar')) rate *= 1.15;
       if (this.hasTech(team, 'heavy_plow')) rate *= 1.15;
       rate *= b.farmRate || 1;
@@ -875,6 +878,25 @@ export class Game {
   get nightRaidMul() { return 1 + 0.16 * (1 - this.daylight); }
   get sightDayMul() { return 0.84 + 0.16 * this.daylight; }
 
+  /** Everything the council panel needs to explain a decree's state. */
+  decreeState(team, id) {
+    const st = this.teams.get(team);
+    const def = DECREE_LIST.find((d) => d.id === id);
+    if (!st || !def) return { ok: false, reason: 'Unknown decree' };
+    if (def.age !== undefined && st.age < def.age) return { ok: false, reason: `Needs ${AGES[def.age].name}`, needsAge: def.age };
+    if (def.once && st.decreesUsed[id]) return { ok: false, reason: 'Already proclaimed', used: true };
+    if (st.favor < def.cost) return { ok: false, reason: `Needs ${def.cost} favour`, short: def.cost - Math.floor(st.favor) };
+    return { ok: true, reason: '', affordable: true };
+  }
+
+  /** 0..1 progress of a running buff (for the HUD countdown bars). */
+  buffProgress(team, name) {
+    const st = this.teams.get(team);
+    const b = st && st.buffs ? st.buffs.find((x) => x.name === name) : null;
+    if (!b || !b.duration) return 0;
+    return Math.max(0, Math.min(1, b.time / b.duration));
+  }
+
   activateDecree(team, id) {
     const st = this.teams.get(team);
     const def = DECREE_LIST.find((d) => d.id === id);
@@ -901,8 +923,12 @@ export class Game {
     const st = this.teams.get(team);
     if (!st) return;
     const existing = st.buffs.find((b) => b.kind === kind && b.name === name);
-    if (existing) existing.time = Math.max(existing.time, time);
-    else st.buffs.push({ kind, mul, time, name });
+    if (existing) {
+      existing.time = Math.max(existing.time, time);
+      existing.duration = Math.max(existing.duration || 0, existing.time);
+    } else {
+      st.buffs.push({ kind, mul, time, duration: time, name });
+    }
     this.statsVersion++;
   }
 
@@ -917,6 +943,24 @@ export class Game {
     // scarcity: the price climbs when the store is nearly empty
     const scarcity = 1 + Math.max(0, 250 - stock) / 420;
     return Math.round(base * scarcity * (amount / 100) * 1.0);
+  }
+
+  /** Relative price change per good over the last ~2 s (market UI arrow). */
+  marketTrend(kind) {
+    if (!this._marketTrend) {
+      this._marketTrend = { food: 0, wood: 0, gold: 0, stone: 0 };
+      this._marketPrev = { food: 0, wood: 0, gold: 0, stone: 0 };
+      this._marketPrevAt = -99;
+    }
+    if (this.time - this._marketPrevAt < 2) return this._marketTrend[kind] || 0;
+    this._marketPrevAt = this.time;
+    for (const k of RES_KEYS) {
+      const now = this.marketPrice(k, 100);
+      const prev = this._marketPrev[k] || now;
+      this._marketTrend[k] = this._marketTrend[k] * 0.5 + ((now - prev) / Math.max(1, prev)) * 0.5;
+      this._marketPrev[k] = now;
+    }
+    return this._marketTrend[kind] || 0;
   }
 
   marketTrade(team, kind, amount = 100, isBuy = true) {
@@ -1318,8 +1362,25 @@ export class Game {
     if (this.gameOver || this.mode === 'sandbox') return;
     const enemyAlive = this.buildings.some((b) => !b.dead && b.team === TEAM_ENEMY) || this.units.some((u) => !u.dead && u.team === TEAM_ENEMY);
     const playerAlive = this.buildings.some((b) => !b.dead && b.team === TEAM_PLAYER) || this.units.some((u) => !u.dead && u.team === TEAM_PLAYER);
-    if (!enemyAlive) this.endGame(true, 'conquest');
-    else if (!playerAlive) this.endGame(false, 'conquest');
+    if (!enemyAlive) { this.endGame(true, 'conquest'); return; }
+    if (!playerAlive) { this.endGame(false, 'conquest'); return; }
+
+    // Dominance: a team without a single standing building cannot produce,
+    // research or house anything, so it is dead even if a lone villager is
+    // still hiding in a forest. Without this rule a mirror match could drag
+    // on for another ten minutes over one survivor.
+    if (!this._roofless) this._roofless = new Map();
+    for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
+      const hasBuilding = this.buildings.some((b) => !b.dead && b.team === team);
+      if (hasBuilding) { this._roofless.delete(team); continue; }
+      const since = this._roofless.get(team) ?? this.time;
+      this._roofless.set(team, since);
+      const grace = this.difficultyKey === 'sandbox' ? Infinity : 60;
+      if (this.time - since >= grace) {
+        this.endGame(team === TEAM_ENEMY, 'dominance');
+        return;
+      }
+    }
   }
 
   endGame(win, reason) {

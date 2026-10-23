@@ -41,3 +41,33 @@ for (let i = 0; i < maxTicks; i++) {
 const dur = (performance.now() - t0) / 1000;
 console.log('---', (maxTicks * dt).toFixed(0) + 's simulated in', dur.toFixed(2) + 's wall; avg tick', (total / maxTicks).toFixed(3), 'ms; worst', worst.toFixed(2), 'ms; errors', errors);
 console.log('units alive', game.units.filter((u) => !u.dead).length, 'buildings alive', game.buildings.filter((b) => !b.dead).length, 'projectiles', game.projectiles.activeCount);
+
+/* Assertions, not just a log. An economy that silently deadlocks (everyone
+   banking gold, nobody gathering wood, no army, no age-up) still "runs" and
+   would otherwise pass unnoticed. */
+const bad = [];
+const samples = [];
+for (const team of [1, 2]) {
+  const st = game.teams.get(team);
+  const villagers = game.units.filter((u) => !u.dead && u.team === team && u.type === 'villager').length;
+  const army = game.units.filter((u) => !u.dead && u.team === team && u.type !== 'villager' && u.def.attack > 0).length;
+  samples.push({ team, villagers, army, age: st.age, gold: st.res.gold, gathered: st.gathered });
+  if (errors > 0) bad.push(`${errors} tick errors`);
+  if (seconds >= 240 && !game.gameOver) {
+    if (st.gathered < 600) bad.push(`team ${team} gathered only ${st.gathered | 0} in ${seconds}s`);
+    if (st.age < 1 && seconds >= 420) bad.push(`team ${team} never left the Dark Age`);
+    if (villagers === 0 && seconds >= 300) bad.push(`team ${team} has no villagers left and no result`);
+    if (army === 0 && seconds >= 500) bad.push(`team ${team} never fielded an army`);
+    if (st.res.gold > 2500 && st.res.food < 100) bad.push(`team ${team} is hoarding gold (${st.res.gold | 0}) while starving (${st.res.food | 0} food)`);
+  }
+}
+const avgTick = total / maxTicks;
+console.log('economy', samples.map((s) => `T${s.team}: ${s.villagers}v ${s.army}mil age${s.age} ${s.gathered | 0}gath`).join(' | '));
+if (avgTick > 2.0) bad.push(`average tick ${avgTick.toFixed(2)} ms exceeds the 2 ms budget`);
+if (game.gameOver) console.log('RESULT', JSON.stringify(game.result));
+if (bad.length) {
+  console.log('\nAI SOAK FAILED:');
+  for (const b of bad) console.log(' - ' + b);
+  process.exit(1);
+}
+console.log('AI SOAK PASSED');
