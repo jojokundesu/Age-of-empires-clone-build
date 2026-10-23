@@ -128,8 +128,9 @@ Measured headless on this repo: 0.23 ms average tick for a 600 s AI-vs-AI match,
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # static bundle in dist/
-npm test           # 13 suites: contract, geo, audio, shaders, sim, combat,
+npm test           # 14 suites: shell, contract, geo, audio, shaders, sim, combat,
                    # day/night, renderer, perf budgets, AI soak, HUD, app, bundle
+npm run test:soak  # real Chrome: 260-unit battle, heap after GC, tick cost, DOM growth
 npm run balance    # headless battle matrix (counter triangle)
 npm run apk        # needs JDK 17 + Android SDK build-tools
 ```
@@ -144,7 +145,7 @@ npm run apk        # needs JDK 17 + Android SDK build-tools
 | `tests/ui.test.mjs` | every HUD button for every unit/building type (jsdom) |
 | `tests/app.test.mjs` | boot → match → taps/drag/pinch → pause/save/end (jsdom) |
 | `tests/dist.test.mjs` | the minified production bundle boots and renders |
-| `tests/ai.test.mjs` | long AI-vs-AI soak; tick cost, no errors |
+| `tests/shell.test.mjs` | every asset the page references exists; manifest/icons installable; APK shell |
 | `tests/contract.test.mjs` | UI/input ↔ simulation API, HUD ids, state literals, data-attributes |
 | `tests/geo.test.mjs` | every primitive is wound outwards, normals are unit length, tri budget |
 | `tests/audio.test.mjs` | the WebAudio graph against a strict fake (wrong-node calls throw) |
@@ -152,6 +153,8 @@ npm run apk        # needs JDK 17 + Android SDK build-tools
 | `tests/perf.test.mjs` | hard CPU budgets: tick percentiles, frame prep, draw calls, heap growth |
 | `tests/daynight.test.mjs` | the day cycle: gather/melee/sight multipliers, fog radius, phase events, renderer sun + firelight |
 | `tests/ai.test.mjs` | AI-vs-AI soak with assertions (no dead economy, no idle army, age progression, tick budget) |
+| `tests/browser.mjs` | real headless Chrome: boot, play, taps, day/night pixels, night-sky pixels |
+| `tests/soak.mjs` | phone-profile soak: 260-unit battle, post-GC heap, tick cost, draw calls, DOM growth |
 
 ## Repository layout
 

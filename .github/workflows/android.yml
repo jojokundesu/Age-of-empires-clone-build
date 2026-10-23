@@ -79,6 +79,15 @@ jobs:
           (google-chrome --version || chromium --version || chromium-browser --version) 2>&1 | tee -a browser-test.log
           node tests/browser.mjs --seconds 8 --dpr 1.5 --out ci/screenshots 2>&1 | tee -a browser-test.log
 
+      # 260-entity battle on the phone profile: heap after forced GC, tick cost,
+      # draw calls, DOM size. This is the regression guard for the original
+      # build's hangs, leaks and DOM thrash.
+      - name: Soak test (phone profile)
+        id: soak
+        continue-on-error: true
+        run: |
+          node tests/soak.mjs --seconds 30 --units 220 2>&1 | tee -a soak.log
+
       # The runner log is not always downloadable, so the interesting part of
       # it is posted on the pull request (and into the job summary) instead.
       - name: Publish browser diagnostics
@@ -98,6 +107,13 @@ jobs:
             echo '```'
             echo
             cat ci/browser-report.md 2>/dev/null || echo '_no report written_'
+            echo
+            cat ci/soak-report.md 2>/dev/null || echo '_no soak report written_'
+            echo
+            echo '### Soak log'
+            echo '```'
+            tail -n 40 soak.log 2>/dev/null || echo 'no soak log'
+            echo '```'
           } > ci/browser-diagnostics.md
           cat ci/browser-diagnostics.md >> "$GITHUB_STEP_SUMMARY"
           if [ -n "$PR_NUMBER" ]; then
@@ -114,6 +130,11 @@ jobs:
           ls -la ci/screenshots | head -20
           grep -qi "all browser checks passed" ci/browser-report.md || { echo "::error::browser checks did not pass"; cat ci/browser-report.md; exit 1; }
 
+      - name: Check the soak actually passed
+        run: |
+          test -s ci/soak-report.md || { echo "::error::ci/soak-report.md missing"; exit 1; }
+          grep -qi "soak passed" ci/soak-report.md || { echo "::error::soak checks did not pass"; cat ci/soak-report.md; exit 1; }
+
       - name: Upload screenshots + browser report
         if: always()
         uses: actions/upload-artifact@v4
@@ -122,7 +143,9 @@ jobs:
           path: |
             ci/screenshots
             ci/browser-report.md
+            ci/soak-report.md
             browser-test.log
+            soak.log
           retention-days: 30
           if-no-files-found: error
 
