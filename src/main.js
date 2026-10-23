@@ -392,10 +392,12 @@ class App {
     game.units.length = 0;
     game.buildings.length = 0;
     for (const [type, team, x, z, hp, prog] of save.buildings || []) {
+      if (team !== 1 && team !== 2) continue;   // neutral shrines regenerate with the world
       const b = game.placeBuilding(type, team, x, z, { instant: true, free: true });
       if (b) { b.hp = hp; b.maxHp = Math.max(b.maxHp, hp); b.buildProgress = prog ?? 1; }
     }
     for (const [type, team, x, z, hp] of save.units || []) {
+      if (team !== 1 && team !== 2) continue;
       const u = game.spawnUnit(type, team, x, z);
       if (u) { u.hp = hp; u.maxHp = Math.max(u.maxHp, hp); }
     }
@@ -422,6 +424,7 @@ class App {
     if (dt <= 0) dt = 1 / 60;
 
     const g = this.game;
+    this.audio.update(dt);
     if (!g) {
       // menu: idle rotation of the camera over a static painted backdrop
       if (this.renderer && this.renderer.ready && this.menuIdle) this.menuIdle(dt);
@@ -446,6 +449,7 @@ class App {
       cam.update(dt);
     }
     if (this.input) this.input.update(dt);
+    if (cam) this.audio.setListener(cam.target[0], cam.target[2], cam.yaw);
     if (this.fx) this.fx.update(dt);
     if (g.fowDirty && this.renderer) {
       this.pushFog(g);

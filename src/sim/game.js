@@ -353,12 +353,16 @@ export class Game {
     return t;
   }
   canAfford(team, cost) {
-    const r = this.teams.get(team).res;
+    const st = this.teams.get(team);
+    if (!st) return false;              // neutral / unowned team
+    const r = st.res;
     for (const k in cost) if ((r[k] || 0) < cost[k]) return false;
     return true;
   }
   spend(team, cost) {
-    const r = this.teams.get(team).res;
+    const st = this.teams.get(team);
+    if (!st) return;
+    const r = st.res;
     for (const k in cost) r[k] = (r[k] || 0) - cost[k];
   }
   addResource(team, kind, amount) {

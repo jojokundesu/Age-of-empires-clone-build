@@ -49,6 +49,10 @@ const check = (name, fn) => {
   catch (e) { fails.push(`${name}: ${e.message}`); console.log(`  FAIL ${name} — ${e.stack.split('\n').slice(0, 4).join(' | ')}`); }
 };
 const assert = (c, m) => { if (!c) throw new Error(m || 'assert'); };
+const acheck = async (name, fn) => {
+  try { await fn(); console.log(`  ok   ${name}`); }
+  catch (e) { fails.push(`${name}: ${e.message}`); console.log(`  FAIL ${name} — ${e.stack.split('\n').slice(0, 4).join(' | ')}`); }
+};
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const { App } = await import('../src/main.js');
@@ -204,10 +208,23 @@ check('pause + resume', () => {
   for (let i = 0; i < 60; i++) step();
   assert(app.game.time > t, 'time did not resume');
 });
-check('save + load round trip', () => {
+check('save writes a campaign', () => {
   assert(app.saveMatch(), 'save failed');
   const save = window.localStorage.getItem('imperial-crown-save');
   assert(save && save.length > 100, 'save empty');
+});
+const savedRes = { ...app.game.teams.get(1).res, _units: app.game.units.filter((u) => u.team === 1 && !u.dead).length };
+await acheck('load restores the campaign', async () => {
+  const save = JSON.parse(window.localStorage.getItem('imperial-crown-save'));
+  const liveRaf = (fn) => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = liveRaf; window.requestAnimationFrame = liveRaf;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, load: save });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const t = app.game.teams.get(1);
+  const units = app.game.units.filter((u) => u.team === 1 && !u.dead).length;
+  assert(units === savedRes._units, `units ${units} != ${savedRes._units}`);
+  assert(Math.abs(t.res.wood - savedRes.wood) < 1, `wood ${t.res.wood} != ${savedRes.wood}`);
+  assert(app.renderer.stats.drawCalls > 5, 'renderer stopped after load');
 });
 check('end screen', () => {
   app.game.endGame(true, 'Test victory');

@@ -100,7 +100,7 @@ vec3 applyFoW(vec3 color, vec3 worldPos){
   float explor;
   float vis = fogOfWar(worldPos, explor);
   if (uFogEnabled < 0.5) return color;
-  // unexplored → deep darkness; explored memory → cold, desaturated dim
+  // unexplored = deep darkness; explored memory = cold, desaturated dim
   vec3 memory = vec3(dot(color, vec3(0.299,0.587,0.114))) * vec3(0.30,0.33,0.36);
   vec3 shown = mix(color, memory, clamp((0.98 - vis) * 1.6, 0.0, 0.72));
   float dark = smoothstep(0.02, 0.42, vis);
@@ -252,15 +252,15 @@ uniform float uDetail;
 vec3 terrainSample(vec2 uv){
   vec4 w = vSplat;
   vec2 we = vSplat2;
-  float macro = fbm2(vWorld.xz * 0.013 + 3.0);
-  float patch = fbm2(vWorld.xz * 0.055 - 7.0);
+  float macro = fbm2(vWorld.xz * 0.013 + vec2(3.0));
+  float patchn = fbm2(vWorld.xz * 0.055 - vec2(7.0));
 
   vec3 grass = mix(
     texture(uTerrain, vec3(uv, L_GRASS)).rgb,
     texture(uTerrain, vec3(uv * 0.86, L_GRASS_DRY)).rgb,
-    smoothstep(0.42, 0.82, macro + patch * 0.25)
+    smoothstep(0.42, 0.82, macro + patchn * 0.25)
   );
-  float forestMask = smoothstep(0.55, 0.9, fbm2(vWorld.xz * 0.02 + 11.0)) * 0.5;
+  float forestMask = smoothstep(0.55, 0.9, fbm2(vWorld.xz * 0.02 + vec2(11.0))) * 0.5;
   vec3 forest = texture(uTerrain, vec3(uv, L_FOREST)).rgb;
   grass = mix(grass, forest, forestMask);
 
@@ -660,8 +660,6 @@ in float vLayer;
 out vec4 fragColor;
 uniform sampler2DArray uSprites;
 uniform float uAdditive;
-uniform vec3 uFogColor;
-uniform float uFogDensity;
 void main(){
   vec4 tex = texture(uSprites, vec3(vUV, vLayer));
   float a = tex.a * vAlpha;
