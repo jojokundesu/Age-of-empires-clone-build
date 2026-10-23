@@ -189,18 +189,68 @@ uniform vec3 uZenithColor;
 uniform vec3 uHorizonColor;
 uniform float uCloudCover;
 uniform float uStarAmount;
+uniform vec3 uMoonDir;
+uniform float uMoonAmount;
+
+/* One layer of point stars on a spherical grid. Each cell holds at most one
+   star, which is what keeps this ~10 ALU per pixel instead of a loop over a
+   star list. three layers give the depth a single hash cannot: a faint dust
+   of thousands, mid stars, and a handful of brilliant ones. */
+vec3 starLayer(vec3 dir, float scale, float thresh, float gain, float seed){
+  vec3 p = dir * scale;
+  vec3 id = floor(p);
+  float h = hash13(id + seed);
+  if (h < thresh) return vec3(0.0);
+  vec3 f = fract(p) - 0.5;
+  float d = length(f);
+  float twinkle = 0.58 + 0.42 * sin(uTime * (1.4 + h * 2.6) + h * 91.0);
+  float core = smoothstep(0.26, 0.0, d);
+  float halo = smoothstep(0.58, 0.0, d) * 0.22;
+  // cool white through to amber giants
+  vec3 tint = mix(vec3(0.74, 0.84, 1.0), vec3(1.0, 0.86, 0.62), fract(h * 7.31));
+  return tint * (core * 1.55 + halo) * twinkle * gain;
+}
 
 vec3 stars(vec3 dir){
   if (uStarAmount < 0.01) return vec3(0.0);
-  vec3 p = dir * 220.0;
-  vec3 id = floor(p);
-  float h = hash13(id);
-  if (h < 0.9965) return vec3(0.0);
-  vec3 f = fract(p) - 0.5;
-  float d = length(f);
-  float twinkle = 0.6 + 0.4 * sin(uTime * 2.2 + h * 80.0);
-  float core = smoothstep(0.14, 0.0, d) * twinkle;
-  return vec3(0.85, 0.9, 1.0) * core * uStarAmount * 2.2;
+  float bank = smoothstep(-0.04, 0.22, dir.y);
+  vec3 c = starLayer(dir, 168.0, 0.9560, 1.55, 0.0);
+  c += starLayer(dir, 121.0, 0.9800, 3.20, 13.0);
+  c += starLayer(dir, 79.0, 0.9915, 7.20, 29.0);
+  // a milky band of dust along a tilted great circle (two noise octaves);
+  // narrow, finely grained and faint -- a wide blob reads as a smudge
+  vec3 axis = normalize(vec3(0.36, 0.46, 0.81));
+  float band = smoothstep(0.86, 0.99, 1.0 - abs(dot(dir, axis)));
+  float grain = vnoise(dir.xz * 46.0 + dir.y * 23.0) * 0.55
+              + vnoise(dir.xz * 113.0 - dir.y * 37.0) * 0.45;
+  c += vec3(0.42, 0.50, 0.74) * band * (0.020 + 0.075 * grain * grain);
+  return c * uStarAmount * bank;
+}
+
+/* The moon is a real disc, not a bright pixel: limb darkening, maria, and a
+   soft halo so it reads at a glance without a bloom pass. */
+vec3 moon(vec3 dir){
+  if (uMoonAmount < 0.01) return vec3(0.0);
+  vec3 up = abs(uMoonDir.y) > 0.92 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+  vec3 mx = normalize(cross(up, uMoonDir));
+  vec3 my = cross(uMoonDir, mx);
+  vec2 q = vec2(dot(dir, mx), dot(dir, my));
+  float r = length(q);
+  const float R = 0.032;
+  float halo = pow(max(0.0, 1.0 - r / (R * 9.0)), 3.0) * 0.30;
+  vec3 col = vec3(0.52, 0.64, 0.92) * halo * uMoonAmount;
+  float disc = smoothstep(R, R * 0.93, r);
+  if (disc <= 0.001) return col;
+  vec2 uv = q / R;
+  float limb = sqrt(max(0.0, 1.0 - dot(uv, uv)));
+  float maria = vnoise(uv * 2.2 + 3.0) * 0.55 + vnoise(uv * 5.6 - 1.5) * 0.45;
+  float craters = smoothstep(0.66, 0.94, vnoise(uv * 11.0 + 7.0)) * 0.10;
+  float albedo = 0.52 + 0.48 * limb - 0.34 * smoothstep(0.38, 0.76, maria) - craters;
+  // a low moon is reddened by the same air the setting sun goes through
+  float low = smoothstep(0.17, 0.02, uMoonDir.y);
+  vec3 tint = mix(vec3(1.0, 0.975, 0.905), vec3(1.0, 0.62, 0.34), low);
+  vec3 base = tint * albedo * 1.35;
+  return col + base * disc * uMoonAmount;
 }
 
 void main(){
@@ -209,12 +259,18 @@ void main(){
   vec3 dir = normalize(world.xyz / world.w - uCameraPos);
 
   vec3 col = skyRadiance(dir, uSunDir, uZenithColor, uHorizonColor, uSunColor);
+  // low haze: the air near the horizon scatters warm town light and moonlight.
+  // It is what stops a night sky reading as a flat vertical gradient.
+  float hz = pow(max(0.0, 1.0 - dir.y * 4.2), 5.0) * smoothstep(-0.06, 0.015, dir.y);
+  col += vec3(0.055, 0.052, 0.075) * hz * uMoonAmount;
+  col += moon(dir);
   col += stars(dir) * smoothstep(0.0, 0.2, dir.y);
 
-  // sun disc + glow
+  // sun disc + glow (the moon replaces it after dark)
   float mu = dot(dir, uSunDir);
-  col += uSunColor * smoothstep(0.9993, 0.9998, mu) * 26.0;
-  col += uSunColor * pow(max(mu, 0.0), 220.0) * 1.6;
+  float sunUp = smoothstep(0.0, 0.15, uSunDir.y) * (1.0 - uMoonAmount);
+  col += uSunColor * smoothstep(0.9993, 0.9998, mu) * 26.0 * sunUp;
+  col += uSunColor * pow(max(mu, 0.0), 220.0) * 1.6 * sunUp;
 
   // clouds: two scrolling layers projected on a dome
   if (dir.y > 0.015) {
@@ -528,7 +584,9 @@ void main(){
 
   vec3 emissive = vec3(0.0);
   if (layer == M_GLASS) {
-    emissive = vec3(1.0, 0.62, 0.26) * (0.18 + uNight * 3.4) * (0.55 + 0.45 * fbm2(vWorld.xz * 3.0));
+    // window panes and brazier coals: warm, never clipped to white. The old
+    // 3.4x night multiplier blew every flame out into a flat white blob.
+    emissive = vec3(1.0, 0.54, 0.20) * (0.16 + uNight * 1.9) * (0.55 + 0.45 * fbm2(vWorld.xz * 3.0));
   } else if (layer == M_GOLD) {
     emissive = vec3(1.0, 0.62, 0.22) * uNight * 0.22;
   }

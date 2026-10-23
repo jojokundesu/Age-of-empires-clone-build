@@ -530,6 +530,9 @@ export class Input {
     else if (k === 'e') cam.rotate(0.12);
     else if (k === '+' || k === '=') cam.zoom(0.9);
     else if (k === '-' || k === '_') cam.zoom(1.1);
+    // tilt: R/F would collide with idle-villager on F, so use T/G
+    else if (k === 't') cam.nudge(0, -0.08);
+    else if (k === 'g') cam.nudge(0, 0.08);
     else if (k === 'escape') {
       if (this.game.placing) { this.game.placing = null; this.ui?.refreshCommands(); }
       else if (this.armed) { this.armed = null; this.ui?.refreshCommands(); }

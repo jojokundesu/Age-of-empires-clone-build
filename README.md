@@ -73,7 +73,14 @@ The clock is not decoration — it is a second set of rules.
 * **Night is for the raid.** Melee hits land 16 % harder and every vision radius shrinks by a sixth, which means a small force can slip between two watch posts and hit a wood line before the defender can see it coming. Ranged units get no damage bonus — the night belongs to spears, swords and cavalry.
 * A full cycle takes 15 minutes (`game.dayLength = 900`), so most matches see two or three nights. The HUD clock changes colour and icon with the phase, and a toast fires on each transition.
 
-Visually the phase drives the sun angle, sun colour, ambient hemisphere (cool fill by day, warm bounce at night), fog density, star field and a set of four flickering hearth lights that follow your most important buildings, so a defended town looks like a defended town after dark.
+Visually the phase drives the sun angle, sun colour, ambient hemisphere (cool fill by day, warm bounce at night), fog density and a set of four flickering hearth lights that follow your most important buildings, so a defended town looks like a defended town after dark.
+
+The night sky is its own piece of work rather than a darker blue:
+
+* **A real moon.** A disc with limb darkening, maria and craters, a cool halo, and atmospheric reddening when it hangs low, running the opposite half of the sky to the sun on a 1–9° arc — low enough that an RTS camera can actually frame it. It is hidden behind geometry, dims near the horizon haze, and is replaced by the sun disc by day.
+* **A layered starfield.** Three spherical hash layers (a faint dust of thousands, mid stars, a handful of bright ones) with per-star twinkle and colour temperature, plus a narrow, finely grained milky band. No star list is uploaded, so it costs one shader pass and nothing else.
+* **Braziers at every firelight.** The four `uTownLight` slots are now visible objects: a stone-and-iron brazier with glowing coals, one instanced draw call, placed at a fixed spot beside each chosen building's door. The ironwork stands there by day; only the flame and its additive halo switch on after dark.
+* **You can look up.** The camera pitch floor dropped from 0.42 to 0.22 rad and the rail gained tilt buttons (`T`/`G` on a keyboard), because before this no control could point the camera high enough to see any sky at all.
 
 ## Controls (touch)
 
@@ -86,10 +93,11 @@ Visually the phase drives the sun angle, sun colour, ambient hemisphere (cool fi
 | drag a box | select an army |
 | long-press ground | attack-move |
 | minimap tap / drag | jump the camera |
+| 👁 rail buttons (hold) | tilt toward the horizon (see the sky) / back to top-down |
 | ⛏ Build → tap a spot | place a building |
 
-Keyboard (desktop): WASD/arrows pan, Q/E rotate, +/- zoom, Space pause, H home,
-A attack-move, S stop, F next idle villager, 1-9 groups, Esc deselect.
+Keyboard (desktop): WASD/arrows pan, Q/E rotate, T/G tilt, +/- zoom, Space pause,
+H home, A attack-move, S stop, F next idle villager, 1-9 groups, Esc deselect.
 
 ## Why it runs smoothly on a phone
 

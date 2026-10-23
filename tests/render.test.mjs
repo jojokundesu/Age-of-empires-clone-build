@@ -132,7 +132,16 @@ check('every declared lighting uniform is actually uploaded', () => {
 });
 check('night lighting reaches the shaders', () => {
   const log = canvas.getContext('webgl2').log;
-  const seen = (name) => [...log.uniformValues.values()].map((m) => m.get(name)).filter(Boolean).pop();
+  /* Read the uniform out of the program that is actually supposed to carry it.
+     Scanning every program and taking the last write is wrong: a program that
+     simply was not drawn this frame (particles, say) still holds its value from
+     the previous frame, and map order is insertion order, not draw order. */
+  const fromProg = (prog, name) => {
+    const m = log.uniformValues.get(prog.program);
+    return m ? m.get(name) : undefined;
+  };
+  const model = () => renderer.pModel;
+  const seen = (name) => fromProg(model(), name) || [...log.uniformValues.values()].map((m) => m.get(name)).filter(Boolean).pop();
   game.setTimeOfDay(22);
   renderer.render(1 / 60, game);
   const night = seen('uNight');
@@ -148,6 +157,61 @@ check('night lighting reaches the shaders', () => {
   const dayI = seen('uTownLightI');
   assert(dayI && dayI[0] === 0, 'fires are burning at noon: ' + JSON.stringify(dayI));
 });
+check('a brazier stands at every firelight (and never pops in at dusk)', () => {
+  game.setTimeOfDay(22);
+  camera.yaw = camera.desiredYaw = 0.7;
+  camera.setTarget(world.playerBase.x, world.playerBase.z, true);
+  camera.update(0.016, { instant: true });
+  renderer._pickTownLights(game, camera, 1);
+  renderer.render(1 / 60, game);
+  assert(renderer.fireBatch, 'no brazier batch was built');
+  const night = renderer.fireBatch.count;
+  assert(night >= 1, 'no braziers drew at night');
+  assert(night <= 4, 'more braziers than firelight slots: ' + night);
+  const lit = Array.from(renderer.townLight);
+  assert(lit.some((v, i) => i % 3 === 1 && v > -900), 'no firelight position was set at night');
+
+  // the ironwork is always there: only the flame is a night thing
+  game.setTimeOfDay(12);
+  renderer.render(1 / 60, game);
+  assert(renderer.fireBatch.count === night,
+    `braziers appear only after dark (${renderer.fireBatch.count} by day, ${night} at night)`);
+
+  // and the brazier does not slide around the hut when the camera turns
+  game.setTimeOfDay(22);
+  const before = Array.from(renderer.townLight);
+  camera.yaw = camera.desiredYaw = 2.4;
+  camera.update(0.016, { instant: true });
+  renderer._pickTownLights(game, camera, 1);
+  const after = Array.from(renderer.townLight);
+  for (let i = 0; i < before.length; i++) {
+    assert(Math.abs(before[i] - after[i]) < 1e-4,
+      `firelight ${i} moved with the camera (${before[i].toFixed(2)} -> ${after[i].toFixed(2)})`);
+  }
+  game.setTimeOfDay(12);
+  camera.yaw = camera.desiredYaw = 0.7;
+  camera.update(0.016, { instant: true });
+});
+
+check('the firelight really is uploaded for the night shaders', () => {
+  const log = canvas.getContext('webgl2').log;
+  // the sky program is the one that owns the moon uniforms
+  const seen = (name) => {
+    const m = log.uniformValues.get(renderer.pSky.program);
+    return m ? m.get(name) : undefined;
+  };
+  game.setTimeOfDay(22.3);
+  renderer.render(1 / 60, game);
+  const moon = seen('uMoonAmount');
+  assert(moon && moon[0] > 0.9, 'uMoonAmount not uploaded at night: ' + JSON.stringify(moon));
+  const md = seen('uMoonDir');
+  assert(md && Math.abs(Math.hypot(md[0], md[1], md[2]) - 1) < 0.02, 'uMoonDir is not a unit vector: ' + JSON.stringify(md));
+  game.setTimeOfDay(12);
+  renderer.render(1 / 60, game);
+  const dayMoon = seen('uMoonAmount');
+  assert(dayMoon && dayMoon[0] < 0.05, 'the moon is up at noon: ' + JSON.stringify(dayMoon));
+});
+
 check('fog upload', () => {
   const size = 96;
   const buf = new Uint8Array(size * size);
@@ -196,7 +260,10 @@ check('no unknown GL methods', () => {
   const bad = [...(canvas.__gl.log.unknownMethods || [])];
   assert(bad.length === 0, 'unknown GL calls (typos?): ' + bad.join(', '));
 });
-check('dispose frees everything', () => { renderer.dispose(); });
+check('dispose frees everything', () => {
+  renderer.dispose();
+  assert(!renderer.fireBatch, 'the brazier batch survived dispose (leak)');
+});
 
 const st = renderer.stats;
 console.log(`\n  last frame: ${st.drawCalls} draws, ${st.tris} tris, ${st.instances} instances`);

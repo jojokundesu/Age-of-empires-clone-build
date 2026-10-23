@@ -125,6 +125,37 @@ check('update loop is stable', () => {
     ui.update(1 / 60);
   }
 });
+check('camera rail: rotate, zoom and tilt', () => {
+  const yaw0 = camera.desiredYaw;
+  document.getElementById('camRotL').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  document.getElementById('camRotR').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert(Math.abs(camera.desiredYaw - yaw0) < 1e-9, 'rotate buttons do not cancel out');
+  const d0 = camera.desiredDist;
+  document.getElementById('camZoomIn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert(camera.desiredDist < d0, 'zoom in did nothing');
+  document.getElementById('camZoomOut').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  // tilt up lowers the pitch (toward the horizon) and clamps at the floor
+  const p0 = camera.desiredPitch;
+  const up = document.getElementById('camTiltUp');
+  assert(up, 'no tilt control: the night sky is unreachable on a phone');
+  up.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true }));
+  up.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }));
+  assert(camera.desiredPitch < p0, 'tilt up did not lower the pitch');
+  for (let i = 0; i < 40; i++) {
+    up.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true }));
+    up.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }));
+  }
+  assert(camera.desiredPitch >= 0.2 && camera.desiredPitch <= 0.32,
+    'tilt does not stop at the pitch floor: ' + camera.desiredPitch);
+  const down = document.getElementById('camTiltDown');
+  for (let i = 0; i < 40; i++) {
+    down.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true }));
+    down.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }));
+  }
+  assert(camera.desiredPitch > 1.2, 'tilt down does not reach the top-down limit: ' + camera.desiredPitch);
+  camera.desiredPitch = camera.pitch = 0.86;
+});
+
 check('resources render', () => {
   const food = document.getElementById('resFood').textContent;
   assert(food !== '0' || game.teams.get(1).res.food > 0, 'food not shown');

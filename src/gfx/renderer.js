@@ -104,6 +104,8 @@ export class Renderer {
     this.cloudOffset = new Float32Array([0, 0]);
     this.cloudCover = 0.5;
     this.starAmount = 0;
+    this.moonAmount = 0;
+    this.moonDir = new Float32Array([0.3, 0.62, -0.72]);
     this.night = 0;
     this.exposure = 1;
     this.fogDensity = 0.0032;
@@ -113,6 +115,7 @@ export class Renderer {
     this.ready = false;
     this.ctxLost = false;
     this.townLight = new Float32Array(12);
+    this.townLightY = new Float32Array(4);
     this.townLightI = 0;
     this.townLightColor = new Float32Array([2.30, 1.30, 0.58]);
     this.fogTexture = null;
@@ -196,6 +199,9 @@ export class Renderer {
       if (!res) continue;
       this.propBatches.set(name, new InstanceBatch(gl, res.geo.finish(), 900));
     }
+    // one instanced brazier per firelight slot: four instances, one draw call
+    const fireRes = buildProp('brazier');
+    this.fireBatch = new InstanceBatch(gl, fireRes.geo.finish(), 4);
     const resNames = ['tree0', 'tree1', 'tree2', 'tree3', 'tree0L', 'tree1L', 'tree2L', 'tree3L',
       'gold_mine', 'stone_mine', 'berry_bush', 'deer', 'boar', 'fish', 'relic'];
     for (const name of resNames) {
@@ -528,6 +534,23 @@ export class Renderer {
       this.starAmount = 1;
       this.exposure = 1.35;
     }
+    /* The moon runs the opposite half of the sky to the sun and keeps a low
+       arc (peak ~34 degrees), so it is actually inside the frame when the
+       player tilts the camera down toward the horizon -- a disc parked at the
+       zenith would never be seen by an RTS camera. */
+    const moonT = (((hour + 12) % 24) - 5.5) / 13.5;
+    const mArc = Math.max(0, Math.sin(clamp(moonT, -0.35, 1.35) * Math.PI));
+    const mElev = 0.02 + 0.10 * Math.pow(mArc, 1.3);
+    const mAz = Math.PI * (0.16 + clamp(moonT, -0.25, 1.25) * 0.94);
+    const me = Math.max(mElev, 0.02);
+    const mx = Math.cos(mAz) * Math.cos(me);
+    const my = Math.sin(me);
+    const mz = Math.sin(mAz) * Math.cos(me) * 0.85 + 0.2;
+    const ml = Math.hypot(mx, my, mz) || 1;
+    this.moonDir[0] = mx / ml; this.moonDir[1] = my / ml; this.moonDir[2] = mz / ml;
+    this.moonAmount = isNight ? 1 : clamp((this.night - 0.22) / 0.45, 0, 1);
+    // a thinner cloud deck after dark: stars are the point of a night sky
+    this.cloudCover = isNight ? 0.38 : 0.52;
     this.townLightI = clamp((this.night - 0.15) / 0.55, 0, 1);
     this.cloudOffset[0] += dt * 0.0018;
     this.cloudOffset[1] += dt * 0.0009;
@@ -573,8 +596,8 @@ export class Renderer {
     this._cam = cam;
 
     this._fillInstances(game, cam, dt);
-    this._pickTownLights(game, cam);
-    this._pickTownLights(game, cam);
+    this._pickTownLights(game, cam, dt);
+    this._fillFires(cam);
     if (this.quality.shadows) this._shadowPass();
 
     const target = this.postTarget;
@@ -607,9 +630,16 @@ export class Renderer {
   /* Three nearest burning hearths: town centres, houses, barracks. Keeping the
      count fixed means the shader loop is unrolled and the uniform upload is
      three vec3s -- no allocations, no dynamic light list. */
-  _pickTownLights(game, cam) {
-    if (this.townLightI <= 0.001) return;
+  _pickTownLights(game, cam, dt = 0) {
+    /* Repicked only when the view has moved enough to change which fires are
+       nearest -- the braziers stand there all day, so this can no longer be
+       skipped in daylight (it used to be, which made them pop into existence
+       at dusk). The object allocations live inside this throttled branch. */
     const cx = cam.target[0], cz = cam.target[2];
+    this._fireT = (this._fireT || 0) + dt;
+    const moved = Math.abs(cx - (this._fireX || 1e9)) + Math.abs(cz - (this._fireZ || 1e9));
+    if (this._fireX !== undefined && moved < 6 && this._fireT < 0.4) return;
+    this._fireX = cx; this._fireZ = cz; this._fireT = 0;
     const best = this._lightCand || (this._lightCand = []);
     best.length = 0;
     const list = game.buildings;
@@ -639,16 +669,48 @@ export class Renderer {
     for (let i = 0; i < 4; i++) {
       const c = chosen[i];
       const o = i * 3;
-      if (!c) { t[o] = 0; t[o + 1] = -999; t[o + 2] = 0; continue; }
-      // a fire *inside* the walls cannot light the outside of the building, so
-      // put the torch on the side that faces the camera (the door side)
-      const fp = (c.b.def && c.b.def.footprint ? c.b.def.footprint : 3) * 0.5 + 1.0;
-      let dx = cam.eye[0] - c.b.x, dz = cam.eye[2] - c.b.z;
-      const dl = Math.hypot(dx, dz) || 1;
-      dx /= dl; dz /= dl;
+      if (!c) { t[o] = 0; t[o + 1] = -999; t[o + 2] = 0; this.townLightY[i] = 0; continue; }
+      /* The brazier has to live at a fixed spot: a torch that slid around the
+         hut whenever the camera turned looked like a bug. The angle comes from
+         the building's own position, so every hut keeps its brazier forever,
+         and the light always sits exactly on the fire. */
+      const fp = (c.b.def && c.b.def.footprint ? c.b.def.footprint : 3) * 0.5 + 0.95;
+      // flank the doorway: the door faces `facing`, so bias to one side of it
+      const ang = (c.b.facing || 0) + 0.62;
+      const dx = Math.sin(ang), dz = Math.cos(ang);
       t[o] = c.b.x + dx * fp;
       t[o + 1] = (c.b.y || 0) + 1.6;
       t[o + 2] = c.b.z + dz * fp;
+      this.townLightY[i] = (c.b.y || 0);
+    }
+  }
+
+  /* Draws the braziers that the town lights pretend to come from. Four
+     instances, one draw call. The flame breathes with a per-slot phase so the
+     fires do not pulse in lockstep. */
+  _fillFires(cam) {
+    const batch = this.fireBatch;
+    if (!batch) return;
+    batch.begin();
+    // the ironwork stands there all day; only the flame and its halo are lit
+    // after dark, so nothing pops into existence at dusk
+    const t = this.townLight, y = this.townLightY;
+    const lit = this.townLightI > 0.01;
+    for (let i = 0; i < 4; i++) {
+      const o = i * 3;
+      if (t[o + 1] < -900) continue;
+      const x = t[o], z = t[o + 2];
+      const dx = x - cam.target[0], dz = z - cam.target[2];
+      if (dx * dx + dz * dz > 150 * 150) continue;
+      const flick = lit ? 1.12 + 0.05 * Math.sin(this.time * (7.0 + i * 1.9) + i * 2.1) : 1;
+      batch.push(m4trs(this._mB, x, y[i], z, i * 1.7, flick, flick * 1.04, flick),
+        1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    }
+    if (batch.count) {
+      batch.flush();
+      this._activeBatches.push(batch);
+      this.stats.tris += batch.triCount * batch.count;
+      this.stats.instances += batch.count;
     }
   }
 
@@ -915,6 +977,8 @@ export class Renderer {
     s.v3('uHorizonColor', this.horizon[0], this.horizon[1], this.horizon[2]);
     s.f('uCloudCover', this.cloudCover);
     s.f('uStarAmount', this.starAmount);
+    s.v3('uMoonDir', this.moonDir[0], this.moonDir[1], this.moonDir[2]);
+    s.f('uMoonAmount', this.moonAmount);
     this._bindLight(s);
     gl.bindVertexArray(this.emptyVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -1124,15 +1188,14 @@ export class Renderer {
   }
 
   _drawParticles(cam, game) {
-    const fx = game.fx;
-    if (!fx || !fx.particles) return;
     const gl = this.gl;
     const cap = this.quality.particleCap;
     const a = this.particleAlpha, add = this.particleAdd;
     a.begin(); add.begin();
     let total = 0;
-    const arr = fx.particles;
-    for (let i = 0; i < fx.count && total < cap; i++) {
+    const fx = game.fx;
+    const arr = fx && fx.particles ? fx.particles : null;
+    for (let i = 0; arr && i < fx.count && total < cap; i++) {
       const p = arr[i];
       if (p.life <= 0) continue;
       const t = 1 - p.life / p.maxLife;
@@ -1143,6 +1206,20 @@ export class Renderer {
       if (!batch.push(p.x, p.y, p.z, size, p.r, p.g, p.b, alpha,
         (p.rot || 0) + (p.spin || 0) * t, p.sprite || 0, p.stretch || 0, 0)) break;
       total++;
+    }
+    /* A halo around every burning brazier. It lives in the additive particle
+       batch so it costs no extra draw call, and it is depth tested, so walls
+       still occlude a fire that is behind them. */
+    if (this.townLightI > 0.01) {
+      const t = this.townLight;
+      for (let i = 0; i < 4; i++) {
+        const o = i * 3;
+        if (t[o + 1] < -900) continue;
+        const flick = 0.86 + 0.14 * Math.sin(this.time * (6.2 + i * 1.7) + i * 2.1);
+        add.push(t[o], t[o + 1] + 0.18, t[o + 2], 2.5 * flick,
+          1.0, 0.56, 0.20, 0.72 * flick * this.townLightI, 0, SPRITE.GLOW, 0, 0);
+        total++;
+      }
     }
     a.flush(); add.flush();
     if (!a.count && !add.count) return;
@@ -1214,6 +1291,7 @@ export class Renderer {
     for (const b of this.buildingBatches.values()) b.dispose();
     for (const b of this.unitBatches.values()) b.dispose();
     for (const b of this.propBatches.values()) b.dispose();
+    if (this.fireBatch) { this.fireBatch.dispose(); this.fireBatch = null; }
     for (const b of this.resBatches.values()) b.dispose();
     for (const c of this.chunks) c.mesh.dispose();
     if (this.waterMesh) this.waterMesh.dispose();

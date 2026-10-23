@@ -130,6 +130,21 @@ check('distant props are cheap and the town centre is rich', () => {
   assert(c.buildings.town_center >= c.props.rock, 'the hero building should carry more detail than a rock');
 });
 
+check('the brazier is a cheap prop whose flame sits at the firelight height', () => {
+  const res = buildProp('brazier');
+  const g = res.geo.finish();
+  const tris = g.i.length / 3;
+  assert(tris > 40 && tris < 400, `brazier is ${tris} tris (four of them draw every frame)`);
+  assert(res.height > 1.4 && res.height < 2.0, `brazier height ${res.height} does not match the 1.6 m firelight slot`);
+  // it must actually contain emissive geometry, otherwise it is just ironwork
+  // (16 floats per vertex: pos, normal, uv, material, colour, pivot, part)
+  const mats = new Set();
+  for (let i = 8; i < g.v.length; i += 16) mats.add(g.v[i]);
+  assert(mats.has(12), 'brazier has no glow-material vertices (no fire): ' + [...mats].join(','));
+  assert(mats.size >= 3, 'brazier is painted with a single material: ' + [...mats].join(','));
+  assert(PROP_TYPES.includes('brazier'), 'brazier missing from the prop catalogue');
+});
+
 if (fails.length) {
   console.error('\nGEOMETRY CHECKS FAILED\n' + fails.map((f) => ' - ' + f).join('\n'));
   process.exit(1);

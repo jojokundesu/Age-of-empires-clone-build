@@ -1504,6 +1504,30 @@ P('fish', () => {
   g.color(1, 1, 1);
   return { geo: g, height: 0.4 };
 });
+/* A standing brazier: the visible source of every town firelight. The bowls
+   sit at the exact height the renderer puts uTownLight, so the glowing pool on
+   the ground always has a flame at its centre. */
+P('brazier', () => {
+  const g = new Geo();
+  g.material(M.STONE).color(0.66, 0.64, 0.60);
+  g.cyl(0, 0.05, 0, 0.30, 0.36, 0.10, 8);
+  g.material(M.IRON).color(0.30, 0.29, 0.28);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.4;
+    const sx = Math.sin(a) * 0.30, sz = Math.cos(a) * 0.30;
+    g.beam(sx, 0.09, sz, sx * 0.62, 1.20, sz * 0.62, 0.045);
+  }
+  g.material(M.IRON).color(0.38, 0.36, 0.34);
+  g.cyl(0, 1.30, 0, 0.20, 0.36, 0.30, 10);
+  g.material(M.IRON).color(0.46, 0.43, 0.40);
+  g.cyl(0, 1.45, 0, 0.38, 0.35, 0.06, 10);
+  g.material(M.GLOW).color(1.0, 0.52, 0.14);
+  g.sphere(0, 1.42, 0, 0.28, 8, 5);
+  g.material(M.GLOW).color(1.0, 0.74, 0.30);
+  g.sphere(0, 1.58, 0, 0.19, 7, 4);
+  return { geo: g, height: 1.72 };
+});
+
 P('relic', () => {
   const g = new Geo();
   g.material(M.STONE).color(0.8, 0.78, 0.72);

@@ -46,7 +46,7 @@ export class UI {
       'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime',
       'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnDecrees', 'decreeBadge',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
-      'stanceBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut',
+      'stanceBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
       'minimap', 'miniStamp', 'btnGotoTC', 'btnMiniMode', 'btnFormation',
       'inspIcon', 'inspName', 'inspSub', 'inspMultiBtn', 'hpWrap', 'hpFill', 'hpText',
       'inspStats', 'queueWrap', 'queueFill', 'queueText', 'queueDots',
@@ -100,6 +100,26 @@ export class UI {
     click(el.camHome, () => this.centreOnTownCentre());
     click(el.camZoomIn, () => this.camera.zoom(0.86));
     click(el.camZoomOut, () => this.camera.zoom(1.16));
+    // Tilt: the only way to see the horizon (and with it the night sky) on a
+    // touch device, where yaw comes from twisting and pitch had no control at
+    // all. Held down, it sweeps.
+    const tilt = (el2, dir) => {
+      if (!el2) return;
+      let timer = 0;
+      const step = () => this.camera.nudge(0, dir * 0.06);
+      el2.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        step();
+        clearInterval(timer);
+        timer = setInterval(step, 90);
+      }, { passive: false });
+      const stop = () => { clearInterval(timer); timer = 0; };
+      el2.addEventListener('pointerup', stop);
+      el2.addEventListener('pointercancel', stop);
+      el2.addEventListener('pointerleave', stop);
+    };
+    tilt(el.camTiltUp, -1);
+    tilt(el.camTiltDown, 1);
     click(el.inspMultiBtn, () => this.selectAllOfType());
 
     el.stanceBar?.addEventListener('click', (e) => {

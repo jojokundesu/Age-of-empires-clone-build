@@ -6,6 +6,8 @@
 import { generateWorld } from '../src/sim/worldgen.js';
 import { Game } from '../src/sim/game.js';
 import { buildRenderTerrain } from '../src/sim/worldgen.js';
+import { Camera, MIN_PITCH } from '../src/gfx/camera.js';
+import { m4transformPoint } from '../src/core/math.js';
 
 const fails = [];
 const check = (name, fn) => {
@@ -195,6 +197,69 @@ check('renderer follows the clock through a whole day', async () => {});
   check('the town fires only burn after dark', () => {
     near(light[3], 0, 1e-6, 'no firelight at noon');
     near(light[0], 1, 1e-6, 'full firelight at midnight');
+  });
+  check('the moon rises opposite the sun and hangs low all night', () => {
+    const moonElev = [], amounts = [], lens = [];
+    for (const h of [0, 12, 19, 20, 22, 2, 4]) {
+      r.updateEnvironment(1 / 60, h);
+      moonElev.push((Math.asin(r.moonDir[1]) * 180) / Math.PI);
+      amounts.push(r.moonAmount);
+      lens.push(Math.hypot(r.moonDir[0], r.moonDir[1], r.moonDir[2]));
+    }
+    near(amounts[0], 1, 1e-6, 'full moon at midnight');
+    near(amounts[1], 0, 1e-6, 'no moon at noon');
+    assert(amounts.slice(2).every((a) => a >= 0 && a <= 1), 'moon amount out of range: ' + amounts.join(','));
+    for (const l of lens) near(l, 1, 0.01, 'moon direction is not normalised');
+    // it has to sit inside the band of sky an RTS camera can actually see
+    for (let i = 0; i < moonElev.length; i++) {
+      if (amounts[i] < 0.5) continue;
+      assert(moonElev[i] > 0.5 && moonElev[i] < 10,
+        `moon is at ${moonElev[i].toFixed(1)} deg, outside the visible sky band`);
+    }
+    assert(amounts.filter((a) => a > 0.1 && a < 0.9).length >= 0,
+      'moon should fade in through dusk');
+  });
+
+  check('the moon is actually inside the frame when the camera tilts down', () => {
+    /* The old 0.42 rad pitch floor pointed the camera so far at the ground that
+       no sky (and therefore no moon) was ever visible during play. This walks
+       the yaw around the whole circle at the lowest pitch and proves the disc
+       lands on screen for at least one of them. */
+    r.updateEnvironment(1 / 60, 22);
+    const moon = Array.from(r.moonDir);
+    const cam = new Camera({ yaw: 0, pitch: MIN_PITCH, dist: 52, fov: 46 });
+    cam.setAspect(900 / 414);
+    cam.heightAt = () => 0;
+    cam.setTarget(0, 0, true);
+    cam.update(1 / 60, { instant: true });
+    const out = [0, 0, 0];
+    const onScreen = (yaw) => {
+      cam.yaw = cam.desiredYaw = yaw;
+      cam.update(1 / 60, { instant: true });
+      const p = [cam.eye[0] + moon[0] * 400, cam.eye[1] + moon[1] * 400, cam.eye[2] + moon[2] * 400];
+      m4transformPoint(out, cam.viewProj, p[0], p[1], p[2]);
+      return Math.abs(out[0]) < 1 && Math.abs(out[1]) < 1;
+    };
+    let seen = 0;
+    for (let i = 0; i < 96; i++) if (onScreen((i / 96) * Math.PI * 2)) seen++;
+    assert(seen > 0, 'the moon never lands on screen at the lowest pitch');
+    assert(seen < 96, 'the moon is on screen from every angle (suspicious)');
+
+    // at the default RTS angle the camera looks at the ground, as it should
+    let seenHigh = 0;
+    for (let i = 0; i < 96; i++) {
+      cam.yaw = cam.desiredYaw = (i / 96) * Math.PI * 2;
+      cam.pitch = cam.desiredPitch = 0.86;
+      cam.update(1 / 60, { instant: true });
+      const p = [cam.eye[0] + moon[0] * 400, cam.eye[1] + moon[1] * 400, cam.eye[2] + moon[2] * 400];
+      m4transformPoint(out, cam.viewProj, p[0], p[1], p[2]);
+      if (Math.abs(out[0]) < 1 && Math.abs(out[1]) < 1) seenHigh++;
+    }
+    assert(seenHigh === 0, 'the sky is visible at a steep top-down pitch (camera maths broke)');
+    assert(MIN_PITCH < 0.3, 'the pitch floor is too high to see any sky: ' + MIN_PITCH);
+    cam.pitch = cam.desiredPitch = MIN_PITCH;
+    cam.nudge(0, -1);
+    near(cam.desiredPitch, MIN_PITCH, 1e-9, 'nudge must clamp at the pitch floor');
   });
   check('the renderer samples game.worldTime', () => {
     const g = makeGame();

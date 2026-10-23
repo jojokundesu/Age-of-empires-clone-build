@@ -235,6 +235,59 @@ try {
   results.night = await setHour(22.5);
   results.nightShot = await shot('06-night');
 
+  /* ---- the night sky is real pixels, not just a uniform ------------------
+     Tilt to the horizon, sweep the yaw, and read the top strip of the actual
+     framebuffer until the moon shows up. This is the check that would have
+     caught "the moon exists in the shader but is never on screen". */
+  results.sky = await page.evaluate(async () => {
+    const a = window.__imperial;
+    const cam = a.camera, gl = a.renderer.gl;
+    const W = a.renderer.canvas.width, H = a.renderer.canvas.height;
+    const stripH = Math.max(24, Math.round(H * 0.22));
+    const px = new Uint8Array(W * stripH * 4);
+    const sample = () => {
+      gl.readPixels(0, H - stripH, W, stripH, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      let max = 0, stars = 0, sum = 0;
+      for (let i = 0; i < px.length; i += 4) {
+        const l = 0.2126 * px[i] + 0.7152 * px[i + 1] + 0.0722 * px[i + 2];
+        sum += l;
+        if (l > max) max = l;
+        if (l > 150) stars++;
+      }
+      return { max, stars, mean: sum / (px.length / 4) };
+    };
+    const before = { pitch: cam.pitch };
+    let best = { max: 0, yaw: 0 };
+    for (let i = 0; i < 12; i++) {
+      cam.yaw = cam.desiredYaw = (i / 12) * Math.PI * 2;
+      cam.pitch = cam.desiredPitch = 0.22;
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const m = sample();
+      if (m.max > best.max) best = { ...m, yaw: cam.yaw };
+    }
+    cam.yaw = cam.desiredYaw = best.yaw;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    const moon = sample();
+    const fires = {
+      night: a.renderer.fireBatch ? a.renderer.fireBatch.count : -1,
+      lights: a.renderer.townLightI
+    };
+    return { before, best, moon, fires };
+  });
+  // shot first: the sky framing is the point, so stay tilted while capturing
+  results.skyShot = await shot('07-nightsky');
+  await page.evaluate(async () => {
+    const a = window.__imperial;
+    a.camera.pitch = a.camera.desiredPitch = 0.86;
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  });
+  expect(results.sky.best.max > 140,
+    `no moon disc in the night sky (brightest top-strip pixel ${results.sky.best.max.toFixed(0)})`);
+  expect(results.sky.best.stars > 6,
+    `the night sky has almost no stars (${results.sky.best.stars} bright pixels)`);
+  expect(results.sky.fires.night > 0, 'no brazier was drawn at night');
+  expect(results.sky.before.pitch > 0.5, 'the camera did not start at a playable pitch');
+
   expect(results.daylight.luma > 45, `daytime frame is nearly black (${results.daylight.luma.toFixed(1)})`);
   expect(results.night.luma > 5, `night frame is black (${results.night.luma.toFixed(1)})`);
   expect(results.night.luma < results.daylight.luma * 0.8,
@@ -276,6 +329,7 @@ const md = [
   `- World: ${f.units} units, ${f.buildings} buildings, game time ${fmt(f.time, 0)} s`,
   `- UI: ${results.ui?.cards ?? '?'} command cards · glError ${results.afterUi?.glError ?? '?'}`,
   `- Day/night: noon luma ${fmt(results.daylight?.luma)} → night luma ${fmt(results.night?.luma)} (screenshots 05/06)`,
+  `- Night sky: brightest sky pixel ${fmt(results.sky?.best.max, 0)} · ${results.sky?.best.stars ?? '?'} bright pixels · ${results.sky?.fires?.night ?? '?'} braziers (screenshot 07)`,
   `- Console errors: ${results.errors?.console.length ?? '?'} · page errors: ${results.errors?.page.length ?? '?'} · failed requests: ${results.errors?.requests.length ?? '?'}`,
   results.errors?.requests.length ? `  - ${results.errors.requests.join('\n  - ')}` : '',
   `- Checks: ${checksRun} run · ${fail.length} failed`,

@@ -3,6 +3,8 @@
    ============================================================ */
 import { mat4, m4perspective, m4lookAt, m4mul, m4invert, m4transformPoint, clamp, lerp } from '../core/math.js';
 
+export const MIN_PITCH = 0.22;
+
 export class Camera {
   constructor(opts = {}) {
     this.target = new Float32Array([0, 0, 0]);
@@ -47,7 +49,10 @@ export class Camera {
     this.desiredDist = clamp(this.desiredDist * delta, this.minDist, this.maxDist);
   }
   rotate(delta) { this.desiredYaw += delta; }
-  nudge(dyh, dpitch = 0) { this.desiredYaw += dyh; this.desiredPitch = clamp(this.desiredPitch + dpitch, 0.42, 1.32); }
+  /* 0.22 rad is low enough that the sky (and with it the moon and the stars)
+     fills a good slice of the frame; the old 0.42 floor cropped the sky out
+     entirely, so the night sky was never actually seen during play. */
+  nudge(dyh, dpitch = 0) { this.desiredYaw += dyh; this.desiredPitch = clamp(this.desiredPitch + dpitch, MIN_PITCH, 1.32); }
   addShake(amount) { this.shake = Math.min(1.4, this.shake + amount); }
 
   update(dt, opts = {}) {
