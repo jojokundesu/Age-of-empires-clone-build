@@ -52,6 +52,29 @@ check(/<svg[^>]+viewBox=/.test(svg), 'favicon.svg is a scalable svg');
    the storage / fullscreen surface the game needs. */
 const apkScript = readFileSync('scripts/build-apk.sh', 'utf8');
 check(/dist/.test(apkScript), 'apk script copies the built web bundle');
+
+/* A shell comment inside a line-continued command ends the command: bash stops
+   at the '#', so every flag after it vanishes without an error. That is how the
+   aapt2 link line lost -A, --auto-add-overlay and the version flags, shipping an
+   APK with the web bundle in the wrong place and no version name. */
+for (const file of ['scripts/build-apk.sh', 'scripts/browser-libs.mjs'.replace('.mjs', '.sh')]) {
+  if (!existsSync(file)) continue;
+  const lines = readFileSync(file, 'utf8').split('\n');
+  const offenders = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (/^\s*#/.test(lines[i]) && /\\\s*$/.test(lines[i - 1])) offenders.push(i + 1);
+  }
+  check(offenders.length === 0, `${file}: comment inside a continued command (line ${offenders.join(', ')})`);
+}
+
+/* The shell must be able to find the game inside the package: aapt2 copies the
+   contents of -A to the assets root, and MainActivity opens assets/www/. */
+check(/-A "\$OUT\/assets"/.test(apkScript), 'apk assets staged as assets/www/*');
+check(/--auto-add-overlay/.test(apkScript), 'apk link allows the resource overlay');
+check(/--v2-signing-enabled true/.test(apkScript), 'apk is signed with the v2 scheme');
+check(/imperial\.p12/.test(apkScript), 'apk uses the committed signing key (upgrades install over each other)');
+check(/classes\.dex/.test(apkScript) && /-s "\$OUT\/dex\/classes\.dex"/.test(apkScript),
+  'apk build fails when d8 produced no dex');
 const manifestXml = 'android/app/src/main/AndroidManifest.xml';
 if (existsSync(manifestXml)) {
   const xml = readFileSync(manifestXml, 'utf8');

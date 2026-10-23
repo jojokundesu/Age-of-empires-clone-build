@@ -54,15 +54,17 @@ echo "   assets: $(du -sh "$ASSETS" | cut -f1) ($(find "$ASSETS" -type f | wc -l
 echo
 echo "== 3/6 aapt2 compile + link =="
 "$BUILD_TOOLS/aapt2" compile --dir "$APP/res" -o "$OUT/res/resources.zip"
+# -A takes the *contents* of the directory to the assets root, so this points at
+# build/assets (which holds www/), not at build/assets/www. Passing the leaf put
+# index.html at assets/index.html while MainActivity serves assets/www/, which
+# is a WebView that loads nothing but a black screen. (And do not put a comment
+# *inside* this line-continued command -- bash ends the command at the '#', so
+# every flag after it silently disappears.)
 "$BUILD_TOOLS/aapt2" link \
   -o "$OUT/base.apk" \
   -I "$AJAR" \
   --manifest "$APP/AndroidManifest.xml" \
   -R "$OUT/res/resources.zip" \
-  # -A takes the *contents* of the directory to assets/ root, so this points at
-  # build/assets (which holds www/), not at build/assets/www. Passing the leaf
-  # put index.html at assets/index.html while MainActivity serves assets/www/,
-  # which is a WebView that loads nothing but a black screen.
   -A "$OUT/assets" \
   --java "$OUT/gen" \
   --min-sdk-version 24 \
