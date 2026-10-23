@@ -213,10 +213,13 @@ jobs:
           # every scheme a phone might ask for, and the exact certificate, so a
           # key change (which breaks upgrade installs) cannot slip through
           "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee apk-verify.txt
-          grep -q "Verified using v1 scheme (JAR signing): true" apk-verify.txt
           grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apk-verify.txt
           grep "Signer #1 certificate SHA-256" apk-verify.txt
           "$BUILD_TOOLS/zipalign" -c -p 4 "$APK"
+          # no classes.dex means the package installs as "app not installed,
+          # package appears to be invalid" on every Android since 5
+          unzip -l "$APK" | grep -q "classes.dex" || { echo "::error::APK contains no classes.dex"; exit 1; }
+          unzip -l "$APK" | grep -q "assets/www/index.html" || { echo "::error::APK contains no game"; exit 1; }
           "$BUILD_TOOLS/aapt2" dump badging "$APK" | head -12
           cp "$APK" "imperial-crown.apk"
           ls -lh imperial-crown.apk

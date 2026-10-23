@@ -70,15 +70,26 @@ echo "== 3/6 aapt2 compile + link =="
 echo
 echo "== 4/6 javac + d8 =="
 find "$APP/java" "$OUT/gen" -name '*.java' > "$OUT/sources.txt"
+# android.jar on the *classpath*, not the bootclasspath. Bootstrapping from it
+# hides java.lang.invoke, so any lambda in the shell failed to compile with
+# "cannot find symbol: metafactory" -- and because the old script swallowed
+# javac's status with `| grep || true`, the build went on with no .class files,
+# produced no classes.dex, and shipped an APK with no code in it. That APK is
+# exactly what Android calls "package appears to be invalid".
 javac -encoding UTF-8 -source 8 -target 8 -nowarn \
-  -bootclasspath "$AJAR" -classpath "$AJAR" \
-  -d "$OUT/classes" @"$OUT/sources.txt" 2>&1 | grep -v "bootstrap class path" || true
+  -classpath "$AJAR" -d "$OUT/classes" @"$OUT/sources.txt"
+CLASSES=$(find "$OUT/classes" -name '*.class' | wc -l)
+[ "$CLASSES" -gt 0 ] || { echo "ERROR: javac produced no classes"; exit 1; }
+echo "   javac: $CLASSES classes"
+rm -rf "$OUT/dex" && mkdir -p "$OUT/dex"
 "$BUILD_TOOLS/d8" --release --min-api 24 --lib "$AJAR" \
   --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
+[ -s "$OUT/dex/classes.dex" ] || { echo "ERROR: d8 produced no classes.dex"; exit 1; }
+echo "   d8: $(du -h "$OUT/dex/classes.dex" | cut -f1) classes.dex"
 # Stored, not deflated: a compressed entry cannot be four-byte aligned, and
 # Android 11+ is strict about the layout of a package it will install. This is
 # what the Gradle plugin does for dex; hand-rolled builds usually forget it.
-cd "$OUT/dex" && zip -0 -q "$OUT/base.apk" classes.dex && cd "$ROOT"
+( cd "$OUT/dex" && zip -0 -q "$OUT/base.apk" classes.dex )
 echo "   base.apk: $(du -h "$OUT/base.apk" | cut -f1)"
 
 echo
@@ -149,8 +160,10 @@ echo
 echo "== verify signature schemes and archive layout =="
 VERIFY="$("$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$OUT/$NAME.apk")"
 echo "$VERIFY" | grep -E "Verified using|Signer #1 certificate SHA-256" || true
-echo "$VERIFY" | grep -q "Verified using v1 scheme (JAR signing): true" || {
-  echo "ERROR: v1 signature missing"; exit 1; }
+# v2 is the one that matters: every Android since 7.0 verifies it, and 11+
+# requires it. apksigner issues v2+v3 for minSdkVersion 24 and quietly leaves v1
+# out; recording which schemes came out is more useful than demanding one the
+# tool will not produce.
 echo "$VERIFY" | grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" || {
   echo "ERROR: v2 signature missing -- Android 11+ refuses this APK"; exit 1; }
 "$BUILD_TOOLS/zipalign" -c -p 4 "$OUT/$NAME.apk" || {
