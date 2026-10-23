@@ -99,6 +99,8 @@ check('every data-attribute the UI reads is written by some renderer', () => {
   // `civ` is read from a node that carries data-civ on the civ cards, which are
   // authored by the menu at runtime — treat it as a known dynamic attribute.
   const writes = new Set([...js.matchAll(/data-([a-z-]+)=/g)].map((m) => m[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())));
+  // attributes can also be written through the DOM API
+  for (const m of js.matchAll(/dataset\.([a-zA-Z]+)\s*=/g)) writes.add(m[1]);
   const dynamic = new Set(['key', 'index', 'civ']);
   const missing = [...new Set(reads)].filter((r) => !writes.has(r) && !dynamic.has(r));
   assert(!missing.length, 'read but never written: ' + missing.join(', '));

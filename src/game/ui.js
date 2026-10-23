@@ -720,9 +720,16 @@ export class UI {
       const wt = g.worldTime || 12;
       const hh = Math.floor(wt);
       const mm = Math.floor((wt - hh) * 60);
-      const iconTxt = wt < 6 || wt > 19.5 ? '☾' : '☀';
+      const phase = g.dayPhase || (wt < 6 || wt > 19.5 ? 'night' : 'day');
+      const iconTxt = phase === 'night' ? '☾' : phase === 'dusk' ? '☾' : phase === 'dawn' ? '☀' : '☀';
       const str = `${iconTxt} ${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
       if (el.worldTime.textContent !== str) el.worldTime.textContent = str;
+      // the pill changes colour with the phase so "it is getting dark" is
+      // readable at a glance without reading the numbers
+      if (this._lastPhase !== phase) {
+        this._lastPhase = phase;
+        el.worldTime.dataset.phase = phase;
+      }
     }
     // age hint
     if (el.ageHint) {

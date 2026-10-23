@@ -53,7 +53,9 @@ export function createMockGL(opts = {}) {
     getUniformLocation(p, name) {
       log.uniforms.add(name);
       const src = programSources.get(p) || '';
-      const re = new RegExp(`uniform\\s+(?:(?:lowp|mediump|highp)\\s+)?\\w+\\s+${name}\\s*[;\\[]`);
+      // array uniforms are queried per element ("uTownLight[0]") but declared once
+      const base = name.replace(/\[\d+\]$/, '');
+      const re = new RegExp(`uniform\\s+(?:(?:lowp|mediump|highp)\\s+)?\\w+\\s+${base}\\s*[;\\[]`);
       if (!re.test(src)) log.unknownUniforms.add(name);
       return { name, program: p };
     },

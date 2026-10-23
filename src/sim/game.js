@@ -516,6 +516,7 @@ export class Game {
     if (team !== TEAM_PLAYER) rate *= this.difficulty.gather;
     if (this.difficultyKey === 'sandbox') rate *= 1.25;
     rate *= this.buffMul(team, 'gather');
+    rate *= this.gatherDayMul;
     return rate;
   }
 
@@ -841,6 +842,39 @@ export class Game {
   /** The council's standing offers. Cheap data so the HUD can list them. */
   get decrees() { return DECREE_LIST; }
 
+  /** Jump the day cycle (0-24h). Used by saves, the shot tool and tests. */
+  setTimeOfDay(hour) {
+    const h = Number(hour);
+    if (!Number.isFinite(h)) return this.worldTime;
+    this.worldTime = ((h % 24) + 24) % 24;
+    return this.worldTime;
+  }
+
+  /** 0 = deep night, 1 = high noon. Handy for AI, UI and balance rules. */
+  get daylight() {
+    const h = this.worldTime;
+    const t = (h - 5.5) / 13.5;
+    return Math.max(0, Math.min(1, Math.sin(Math.max(-0.35, Math.min(1.35, t)) * Math.PI)));
+  }
+
+  /** Coarse phase for the HUD, the AI and the soundscape. */
+  get dayPhase() {
+    const h = this.worldTime;
+    if (h >= 7.5 && h < 17.5) return 'day';
+    if (h >= 5.0 && h < 7.5) return 'dawn';
+    if (h >= 17.5 && h < 20.0) return 'dusk';
+    return 'night';
+  }
+
+  /* Day and night are not just lighting: they are two different games.
+     - Daylight: villagers work 24 % faster, so the economy is a day job.
+     - Night: gathering slows to 86 %, but every melee attack hits 16 %
+       harder and sight shrinks, which makes night raids the cheapest way to
+       punish a bigger army. The values are symmetric for every team. */
+  get gatherDayMul() { return 0.86 + 0.24 * this.daylight; }
+  get nightRaidMul() { return 1 + 0.16 * (1 - this.daylight); }
+  get sightDayMul() { return 0.84 + 0.16 * this.daylight; }
+
   activateDecree(team, id) {
     const st = this.teams.get(team);
     const def = DECREE_LIST.find((d) => d.id === id);
@@ -1118,7 +1152,13 @@ export class Game {
     this.projectiles.update(dt, this);
 
     // time of day (drives the renderer's sun, the HUD clock and unit vision)
+    const prevPhase = this.dayPhase;
     this.worldTime = (this.worldTime + (dt * 24) / this.dayLength) % 24;
+    const phase = this.dayPhase;
+    if (phase !== prevPhase) {
+      this.phaseChanged = true;
+      this.onEvent('phase', { phase, prev: prevPhase, hour: this.worldTime });
+    }
 
     // favour and temporary decree buffs
     for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
@@ -1241,11 +1281,12 @@ export class Game {
       }
     };
     const units = this.units;
+    const sightMul = this.sightDayMul;
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
       if (u.dead || u.team !== TEAM_PLAYER) continue;
       if (u.garrisoned) continue;
-      stamp(u.x, u.z, u.def.sight || 9);
+      stamp(u.x, u.z, (u.def.sight || 9) * sightMul);
     }
     const buildings = this.buildings;
     for (let i = 0; i < buildings.length; i++) {

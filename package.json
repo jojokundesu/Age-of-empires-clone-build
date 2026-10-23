@@ -25,7 +25,8 @@
     "test:contract": "node tests/contract.test.mjs",
     "test:perf": "node tests/perf.test.mjs",
     "test:ai": "node tests/ai.test.mjs 900",
-    "shot": "node tests/shot.mjs"
+    "shot": "node tests/shot.mjs",
+    "test:daynight": "node tests/daynight.test.mjs"
   },
   "devDependencies": {
     "@shaderfrog/glsl-parser": "^7.0.1",

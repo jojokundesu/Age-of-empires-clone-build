@@ -368,30 +368,46 @@ function paintRoof() {
   const S = 256;
   const c = makeCanvas(S);
   const g = ctxOf(c);
-  g.fillStyle = '#4a2417'; g.fillRect(0, 0, S, S);
+  g.fillStyle = '#2e1a12'; g.fillRect(0, 0, S, S);
   const rnd = mulberry32(11);
-  const tileW = 40, tileH = 27;
-  for (let row = 0; row < S / tileH + 2; row++) {
+  // Barrel tiles: staggered rows of half-cylinders. Each tile is lit from the
+  // left (pale crown) and shadowed at the bottom (deep lip), which is what
+  // makes a roof read as clay from a distance instead of as flat paint.
+  const tileW = 34, tileH = 26;
+  for (let row = -1; row < S / tileH + 1; row++) {
+    const off = row % 2 ? tileW * 0.5 : 0;
     for (let x = -tileW; x < S + tileW; x += tileW) {
-      const off = row % 2 ? tileW * 0.5 : 0;
-      const v = 0.8 + rnd() * 0.45;
-      const b = shade([158, 78, 48], v);
-      g.fillStyle = `rgb(${b[0] | 0},${b[1] | 0},${b[2] | 0})`;
-      g.beginPath();
       const px = x + off, py = row * tileH;
-      g.moveTo(px + 1, py + tileH);
-      g.quadraticCurveTo(px + tileW * 0.5, py - 2, px + tileW - 1, py + tileH);
-      g.lineTo(px + tileW - 1, py + tileH + 4);
-      g.lineTo(px + 1, py + tileH + 4);
+      const v = 0.78 + rnd() * 0.4;
+      const base = shade([172, 82, 52], v);
+      const lip = shade([92, 40, 26], v);
+      const crown = shade([206, 118, 78], v);
+      const grad = g.createLinearGradient(px, 0, px + tileW, 0);
+      grad.addColorStop(0, `rgb(${lip[0] | 0},${lip[1] | 0},${lip[2] | 0})`);
+      grad.addColorStop(0.26, `rgb(${base[0] | 0},${base[1] | 0},${base[2] | 0})`);
+      grad.addColorStop(0.5, `rgb(${crown[0] | 0},${crown[1] | 0},${crown[2] | 0})`);
+      grad.addColorStop(0.76, `rgb(${base[0] | 0},${base[1] | 0},${base[2] | 0})`);
+      grad.addColorStop(1, `rgb(${lip[0] | 0},${lip[1] | 0},${lip[2] | 0})`);
+      g.fillStyle = grad;
+      g.beginPath();
+      g.moveTo(px + 0.5, py + tileH);
+      g.quadraticCurveTo(px + tileW * 0.5, py - 4, px + tileW - 0.5, py + tileH);
+      g.lineTo(px + tileW - 0.5, py + tileH + 6);
+      g.lineTo(px + 0.5, py + tileH + 6);
       g.closePath();
       g.fill();
-      g.fillStyle = 'rgba(0,0,0,0.18)';
-      g.fillRect(px + 2, py + tileH, tileW - 4, 3);
+      g.fillStyle = 'rgba(0,0,0,0.30)';
+      g.fillRect(px + 1, py + tileH, tileW - 2, 4);
+      g.fillStyle = 'rgba(255,228,196,0.14)';
+      g.fillRect(px + tileW * 0.30, py + 3, tileW * 0.36, 3);
+      if (rnd() < 0.35) {
+        g.fillStyle = `rgba(64,60,46,${0.05 + rnd() * 0.12})`;
+        g.beginPath(); g.arc(px + 6 + rnd() * (tileW - 12), py + 6 + rnd() * (tileH - 6), 2 + rnd() * 4, 0, 6.28); g.fill();
+      }
     }
   }
   return c;
 }
-
 function paintThatch() {
   const S = 256;
   const c = makeCanvas(S);

@@ -484,3 +484,10 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .mt4 { margin-top: 4px; } .mt8 { margin-top: 8px; }
 .grow { flex: 1; }
 .tiny { font-size: 8px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-faint); }
+
+/* day / night phase pill: colour carries the phase, the numbers are secondary */
+.worldTime[data-phase="dawn"] { color: #ffd9a0; }
+.worldTime[data-phase="day"] { color: #ffeec0; }
+.worldTime[data-phase="dusk"] { color: #ffb27a; }
+.worldTime[data-phase="night"] { color: #9fc6ff; }
+.worldTime[data-phase="night"]::after { content: ""; }

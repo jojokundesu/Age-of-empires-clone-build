@@ -537,6 +537,8 @@ export class Unit extends Entity {
     dmg *= 1 + aura;
     dmg *= g.buffMul(this.team, 'attack');
     const isRanged = this.def.range > 1.2 && def.attack > 0;
+    // Night raids: melee strikes land harder after dark.
+    if (!isRanged) dmg *= g.nightRaidMul;
     if (isRanged && def.attack > 0) {
       g.fireProjectile(this, target, dmg, def.projectile || 'arrow');
       g.sound.play(this.def.classes.includes('archer') ? 'bow' : 'siegeFire', this.x, this.z);

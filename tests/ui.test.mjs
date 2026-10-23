@@ -234,6 +234,25 @@ check('idle villager + army + groups', () => {
   ui.cycleStance();
   ui.sendScout();
 });
+check('the clock shows the time and the day phase', () => {
+  const el = document.getElementById('worldTime');
+  assert(el, 'no #worldTime in the HUD');
+  game.setTimeOfDay(12.25);
+  ui.update(0.4);
+  assert(/12:1\d/.test(el.textContent), 'clock does not show noon: ' + el.textContent);
+  assert(el.dataset.phase === 'day', 'noon is not marked as day: ' + el.dataset.phase);
+  game.setTimeOfDay(22);
+  ui.update(0.4);
+  assert(/2[12]:\d\d/.test(el.textContent), 'clock does not show night: ' + el.textContent);
+  assert(el.dataset.phase === 'night', '22:00 is not marked as night: ' + el.dataset.phase);
+  assert(/\u263e/.test(el.textContent), 'no moon glyph at night: ' + el.textContent);
+  game.setTimeOfDay(6.2);
+  ui.update(0.4);
+  assert(el.dataset.phase === 'dawn', 'dawn not shown: ' + el.dataset.phase);
+  game.setTimeOfDay(18.4);
+  ui.update(0.4);
+  assert(el.dataset.phase === 'dusk', 'dusk not shown: ' + el.dataset.phase);
+});
 check('selection box + ripples', () => {
   ui.showSelBox({ x: 10, y: 10, w: 40, h: 40 });
   ui.hideSelBox();

@@ -130,6 +130,24 @@ check('every declared lighting uniform is actually uploaded', () => {
   const eye = cam[cam.length - 1];
   assert(eye.some((v) => Math.abs(v) > 1), 'uCameraPos is the world origin: ' + eye.join(','));
 });
+check('night lighting reaches the shaders', () => {
+  const log = canvas.getContext('webgl2').log;
+  const seen = (name) => [...log.uniformValues.values()].map((m) => m.get(name)).filter(Boolean).pop();
+  game.setTimeOfDay(22);
+  renderer.render(1 / 60, game);
+  const night = seen('uNight');
+  assert(night && night[0] > 0.9, 'uNight not uploaded after dark: ' + JSON.stringify(night));
+  const lightI = seen('uTownLightI');
+  assert(lightI && lightI[0] > 0.9, 'town firelight never switched on: ' + JSON.stringify(lightI));
+  const sun = seen('uSunColor');
+  assert(sun && Math.max(...sun) < 0.6, 'the sun is still blazing at night: ' + JSON.stringify(sun));
+  game.setTimeOfDay(12);
+  renderer.render(1 / 60, game);
+  const day = seen('uNight');
+  assert(day && day[0] < 0.05, 'uNight still set at noon: ' + JSON.stringify(day));
+  const dayI = seen('uTownLightI');
+  assert(dayI && dayI[0] === 0, 'fires are burning at noon: ' + JSON.stringify(dayI));
+});
 check('fog upload', () => {
   const size = 96;
   const buf = new Uint8Array(size * size);

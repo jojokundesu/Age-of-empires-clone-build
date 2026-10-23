@@ -12,6 +12,7 @@ const SUITES = [
   ['shaders', 'tests/shaders.test.mjs'],
   ['sim', 'tests/sim.test.mjs'],
   ['combat', 'tests/combat.test.mjs'],
+  ['daynight', 'tests/daynight.test.mjs'],
   ['renderer', 'tests/render.test.mjs'],
   ['perf', 'tests/perf.test.mjs'],
   ['hud', 'tests/ui.test.mjs'],

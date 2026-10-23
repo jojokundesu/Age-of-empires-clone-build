@@ -112,6 +112,9 @@ export class Renderer {
     this.stats = { drawCalls: 0, tris: 0, instances: 0, particles: 0 };
     this.ready = false;
     this.ctxLost = false;
+    this.townLight = new Float32Array(12);
+    this.townLightI = 0;
+    this.townLightColor = new Float32Array([2.30, 1.30, 0.58]);
     this.fogTexture = null;
     this.fogEnabled = false;
     this.playerTeam = 1;
@@ -525,6 +528,7 @@ export class Renderer {
       this.starAmount = 1;
       this.exposure = 1.35;
     }
+    this.townLightI = clamp((this.night - 0.15) / 0.55, 0, 1);
     this.cloudOffset[0] += dt * 0.0018;
     this.cloudOffset[1] += dt * 0.0009;
     this.fogDensity = 0.00105 + lowSun * 0.0007;
@@ -569,6 +573,8 @@ export class Renderer {
     this._cam = cam;
 
     this._fillInstances(game, cam, dt);
+    this._pickTownLights(game, cam);
+    this._pickTownLights(game, cam);
     if (this.quality.shadows) this._shadowPass();
 
     const target = this.postTarget;
@@ -598,6 +604,54 @@ export class Renderer {
     game.renderStats = st;
   }
 
+  /* Three nearest burning hearths: town centres, houses, barracks. Keeping the
+     count fixed means the shader loop is unrolled and the uniform upload is
+     three vec3s -- no allocations, no dynamic light list. */
+  _pickTownLights(game, cam) {
+    if (this.townLightI <= 0.001) return;
+    const cx = cam.target[0], cz = cam.target[2];
+    const best = this._lightCand || (this._lightCand = []);
+    best.length = 0;
+    const list = game.buildings;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (!b || b.dead || (b.buildProgress !== undefined && b.buildProgress < 0.99)) continue;
+      const meta = b.def || {};
+      // bigger buildings burn brighter fires
+      const fire = meta.isTownCenter ? 3.2 : meta.pop ? 1.6 : 1.0;
+      const dx = b.x - cx, dz = b.z - cz;
+      best.push({ b, score: dx * dx + dz * dz - fire * 900 });
+    }
+    best.sort((A, B) => A.score - B.score);
+    const t = this.townLight;
+    const chosen = this._lightPicked || (this._lightPicked = []);
+    chosen.length = 0;
+    // spread the fires out: two torches on the same hut look like one
+    for (let i = 0; i < best.length && chosen.length < 4; i++) {
+      const c = best[i];
+      let far = true;
+      for (const q of chosen) {
+        const dx = q.b.x - c.b.x, dz = q.b.z - c.b.z;
+        if (dx * dx + dz * dz < 42) { far = false; break; }
+      }
+      if (far || (c.b.def && c.b.def.isTownCenter)) chosen.push(c);
+    }
+    for (let i = 0; i < 4; i++) {
+      const c = chosen[i];
+      const o = i * 3;
+      if (!c) { t[o] = 0; t[o + 1] = -999; t[o + 2] = 0; continue; }
+      // a fire *inside* the walls cannot light the outside of the building, so
+      // put the torch on the side that faces the camera (the door side)
+      const fp = (c.b.def && c.b.def.footprint ? c.b.def.footprint : 3) * 0.5 + 1.0;
+      let dx = cam.eye[0] - c.b.x, dz = cam.eye[2] - c.b.z;
+      const dl = Math.hypot(dx, dz) || 1;
+      dx /= dl; dz /= dl;
+      t[o] = c.b.x + dx * fp;
+      t[o + 1] = (c.b.y || 0) + 1.6;
+      t[o + 2] = c.b.z + dz * fp;
+    }
+  }
+
   _bindLight(s) {
     // Models need the eye position for fog distance, specular and rim light.
     // Forgetting it here left uCameraPos at (0,0,0): every building measured
@@ -615,6 +669,13 @@ export class Renderer {
     s.f('uNight', this.night);
     s.v2('uCloudOffset', this.cloudOffset[0], this.cloudOffset[1]);
     s.f('uFogEnabled', this.fogEnabled && this.fogTexture ? 1 : 0);
+    s.v3('uTownLightColor', this.townLightColor[0], this.townLightColor[1], this.townLightColor[2]);
+    s.f('uTownLightI', this.townLightI);
+    for (let i = 0; i < 4; i++) {
+      const b = i * 3;
+      const loc = s.u(`uTownLight[${i}]`);
+      if (loc) this.gl.uniform3f(loc, this.townLight[b], this.townLight[b + 1], this.townLight[b + 2]);
+    }
     s.f('uWorldHalf', 256);
     s.f('uShadowStrength', this.quality.shadows ? 0.92 : 0);
     s.f('uShadowTexel', 1 / this.shadowSize);
@@ -1148,6 +1209,8 @@ export class Renderer {
   dispose() {
     const gl = this.gl;
     if (!gl) return;
+    // a renderer that never finished init() has no batch maps yet
+    if (!this.buildingBatches) return;
     for (const b of this.buildingBatches.values()) b.dispose();
     for (const b of this.unitBatches.values()) b.dispose();
     for (const b of this.propBatches.values()) b.dispose();

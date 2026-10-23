@@ -277,6 +277,16 @@ class App {
         }
         break;
       }
+      case 'phase': {
+        // a phase flip is the one time of day that changes the rules, so it is
+        // worth a toast: gather speed drops, raids hit harder, sight shrinks
+        const ui2 = this.ui;
+        const d = data.phase;
+        if (d === 'night') ui2?.toast('Night falls — gathering slows, raids hit harder', 'info');
+        else if (d === 'dawn') ui2?.toast('Dawn — villagers are at full speed again', 'good');
+        else if (d === 'dusk') ui2?.toast('Dusk — the light is going', 'info');
+        break;
+      }
       case 'tech': {
         if (data.team === 1) ui?.toast('Research complete', 'good');
         break;

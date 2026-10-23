@@ -65,6 +65,39 @@ uniform vec2 uCloudOffset;
 uniform sampler2D uFogTex;
 uniform float uFogEnabled;
 uniform float uWorldHalf;
+uniform vec3 uTownLight[4];   // world position of the four strongest fires
+uniform float uTownLightI;    // 0 by day, 1 at night
+uniform vec3 uTownLightColor;
+`;
+
+/* Warm pools of firelight around the town. Three cheap point lights cost a
+   few ALU ops and are the difference between "a dark shader" and a hearth-lit
+   village at night. */
+const TOWN_LIGHT_FN = /* glsl */`
+vec3 townLights(vec3 p, vec3 N){
+  if (uTownLightI < 0.01) return vec3(0.0);
+  vec3 sum = vec3(0.0);
+  for (int i = 0; i < 4; i++) {
+    vec3 L = uTownLight[i] - p;
+    float d2 = dot(L, L);
+    float flick = 0.86 + 0.14 * sin(uTime * (5.0 + float(i) * 1.7) + float(i) * 2.1);
+    float att = uTownLightI * flick / (1.0 + d2 * 0.013 + d2 * d2 * 0.00022);
+    sum += max(dot(N, normalize(L)), 0.0) * att;
+  }
+  return sum * uTownLightColor;
+}
+/* A wider, non-directional bloom of warm air around each fire. This is what
+   makes a lit street read as "lit" instead of "a sphere of paint". */
+vec3 townGlow(vec3 p){
+  if (uTownLightI < 0.01) return vec3(0.0);
+  float sum = 0.0;
+  for (int i = 0; i < 4; i++) {
+    vec3 L = uTownLight[i] - p;
+    float d2 = dot(L, L);
+    sum += 1.0 / (1.0 + d2 * 0.020 + d2 * d2 * 0.00030);
+  }
+  return uTownLightColor * sum * uTownLightI * 0.030;
+}
 `;
 
 const SHADOW_FN = /* glsl */`
@@ -107,10 +140,13 @@ vec3 applyFoW(vec3 color, vec3 worldPos){
   // Explored-but-not-visible ground keeps its shapes: desaturate and cool it
   // slightly instead of sinking it into black, so the map stays readable.
   float l = dot(color, vec3(0.299, 0.587, 0.114));
-  vec3 memory = mix(vec3(l), color, 0.34) * vec3(0.72, 0.78, 0.90);
-  vec3 shown = mix(color, memory, clamp((1.0 - vis) * 1.25, 0.0, 0.62));
-  float dark = smoothstep(0.015, 0.32, vis);
-  return shown * mix(0.10, 1.0, dark);
+  vec3 memory = mix(vec3(l), color, 0.52) * vec3(0.80, 0.84, 0.93);
+  vec3 shown = mix(color, memory, clamp((1.0 - vis) * 1.35, 0.0, 0.55));
+  // After dark, visibility matters more than tone: an unexplored-but-seen area
+  // only dims to 40 %, while unseen ground still drops to a near-black 16 %.
+  float dark = smoothstep(0.015, 0.30, vis);
+  vec3 floorC = mix(vec3(0.16), vec3(0.16, 0.20, 0.30), uNight);
+  return shown * mix(floorC, vec3(1.0), dark);
 }
 `;
 
@@ -231,6 +267,7 @@ void main(){
 export const TERRAIN_FS = /* glsl */`#version 300 es
 ${COMMON}
 ${LIGHT_UNIFORMS}
+${TOWN_LIGHT_FN}
 ${SHADOW_FN}
 in vec3 vWorld;
 in vec3 vNormal;
@@ -301,9 +338,13 @@ void main(){
 
   // Hemisphere ambient, deliberately desaturated: a saturated blue fill on
   // vertical walls reads as "grey and washed out" from an RTS camera.
+  // After dark the ground loses saturation and takes a cool cast.
+  albedo *= mix(vec3(1.0), vec3(0.66, 0.76, 1.06), uNight * 0.62);
   vec3 skyFill = mix(uSkyColor * 0.86, vec3(0.30, 0.31, 0.30), 0.5);
   vec3 ambient = mix(uGroundColor * 1.15, skyFill, N.y * 0.5 + 0.5) * (0.66 + 0.46 * N.y);
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.02 + ambient);
+  color += albedo * townLights(vWorld, N) * 0.9;
+  color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5) * 0.8;
 
   // wet sheen near the waterline
   float wet = smoothstep(0.55, 0.0, vWorld.y);
@@ -311,7 +352,9 @@ void main(){
 
   color = applyFog(color, vDist);
   color = applyFoW(color, vWorld);
-  fragColor = vec4(tonemap(color, 1.72), 1.0);
+  // the terrain runs a hotter exposure than the models by day; after dark that
+  // same curve turns night into a green-grey soup, so it comes down at night
+  fragColor = vec4(tonemap(color, mix(1.72, 1.06, uNight)), 1.0);
 }
 `;
 
@@ -406,6 +449,7 @@ void main(){
 export const MODEL_FS = /* glsl */`#version 300 es
 ${COMMON}
 ${LIGHT_UNIFORMS}
+${TOWN_LIGHT_FN}
 ${SHADOW_FN}
 in vec3 vWorld;
 in vec3 vNormal;
@@ -463,6 +507,9 @@ void main(){
     albedo *= 1.0 - dmg * 0.28;
   }
 
+  // moonlight strips colour: albedo cools and loses saturation after dark
+  albedo *= mix(vec3(1.0), vec3(0.70, 0.79, 1.02), uNight * 0.55);
+
   vec3 N = normalize(vNormal);
   if (!gl_FrontFacing) N = -N;
   float ndl = max(dot(N, uSunDir), 0.0);
@@ -481,12 +528,14 @@ void main(){
 
   vec3 emissive = vec3(0.0);
   if (layer == M_GLASS) {
-    emissive = vec3(1.0, 0.66, 0.3) * (0.22 + uNight * 2.1) * (0.55 + 0.45 * fbm2(vWorld.xz * 3.0));
+    emissive = vec3(1.0, 0.62, 0.26) * (0.18 + uNight * 3.4) * (0.55 + 0.45 * fbm2(vWorld.xz * 3.0));
   } else if (layer == M_GOLD) {
     emissive = vec3(1.0, 0.62, 0.22) * uNight * 0.22;
   }
 
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
+  color += albedo * townLights(vWorld, N);
+  color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5);
   color += uSunColor * spec * sh * cl * 1.4;
   color += emissive;
 

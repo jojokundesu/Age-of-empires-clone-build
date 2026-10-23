@@ -68,7 +68,7 @@ const pose = async (p) => {
       if (g.fog) { for (let i = 0; i < g.fog.length; i++) g.fog[i] = p.fog ? g.fog[i] : 255; }
     }
     if (p.time !== undefined && g.setTimeOfDay) g.setTimeOfDay(p.time);
-    if (p.tod !== undefined) { a.renderer.timeOfDay = p.tod; }
+    if (p.tod !== undefined && g.setTimeOfDay) g.setTimeOfDay(p.tod * 24);
     const tc = g.buildings.find((b) => b.team === 1 && !b.dead) || { x: 0, z: 0 };
     const cam = a.camera;
     cam.yaw = cam.desiredYaw = p.yaw ?? 0.7;
@@ -76,12 +76,25 @@ const pose = async (p) => {
     cam.dist = cam.desiredDist = p.dist ?? 46;
     a.camera.setTarget(tc.x + (p.dx || 0), tc.z + (p.dz || 0), true);
   }, p);
+  // headless software GL runs at a couple of frames per second, so "wait
+  // 2 s" is not the same as "the renderer has drawn the new time of day".
+  // Poll until the renderer has actually sampled the requested world time.
+  const want = await page.evaluate(() => window.__imperial.game.worldTime);
+  await page.waitForFunction(
+    (want) => {
+      const a = window.__imperial;
+      return a.renderer.worldTime !== undefined && Math.abs(a.renderer.worldTime - want) < 0.02;
+    },
+    { timeout: 15000, polling: 120 }, want,
+  ).catch(() => console.log(`[warn] renderer never picked up world time ${want}`));
   await new Promise((r) => setTimeout(r, Number(argOf('settle', 2500))));
   const file = join(OUT, (p.name || 'shot') + '.png');
   await page.screenshot({ path: file });
   const info = await page.evaluate(() => {
     const a = window.__imperial;
-    return { stats: a.renderer.stats, quality: a.renderer.qualityName, time: a.game.time, units: a.game.units.filter((u) => !u.dead).length };
+    return { stats: a.renderer.stats, quality: a.renderer.qualityName, time: a.game.time,
+      units: a.game.units.filter((u) => !u.dead).length,
+      hour: +a.renderer.worldTime.toFixed(2), night: +a.renderer.night.toFixed(2), lights: +a.renderer.townLightI.toFixed(2) };
   });
   console.log(file, JSON.stringify(info));
 };
