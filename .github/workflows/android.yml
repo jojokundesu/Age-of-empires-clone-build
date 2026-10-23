@@ -174,7 +174,31 @@ jobs:
       - name: Build APK
         run: |
           chmod +x scripts/build-apk.sh
+          # pipefail matters: without it the pipeline reports tee's status, so a
+          # failed build looked like a successful step and only the next step
+          # complained, with no reason anywhere in the log.
+          set -o pipefail
           ./scripts/build-apk.sh 2>&1 | tee apk-build.log
+
+      # The runner log is not always downloadable from the sandbox this project
+      # is developed in, so a failed APK build reports itself on the pull
+      # request instead of only in the job log.
+      - name: Post APK build log on failure
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          {
+            echo '### APK build failed'
+            echo
+            echo '```'
+            tail -n 80 apk-build.log 2>/dev/null || echo 'no apk-build.log'
+            echo '```'
+          } > apk-failure.md
+          cat apk-failure.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR_NUMBER" ]; then gh pr comment "$PR_NUMBER" --body-file apk-failure.md; fi
 
       - name: Verify APK
         run: |

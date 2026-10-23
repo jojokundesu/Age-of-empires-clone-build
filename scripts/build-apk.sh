@@ -103,7 +103,26 @@ ALIAS="${KEY_ALIAS:-imperial}"
 if [ -n "${KEYSTORE_BASE64:-}" ]; then
   KS="$OUT/imperial.p12"
   echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
-elif [ ! -f "$KS" ]; then
+fi
+
+# The committed key is PKCS#12 made by openssl. apksigner reads it directly on
+# most JDKs, but some refuse the openssl KDF. Convert to JKS when keytool is
+# around: same key, same certificate, no version surprises.
+if [ "$KS_TYPE" = PKCS12 ] && [ -f "$KS" ] && command -v keytool >/dev/null 2>&1; then
+  if keytool -importkeystore -srckeystore "$KS" -srcstoretype PKCS12 \
+      -srcstorepass "$STOREPASS" -srcalias "$ALIAS" \
+      -destkeystore "$OUT/signing.jks" -deststoretype JKS \
+      -deststorepass "$STOREPASS" -destkeypass "$KEYPASS" -destalias "$ALIAS" \
+      -noprompt >/dev/null 2>&1; then
+    echo "   keystore: PKCS#12 -> JKS (alias $ALIAS)"
+    KS="$OUT/signing.jks"; KS_TYPE=JKS
+  else
+    echo "   keystore: using PKCS#12 directly (keytool could not convert it)"
+    keytool -list -keystore "$KS" -storetype PKCS12 -storepass "$STOREPASS" 2>&1 | head -5 || true
+  fi
+fi
+
+if [ ! -f "$KS" ]; then
   if [ -f "$ROOT/android/imperial.keystore" ]; then
     KS="$ROOT/android/imperial.keystore"; KS_TYPE=JKS
   else
@@ -159,15 +178,25 @@ if len(www) < 3:
 # the dex is stored for the same reason. A deflated entry is the difference
 # between an APK that installs and "package appears to be invalid".
 bad = []
-for name in ('resources.arsc', 'classes.dex'):
-    info = z.getinfo(name)
-    if info.compress_type != zipfile.ZIP_STORED:
-        bad.append(f"{name} is compressed (method {info.compress_type})")
-    if info.header_offset % 4:
-        bad.append(f"{name} is not 4-byte aligned (offset {info.header_offset})")
+with open(apk, 'rb') as fh:
+    for name in ('resources.arsc', 'classes.dex'):
+        info = z.getinfo(name)
+        if info.compress_type != zipfile.ZIP_STORED:
+            bad.append(f"{name} is compressed (method {info.compress_type})")
+            continue
+        # alignment applies to the *data*, not the local header: read the local
+        # header to get its own name/extra lengths (zipalign pads the extra
+        # field, so the central directory's copy is not the one to trust)
+        fh.seek(info.header_offset)
+        hdr = fh.read(30)
+        name_len = int.from_bytes(hdr[26:28], 'little')
+        extra_len = int.from_bytes(hdr[28:30], 'little')
+        data_off = info.header_offset + 30 + name_len + extra_len
+        if data_off % 4:
+            bad.append(f"{name} data starts at {data_off}, not 4-byte aligned")
 if bad:
     sys.exit("bad package layout: " + "; ".join(bad))
-print("   resources.arsc + classes.dex: stored and aligned")
+print("   resources.arsc + classes.dex: stored and 4-byte aligned")
 PYVERIFY
 
 echo
