@@ -59,7 +59,11 @@ echo "== 3/6 aapt2 compile + link =="
   -I "$AJAR" \
   --manifest "$APP/AndroidManifest.xml" \
   -R "$OUT/res/resources.zip" \
-  -A "$ASSETS" \
+  # -A takes the *contents* of the directory to assets/ root, so this points at
+  # build/assets (which holds www/), not at build/assets/www. Passing the leaf
+  # put index.html at assets/index.html while MainActivity serves assets/www/,
+  # which is a WebView that loads nothing but a black screen.
+  -A "$OUT/assets" \
   --java "$OUT/gen" \
   --min-sdk-version 24 \
   --target-sdk-version 34 \
@@ -183,6 +187,8 @@ missing = [n for n in need if n not in names]
 www = [n for n in names if n.startswith('assets/www/')]
 size = sum(i.file_size for i in z.infolist() if i.filename.startswith('assets/www/'))
 print(f"   entries: {len(names)}  web assets: {len(www)} files, {size/1024:.0f} kB raw")
+if len(www) < 3:
+    print("   entries seen: " + ", ".join(sorted(names)[:12]))
 if missing:
     sys.exit("MISSING from APK: " + ", ".join(missing))
 if len(www) < 3:
