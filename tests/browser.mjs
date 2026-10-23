@@ -109,6 +109,9 @@ page.on('console', (m) => {
   else if (type === 'warning' && /webgl|shader|gl_|THREE/i.test(text)) consoleErrors.push('warn: ' + text);
 });
 page.on('pageerror', (e) => pageErrors.push(String(e && e.stack ? e.stack.split('\n')[0] : e)));
+const failedRequests = [];
+page.on('requestfailed', (r) => failedRequests.push(r.url() + ' — ' + (r.failure()?.errorText || 'failed')));
+page.on('response', (r) => { if (r.status() >= 400) failedRequests.push(r.url() + ' — HTTP ' + r.status()); });
 
 const results = {};
 const fail = [];
@@ -241,7 +244,7 @@ try {
     `daylight is not warmer than moonlight (${results.daylight.warmth.toFixed(1)} vs ${results.night.warmth.toFixed(1)})`);
   await setHour(10);
 
-  results.errors = { console: consoleErrors.slice(0, 10), page: pageErrors.slice(0, 10) };
+  results.errors = { console: consoleErrors.slice(0, 10), page: pageErrors.slice(0, 10), requests: failedRequests.slice(0, 10) };
 
   expect(results.errors.page.length === 0, 'page errors: ' + results.errors.page.join(' | '));
   expect(results.errors.console.length === 0, 'console errors: ' + results.errors.console.join(' | '));
@@ -273,7 +276,8 @@ const md = [
   `- World: ${f.units} units, ${f.buildings} buildings, game time ${fmt(f.time, 0)} s`,
   `- UI: ${results.ui?.cards ?? '?'} command cards · glError ${results.afterUi?.glError ?? '?'}`,
   `- Day/night: noon luma ${fmt(results.daylight?.luma)} → night luma ${fmt(results.night?.luma)} (screenshots 05/06)`,
-  `- Console errors: ${results.errors?.console.length ?? '?'} · page errors: ${results.errors?.page.length ?? '?'}`,
+  `- Console errors: ${results.errors?.console.length ?? '?'} · page errors: ${results.errors?.page.length ?? '?'} · failed requests: ${results.errors?.requests.length ?? '?'}`,
+  results.errors?.requests.length ? `  - ${results.errors.requests.join('\n  - ')}` : '',
   `- Checks: ${checksRun} run · ${fail.length} failed`,
   results.errors?.page.length ? `  - ${results.errors.page.join('\n  - ')}` : '',
   results.errors?.console.length ? `  - ${results.errors.console.join('\n  - ')}` : '',
