@@ -1,7 +1,17 @@
-name: Test
-on: workflow_dispatch
+name: Probe
+on:
+  push:
+    branches: ["arena/**"]
 jobs:
-  t:
+  probe:
     runs-on: ubuntu-latest
     steps:
-      - run: echo hi
+      - uses: actions/checkout@v4
+      - name: Probe env
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          java -version || true
+          ls $ANDROID_HOME/build-tools || true
+          ls $ANDROID_HOME/platforms || true
+          which aapt2 apksigner zipalign d8 || true
