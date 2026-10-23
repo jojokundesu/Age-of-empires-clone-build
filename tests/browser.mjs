@@ -25,9 +25,17 @@ const SECONDS = Number(argOf('seconds', 8));
 const OUT = resolve(argOf('out', 'ci/screenshots'));
 const ROOT = resolve('dist');
 
-if (!existsSync(join(ROOT, 'index.html'))) {
-  console.error('dist/ not found — run `npm run build` first');
+const REPORT = 'ci/browser-report.md';
+await mkdir('ci', { recursive: true }).catch(() => {});
+const writeReport = (md) => writeFile(REPORT, md).catch(() => {});
+await writeReport('### Browser smoke test\n\nRUNNING — the job will rewrite this with results.\n');
+const bail = async (msg) => {
+  console.error(msg);
+  await writeReport(`### Browser smoke test\n\n**FAILED TO START**\n\n\`\`\`\n${msg}\n\`\`\`\n`);
   process.exit(2);
+};
+if (!existsSync(join(ROOT, 'index.html'))) {
+  await bail('dist/ not found — run `npm run build` first');
 }
 
 /* ---------------------------------------------------------------- server -- */
@@ -62,28 +70,35 @@ async function findChrome() {
     const exe = await chromium.executablePath();
     return { exe, args: chromium.args };
   } catch (e) {
-    console.error('no Chrome binary found and @sparticuz/chromium is unavailable');
-    process.exit(2);
+    await bail('no Chrome binary found and @sparticuz/chromium is unavailable: ' + e.message);
   }
 }
 const chrome = await findChrome();
 
-const browser = await puppeteer.launch({
-  executablePath: chrome.exe,
-  headless: true,
-  protocolTimeout: 180000,
-  args: [
-    ...chrome.args,
-    '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
-    '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
-    '--ignore-gpu-blocklist', '--window-size=1280,720', '--mute-audio',
-    '--autoplay-policy=no-user-gesture-required', '--hide-scrollbars'
-  ]
-});
+let browser;
+try {
+  browser = await puppeteer.launch({
+    executablePath: chrome.exe,
+    headless: true,
+    protocolTimeout: 180000,
+    args: [
+      ...chrome.args,
+      '--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage',
+      '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
+      '--ignore-gpu-blocklist', '--window-size=1280,720', '--mute-audio',
+      '--autoplay-policy=no-user-gesture-required', '--hide-scrollbars'
+    ]
+  });
+} catch (e) {
+  await bail('Chrome refused to launch: ' + (e && e.message));
+}
 
 /* ------------------------------------------------------------------ test -- */
+const DPR = Number(argOf('dpr', 2.5));
 const page = await browser.newPage();
-await page.setViewport({ width: 900, height: 414, deviceScaleFactor: 2.5, isMobile: true, hasTouch: true });
+// Realme 9i class viewport at a phone pixel ratio. Software GL in CI is slow,
+// so --dpr lets the workflow trade authenticity for a run that finishes.
+await page.setViewport({ width: 900, height: 414, deviceScaleFactor: DPR, isMobile: true, hasTouch: true });
 
 const consoleErrors = [];
 const pageErrors = [];
@@ -271,5 +286,5 @@ if (process.env.GITHUB_STEP_SUMMARY) {
 }
 await mkdir('ci', { recursive: true }).catch(() => {});
 await writeFile('ci/browser-report.json', JSON.stringify({ results, fail }, null, 2)).catch(() => {});
-await writeFile('ci/browser-report.md', md).catch(() => {});
+await writeReport(md);
 process.exit(fail.length ? 1 : 0);

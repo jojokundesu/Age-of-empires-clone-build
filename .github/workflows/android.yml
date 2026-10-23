@@ -63,8 +63,13 @@ jobs:
 
       - name: Browser smoke test (real headless Chrome)
         run: |
-          npm i --no-save puppeteer@25 >/dev/null 2>&1 || true
-          node tests/browser.mjs --seconds 8 --out ci/screenshots 2>&1 | tee browser-test.log
+          set -o pipefail
+          # puppeteer-core drives the Chrome that the runner already has; the
+          # install is only needed if the dev dependency tree is missing it.
+          npm ls puppeteer-core >/dev/null 2>&1 || npm i --no-save puppeteer-core@23
+          node -e "import('puppeteer-core').then(() => console.log('puppeteer-core ok'))"
+          google-chrome --version || chromium --version || true
+          node tests/browser.mjs --seconds 8 --dpr 1.5 --out ci/screenshots 2>&1 | tee browser-test.log
 
       # A browser run that produced no report must fail the job. Before this
       # the step "passed" on a 191-byte artifact and silently skipped every
