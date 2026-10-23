@@ -299,8 +299,11 @@ void main(){
   float sh = shadowFactor(vWorld, ndl);
   float cl = cloudShadow(vWorld.xz);
 
-  vec3 ambient = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5);
-  vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
+  // Hemisphere ambient, deliberately desaturated: a saturated blue fill on
+  // vertical walls reads as "grey and washed out" from an RTS camera.
+  vec3 skyFill = mix(uSkyColor * 0.86, vec3(0.30, 0.31, 0.30), 0.5);
+  vec3 ambient = mix(uGroundColor * 1.15, skyFill, N.y * 0.5 + 0.5) * (0.66 + 0.46 * N.y);
+  vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.02 + ambient);
 
   // wet sheen near the waterline
   float wet = smoothstep(0.55, 0.0, vWorld.y);
@@ -447,7 +450,8 @@ void main(){
   else if (layer == M_LEATHER) teamW = 0.12;
   if (teamW > 0.0) {
     float shade = dot(tex.rgb, vec3(0.299, 0.587, 0.114));
-    vec3 teamAlb = vTint.rgb * (0.30 + shade * 1.05);
+    // the team colour is authored in sRGB like the textures
+    vec3 teamAlb = srgbToLinear(vTint.rgb) * (0.55 + shade * 1.25);
     albedo = mix(albedo, teamAlb, teamW);
   }
 
@@ -464,7 +468,9 @@ void main(){
   float ndl = max(dot(N, uSunDir), 0.0);
   float sh = shadowFactor(vWorld, ndl);
   float cl = cloudShadow(vWorld.xz);
-  vec3 ambient = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5) * (0.55 + 0.55 * N.y);
+  // hemisphere ambient: warm bounce from the ground, cool from the sky. The
+  // wet-down blend keeps vertical walls from going flat blue-grey.
+  vec3 ambient = mix(uGroundColor * 1.15, uSkyColor * 0.86, N.y * 0.5 + 0.5) * (0.62 + 0.5 * N.y);
 
   vec3 V = normalize(uCameraPos - vWorld);
   float specMask = (layer == M_IRON || layer == M_GOLD || layer == M_GLASS) ? 1.0

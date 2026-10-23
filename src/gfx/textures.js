@@ -273,7 +273,8 @@ export const MAT = {
 const MAT_COUNT = 17;
 
 function paintStone(base, variation, blockW = 42, blockH = 22, mortar = '#3a3631') {
-  const S = 128;
+  const S = 256;
+  blockW *= 2; blockH *= 2;
   const c = makeCanvas(S);
   const g = ctxOf(c);
   g.fillStyle = mortar; g.fillRect(0, 0, S, S);
@@ -312,7 +313,7 @@ function paintStone(base, variation, blockW = 42, blockH = 22, mortar = '#3a3631
 }
 
 function paintPlaster() {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     const base = [206, 190, 160];
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
@@ -334,7 +335,8 @@ function paintPlaster() {
 }
 
 function paintWood(base = [120, 82, 48], plankW = 32) {
-  const S = 128;
+  const S = 256;
+  plankW *= 2;
   const c = makeCanvas(S);
   const g = ctxOf(c);
   g.fillStyle = 'rgb(40,26,14)'; g.fillRect(0, 0, S, S);
@@ -363,12 +365,12 @@ function paintWood(base = [120, 82, 48], plankW = 32) {
 }
 
 function paintRoof() {
-  const S = 128;
+  const S = 256;
   const c = makeCanvas(S);
   const g = ctxOf(c);
   g.fillStyle = '#4a2417'; g.fillRect(0, 0, S, S);
   const rnd = mulberry32(11);
-  const tileW = 22, tileH = 15;
+  const tileW = 40, tileH = 27;
   for (let row = 0; row < S / tileH + 2; row++) {
     for (let x = -tileW; x < S + tileW; x += tileW) {
       const off = row % 2 ? tileW * 0.5 : 0;
@@ -391,7 +393,7 @@ function paintRoof() {
 }
 
 function paintThatch() {
-  const S = 128;
+  const S = 256;
   const c = makeCanvas(S);
   const g = ctxOf(c);
   g.fillStyle = '#6e5a2c'; g.fillRect(0, 0, S, S);
@@ -409,7 +411,7 @@ function paintThatch() {
 }
 
 function paintCloth(base = [150, 46, 40]) {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
@@ -425,7 +427,7 @@ function paintCloth(base = [150, 46, 40]) {
 }
 
 function paintIron() {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
@@ -439,7 +441,7 @@ function paintIron() {
 }
 
 function paintGoldMat() {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
@@ -452,7 +454,7 @@ function paintGoldMat() {
 }
 
 function paintMarble() {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
@@ -468,27 +470,29 @@ function paintMarble() {
 }
 
 function paintBrick() {
-  const S = 128;
+  const S = 256;
   const c = makeCanvas(S);
   const g = ctxOf(c);
   g.fillStyle = '#4b3a30'; g.fillRect(0, 0, S, S);
   const rnd = mulberry32(23);
-  for (let row = 0; row < 9; row++) {
-    for (let x = -16; x < S + 16; x += 17) {
-      const off = row % 2 ? 8 : 0;
+  for (let row = 0; row < 18; row++) {
+    for (let x = -32; x < S + 32; x += 34) {
+      const off = row % 2 ? 16 : 0;
       const v = 0.82 + rnd() * 0.34;
       const b = shade([148, 74, 54], v);
       g.fillStyle = `rgb(${b[0] | 0},${b[1] | 0},${b[2] | 0})`;
-      g.fillRect(x + off + 1, row * 14 + 1, 15, 12);
-      g.fillStyle = 'rgba(255,255,255,0.12)';
-      g.fillRect(x + off + 1, row * 14 + 1, 15, 1.4);
+      g.fillRect(x + off + 2, row * 28 + 2, 30, 24);
+      g.fillStyle = 'rgba(255,255,255,0.14)';
+      g.fillRect(x + off + 2, row * 28 + 2, 30, 2.6);
+      g.fillStyle = 'rgba(0,0,0,0.16)';
+      g.fillRect(x + off + 2, row * 28 + 24, 30, 3);
     }
   }
   return c;
 }
 
 function paintGlass() {
-  const S = 128;
+  const S = 256;
   const c = makeCanvas(S);
   const g = ctxOf(c);
   const grad = g.createLinearGradient(0, 0, S, S);
@@ -505,7 +509,7 @@ function paintGlass() {
 }
 
 function paintLeather() {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
@@ -518,7 +522,7 @@ function paintLeather() {
 }
 
 function paintSkin() {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
@@ -534,7 +538,7 @@ function paintSkin() {
 }
 
 function paintLeaf() {
-  const S = 128;
+  const S = 256;
   return pixelPass(S, (d) => {
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
@@ -831,7 +835,7 @@ export function buildTextures(gl, onStep = () => {}) {
 
   onStep('Uploading to the GPU…', 0.8);
   t.terrain = uploadArray(gl, terrain, 256, { aniso: 4, name: 'terrain' });
-  t.materials = uploadArray(gl, materials, 128, { aniso: 2, name: 'mat' });
+  t.materials = uploadArray(gl, materials, 256, { aniso: 4, name: 'mat' });
   t.sprites = uploadArray(gl, sprites, 128, { aniso: 1 });
   t.waterNormal = upload2D(gl, waterNormalMap(256), { aniso: 4 });
   t.clouds = upload2D(gl, cloudMap(256));

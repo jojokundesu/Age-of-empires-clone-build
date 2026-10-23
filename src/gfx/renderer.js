@@ -493,9 +493,9 @@ export class Renderer {
 
     if (!isNight) {
       const warm = lowSun;
-      this.sunColor[0] = lerp(1.86, 2.05, warm);
-      this.sunColor[1] = lerp(1.72, 1.18, warm);
-      this.sunColor[2] = lerp(1.52, 0.72, warm);
+      this.sunColor[0] = lerp(1.60, 1.85, warm);
+      this.sunColor[1] = lerp(1.50, 1.07, warm);
+      this.sunColor[2] = lerp(1.34, 0.66, warm);
       this.zenith[0] = lerp(0.13, 0.19, warm);
       this.zenith[1] = lerp(0.30, 0.31, warm);
       this.zenith[2] = lerp(0.58, 0.46, warm);
@@ -599,6 +599,12 @@ export class Renderer {
   }
 
   _bindLight(s) {
+    // Models need the eye position for fog distance, specular and rim light.
+    // Forgetting it here left uCameraPos at (0,0,0): every building measured
+    // its fog against the world origin and got a grey-blue veil plus a
+    // bogus specular sheen -- the "flat, washed out" look.
+    const cam = this._cam;
+    if (cam && cam.eye) s.v3('uCameraPos', cam.eye[0], cam.eye[1], cam.eye[2]);
     s.v3('uSunDir', this.sunDir[0], this.sunDir[1], this.sunDir[2]);
     s.v3('uSunColor', this.sunColor[0], this.sunColor[1], this.sunColor[2]);
     s.v3('uSkyColor', this.skyColor[0], this.skyColor[1], this.skyColor[2]);

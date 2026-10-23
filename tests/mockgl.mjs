@@ -5,11 +5,21 @@
    loop — the class of bug that otherwise only appears on the phone.   */
 
 export function createMockGL(opts = {}) {
-  const log = { drawCalls: 0, tris: 0, programs: [], uniforms: new Set(), unknownUniforms: new Set(), attribs: new Set(), textures: 0, buffers: 0 };
+  const log = { drawCalls: 0, tris: 0, programs: [], uniforms: new Set(), unknownUniforms: new Set(), attribs: new Set(), textures: 0, buffers: 0,
+    // every uniform write, keyed by program, then by uniform name. Lets a test
+    // assert that a shader actually received the values it reads.
+    uniformValues: new Map(), currentProgram: null };
   let boundVao = null;
   const requireElementBuffer = (what) => {
     if (!boundVao) throw new Error(`${what} called with no VAO bound`);
     if (!boundVao.elementBuffer) throw new Error(`${what} called without an element array buffer in the VAO`);
+  };
+  const record = (loc, value) => {
+    if (!loc || !loc.name) return;
+    const prog = loc.program || log.currentProgram;
+    let m = log.uniformValues.get(prog);
+    if (!m) { m = new Map(); log.uniformValues.set(prog, m); }
+    m.set(loc.name, value);
   };
   const constCache = new Map();
   let nextConst = 0x1000;
@@ -38,14 +48,14 @@ export function createMockGL(opts = {}) {
       return true;
     },
     getProgramInfoLog() { return ''; },
-    useProgram() {},
+    useProgram(p) { log.currentProgram = p || null; },
     deleteProgram() {},
     getUniformLocation(p, name) {
       log.uniforms.add(name);
       const src = programSources.get(p) || '';
       const re = new RegExp(`uniform\\s+(?:(?:lowp|mediump|highp)\\s+)?\\w+\\s+${name}\\s*[;\\[]`);
       if (!re.test(src)) log.unknownUniforms.add(name);
-      return { name };
+      return { name, program: p };
     },
     getAttribLocation(p, name) { return { name }; },
 
@@ -126,8 +136,12 @@ export function createMockGL(opts = {}) {
     enable() {}, disable() {}, depthFunc() {}, depthMask() {},
     blendFunc() {}, blendFuncSeparate() {}, cullFace() {}, frontFace() {},
     polygonOffset() {}, viewport() {}, scissor() {},
-    uniform1i() {}, uniform1f() {}, uniform2f() {}, uniform3f() {}, uniform4f() {},
-    uniformMatrix4fv() {},
+    uniform1i(l, v) { record(l, [v]); },
+    uniform1f(l, v) { record(l, [v]); },
+    uniform2f(l, a, b) { record(l, [a, b]); },
+    uniform3f(l, a, b, c) { record(l, [a, b, c]); },
+    uniform4f(l, a, b, c, d) { record(l, [a, b, c, d]); },
+    uniformMatrix4fv(l, t, m) { record(l, Array.from(m || []).slice(0, 4)); },
 
     /* --- queries ---------------------------------------------------- */
     getExtension(name) {
@@ -156,6 +170,7 @@ export function createMockGL(opts = {}) {
       return (...args) => { (log.unknownMethods || (log.unknownMethods = new Set())).add(key); return undefined; };
     }
   });
+  log.sourceOf = (p) => programSources.get(p) || '';
   gl.log = log;
   gl.canvas = { width: 900, height: 420 };
   return gl;

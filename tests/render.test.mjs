@@ -108,6 +108,28 @@ check('30 frames under a moving camera', () => {
     renderer.render(1 / 60, game);
   }
 });
+check('every declared lighting uniform is actually uploaded', () => {
+  // Regression: _bindLight() forgot uCameraPos, so every building measured its
+  // fog against the world origin (grey veil over the whole map) and got the
+  // wrong specular/rim. The mock records uniform writes per program now.
+  const must = ['uCameraPos', 'uViewProj', 'uSunDir', 'uSunColor', 'uSkyColor', 'uGroundColor',
+    'uFogColor', 'uFogDensity', 'uTime', 'uNight'];
+  const log = canvas.getContext('webgl2').log;
+  const missing = [];
+  for (const [prog, values] of log.uniformValues) {
+    const src = log.sourceOf(prog);
+    for (const name of must) {
+      const declared = new RegExp(`uniform\\s+(?:(?:lowp|mediump|highp)\\s+)?\\w+\\s+${name}\\s*[;\\[]`).test(src);
+      if (declared && !values.has(name)) missing.push(name);
+    }
+  }
+  assert(!missing.length, 'uniforms never uploaded: ' + [...new Set(missing)].join(', '));
+  // and the eye position must be a real camera position, not the origin
+  const cam = [...log.uniformValues.values()].map((m) => m.get('uCameraPos')).filter(Boolean);
+  assert(cam.length > 0, 'uCameraPos never set');
+  const eye = cam[cam.length - 1];
+  assert(eye.some((v) => Math.abs(v) > 1), 'uCameraPos is the world origin: ' + eye.join(','));
+});
 check('fog upload', () => {
   const size = 96;
   const buf = new Uint8Array(size * size);
