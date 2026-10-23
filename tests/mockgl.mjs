@@ -6,6 +6,11 @@
 
 export function createMockGL(opts = {}) {
   const log = { drawCalls: 0, tris: 0, programs: [], uniforms: new Set(), unknownUniforms: new Set(), attribs: new Set(), textures: 0, buffers: 0 };
+  let boundVao = null;
+  const requireElementBuffer = (what) => {
+    if (!boundVao) throw new Error(`${what} called with no VAO bound`);
+    if (!boundVao.elementBuffer) throw new Error(`${what} called without an element array buffer in the VAO`);
+  };
   const constCache = new Map();
   let nextConst = 0x1000;
   const constFor = (name) => {
@@ -38,7 +43,7 @@ export function createMockGL(opts = {}) {
     getUniformLocation(p, name) {
       log.uniforms.add(name);
       const src = programSources.get(p) || '';
-      const re = new RegExp(`uniform\\s+\\w+\\s+${name}\\s*[;\\[]`);
+      const re = new RegExp(`uniform\\s+(?:(?:lowp|mediump|highp)\\s+)?\\w+\\s+${name}\\s*[;\\[]`);
       if (!re.test(src)) log.unknownUniforms.add(name);
       return { name };
     },
@@ -46,7 +51,9 @@ export function createMockGL(opts = {}) {
 
     /* --- buffers / meshes ------------------------------------------ */
     createBuffer() { log.buffers++; return { b: log.buffers, bytes: 0 }; },
-    bindBuffer() {},
+    bindBuffer(target, buf) {
+      if (target === constFor('ELEMENT_ARRAY_BUFFER') && boundVao) boundVao.elementBuffer = buf || null;
+    },
     bufferData(target, data) {
       if (typeof data === 'number') { if (data < 0) throw new Error('negative bufferData'); }
       else if (data && data.byteLength === 0) throw new Error('empty bufferData');
@@ -55,8 +62,9 @@ export function createMockGL(opts = {}) {
       if (off < 0) throw new Error('negative bufferSubData offset');
       if (data && data.buffer && (srcOff + len) > data.length) throw new Error('bufferSubData overrun');
     },
-    createVertexArray() { return {}; },
-    bindVertexArray() {},
+    createVertexArray() { return { elementBuffer: null }; },
+    get boundVao() { return boundVao; },
+    bindVertexArray(vao) { boundVao = vao || null; },
     deleteVertexArray() {},
     enableVertexAttribArray(loc) { if (loc >= 16) throw new Error('attrib location ' + loc + ' out of range'); log.attribs.add(loc); },
     vertexAttribPointer(loc, size, type, norm, stride, off) {
@@ -97,10 +105,12 @@ export function createMockGL(opts = {}) {
 
     /* --- drawing ---------------------------------------------------- */
     drawElements(mode, count, type, off) {
+      requireElementBuffer('drawElements');
       if (count % 3 !== 0) throw new Error('drawElements count not a multiple of 3: ' + count);
       log.drawCalls++; log.tris += count / 3;
     },
     drawElementsInstanced(mode, count, type, off, instances) {
+      requireElementBuffer('drawElementsInstanced');
       if (count % 3 !== 0) throw new Error('instanced count not tris: ' + count);
       if (instances < 0) throw new Error('negative instance count');
       log.drawCalls++; log.tris += (count / 3) * instances;

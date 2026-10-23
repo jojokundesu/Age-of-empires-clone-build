@@ -34,6 +34,10 @@ vec3 aces(vec3 x){
   const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14;
   return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
 }
+vec3 srgbToLinear(vec3 c){
+  c = clamp(c, 0.0, 1.0);
+  return mix(c * (1.0 / 12.92), pow((c + 0.055) * (1.0 / 1.055), vec3(2.4)), step(vec3(0.04045), c));
+}
 vec3 toSRGB(vec3 c){
   return mix(1.055*pow(max(c, vec3(0.0)), vec3(1.0/2.4)) - 0.055, c*12.92, step(c, vec3(0.0031308)));
 }
@@ -52,7 +56,7 @@ uniform float uFogDensity;
 uniform vec3 uCameraPos;
 uniform float uTime;
 uniform float uNight;
-uniform sampler2D uShadowMap;
+uniform highp sampler2DShadow uShadowMap;
 uniform mat4 uShadowMatrix;
 uniform float uShadowTexel;
 uniform float uShadowStrength;
@@ -83,7 +87,7 @@ float shadowFactor(vec3 worldPos, float ndl){
 float cloudShadow(vec2 worldXZ){
   vec2 uv = worldXZ * 0.0011 + uCloudOffset;
   float c = texture(uClouds, uv).a;
-  return mix(1.0, 0.52, clamp(c*1.35, 0.0, 1.0));
+  return mix(1.0, 0.80, clamp(c*1.25, 0.0, 1.0));
 }
 float fogOfWar(vec3 worldPos, out float explored){
   if (uFogEnabled < 0.5) { explored = 1.0; return 1.0; }
@@ -100,11 +104,13 @@ vec3 applyFoW(vec3 color, vec3 worldPos){
   float explor;
   float vis = fogOfWar(worldPos, explor);
   if (uFogEnabled < 0.5) return color;
-  // unexplored = deep darkness; explored memory = cold, desaturated dim
-  vec3 memory = vec3(dot(color, vec3(0.299,0.587,0.114))) * vec3(0.30,0.33,0.36);
-  vec3 shown = mix(color, memory, clamp((0.98 - vis) * 1.6, 0.0, 0.72));
-  float dark = smoothstep(0.02, 0.42, vis);
-  return shown * mix(0.06, 1.0, dark);
+  // Explored-but-not-visible ground keeps its shapes: desaturate and cool it
+  // slightly instead of sinking it into black, so the map stays readable.
+  float l = dot(color, vec3(0.299, 0.587, 0.114));
+  vec3 memory = mix(vec3(l), color, 0.34) * vec3(0.72, 0.78, 0.90);
+  vec3 shown = mix(color, memory, clamp((1.0 - vis) * 1.25, 0.0, 0.62));
+  float dark = smoothstep(0.015, 0.32, vis);
+  return shown * mix(0.10, 1.0, dark);
 }
 `;
 
@@ -282,7 +288,7 @@ vec3 terrainSample(vec2 uv){
 
 void main(){
   vec2 uv = vWorld.xz * uLayerScale;
-  vec3 albedo = terrainSample(uv);
+  vec3 albedo = srgbToLinear(terrainSample(uv));
   // macro tint + micro breakup
   float micro = texture(uClouds, vWorld.xz * 0.021).a;
   albedo *= 0.92 + micro * 0.16;
@@ -294,7 +300,7 @@ void main(){
   float cl = cloudShadow(vWorld.xz);
 
   vec3 ambient = mix(uGroundColor, uSkyColor, N.y * 0.5 + 0.5);
-  vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.15 + ambient * 0.95);
+  vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
 
   // wet sheen near the waterline
   float wet = smoothstep(0.55, 0.0, vWorld.y);
@@ -302,7 +308,7 @@ void main(){
 
   color = applyFog(color, vDist);
   color = applyFoW(color, vWorld);
-  fragColor = vec4(tonemap(color, 1.0), 1.0);
+  fragColor = vec4(tonemap(color, 1.72), 1.0);
 }
 `;
 
@@ -425,21 +431,24 @@ uniform sampler2DArray uMaterials;
 #define M_GRAVEL 13
 #define M_LEATHER 14
 #define M_LEAF 15
+#define M_SKIN 16
 
 void main(){
   int layer = vMat;
   vec4 tex = texture(uMaterials, vec3(vUV, float(layer)));
-  vec3 albedo = tex.rgb * vColor;
+  vec3 albedo = srgbToLinear(tex.rgb) * vColor;
 
-  // team colour: strong on cloth, moderate on leather/gold, faint on stone
+  // Team colour replaces the garment hue instead of multiplying it: the
+  // texture's own luminance keeps the weave and folds, so a red-dyed cloth
+  // still reads as folded cloth when the team is blue.
   float teamW = 0.0;
-  if (layer == M_CLOTH) teamW = 0.92;
-  else if (layer == M_LEATHER) teamW = 0.45;
-  else if (layer == M_GOLD) teamW = 0.7;
-  else if (layer == M_PLASTER) teamW = 0.22;
+  if (layer == M_CLOTH) teamW = 0.94;
+  else if (layer == M_GOLD) teamW = 0.30;
+  else if (layer == M_LEATHER) teamW = 0.12;
   if (teamW > 0.0) {
-    vec3 t = vTint.rgb;
-    albedo = mix(albedo, albedo * mix(0.55, 1.5, tex.r) * t * 1.6, teamW);
+    float shade = dot(tex.rgb, vec3(0.299, 0.587, 0.114));
+    vec3 teamAlb = vTint.rgb * (0.30 + shade * 1.05);
+    albedo = mix(albedo, teamAlb, teamW);
   }
 
   // battle damage
@@ -487,7 +496,7 @@ void main(){
 
   color = applyFog(color, vDist);
   color = applyFoW(color, vWorld);
-  fragColor = vec4(tonemap(color, 1.0), vState.y * tex.a);
+  fragColor = vec4(tonemap(color, 1.02), vState.y * tex.a);
 }
 `;
 
@@ -810,25 +819,20 @@ uniform float uGrain;
 float luma(vec3 c){ return dot(c, vec3(0.299, 0.587, 0.114)); }
 void main(){
   vec3 c = texture(uScene, vUV).rgb;
-  // 3x3 edge-aware smoothing
-  vec3 n = texture(uScene, vUV + vec2(0.0, -uTexel.y)).rgb;
-  vec3 s = texture(uScene, vUV + vec2(0.0, uTexel.y)).rgb;
-  vec3 w = texture(uScene, vUV + vec2(-uTexel.x, 0.0)).rgb;
-  vec3 e = texture(uScene, vUV + vec2(uTexel.x, 0.0)).rgb;
-  vec3 nw = texture(uScene, vUV + vec2(-uTexel.x, -uTexel.y)).rgb;
-  vec3 se = texture(uScene, vUV + vec2(uTexel.x, uTexel.y)).rgb;
-  float lc = luma(c);
-  float ln = luma(n), ls = luma(s), lw = luma(w), le = luma(e);
-  float mn = min(min(min(ln, ls), min(lw, le)), lc);
-  float mx = max(max(max(ln, ls), max(lw, le)), lc);
-  vec3 blend = (n + s + w + e + nw + se) / 6.0;
-  float amount = smoothstep(0.035, 0.32, mx - mn) * 0.72;
-  c = mix(c, blend, amount);
-  // warm vignette
+  // cheap unsharp mask: keeps hand-painted texture detail crisp on a phone
+  vec3 blur = (
+      texture(uScene, vUV + vec2( uTexel.x, 0.0)).rgb +
+      texture(uScene, vUV + vec2(-uTexel.x, 0.0)).rgb +
+      texture(uScene, vUV + vec2(0.0, uTexel.y)).rgb +
+      texture(uScene, vUV + vec2(0.0, -uTexel.y)).rgb) * 0.25;
+  c = clamp(c + (c - blur) * 0.42, 0.0, 1.0);
+  // grade: a touch of warmth in the highlights, cool in the shadows
+  float l = luma(c);
+  c *= mix(vec3(0.97, 1.0, 1.05), vec3(1.03, 1.0, 0.97), smoothstep(0.25, 0.85, l));
+  // vignette
   vec2 q = vUV - 0.5;
-  float vig = 1.0 - dot(q, q) * uVignette;
-  c *= vig;
-  // film grain (dither)
+  c *= 1.0 - dot(q, q) * uVignette;
+  // dither instead of visible film grain
   float g = fract(sin(dot(vUV * vec2(1234.5, 987.6) + uTime, vec2(12.9898, 78.233))) * 43758.5453);
   c += (g - 0.5) * uGrain;
   fragColor = vec4(c, 1.0);

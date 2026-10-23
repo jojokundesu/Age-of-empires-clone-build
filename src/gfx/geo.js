@@ -11,13 +11,13 @@
 export const M = {
   STONE: 0, STONE_LIGHT: 1, PLASTER: 2, WOOD: 3, WOOD_DARK: 4, ROOF: 5, THATCH: 6,
   CLOTH: 7, IRON: 8, GOLD: 9, MARBLE: 10, BRICK: 11, GLASS: 12, GRAVEL: 13,
-  LEATHER: 14, LEAF: 15,
+  LEATHER: 14, LEAF: 15, SKIN: 16,
   // aliases used by the models
-  TILE: 5, METAL: 8, SKIN: 14, DIRT: 13, BARK: 4, ICE: 12, GLOW: 12, SNOW: 1
+  TILE: 5, METAL: 8, DIRT: 13, BARK: 4, ICE: 12, GLOW: 12, SNOW: 1
 };
 
 /** 1 texture repeat per this many metres, per material. */
-export const MAT_SCALE = [2.2, 2.4, 1.7, 1.2, 1.1, 1.5, 1.9, 1.3, 0.9, 1.0, 2.4, 1.6, 1.0, 2.0, 1.0, 1.5];
+export const MAT_SCALE = [2.2, 2.4, 1.7, 1.2, 1.1, 1.5, 1.9, 1.3, 0.9, 1.0, 2.4, 1.6, 1.0, 2.0, 1.0, 1.5, 0.35];
 
 export const PART = { BODY: 0, LEG_L: 1, LEG_R: 2, ARM_L: 3, ARM_R: 4, EXTRA: 5 };
 
@@ -119,12 +119,12 @@ export class Geo {
     // -Y
     a = P(-hw, -hh, -hd); b = P(hw, -hh, -hd); cc = P(hw, -hh, hd); dd = P(-hw, -hh, hd);
     this.quad(a[0], a[1], a[2], b[0], b[1], b[2], cc[0], cc[1], cc[2], dd[0], dd[1], dd[2], uv || [0, 0, w, 0, w, d, 0, d]);
-    // +Z
-    a = P(-hw, -hh, hd); b = P(-hw, hh, hd); cc = P(hw, hh, hd); dd = P(hw, -hh, hd);
-    this.quad(a[0], a[1], a[2], b[0], b[1], b[2], cc[0], cc[1], cc[2], dd[0], dd[1], dd[2], uv || [0, 0, 0, h, w, h, w, 0]);
+    // +Z (a → d → c → b keeps the normal pointing out of the face)
+    a = P(-hw, -hh, hd); b = P(hw, -hh, hd); cc = P(hw, hh, hd); dd = P(-hw, hh, hd);
+    this.quad(a[0], a[1], a[2], b[0], b[1], b[2], cc[0], cc[1], cc[2], dd[0], dd[1], dd[2], uv || [0, 0, w, 0, w, h, 0, h]);
     // -Z
-    a = P(hw, -hh, -hd); b = P(hw, hh, -hd); cc = P(-hw, hh, -hd); dd = P(-hw, -hh, -hd);
-    this.quad(a[0], a[1], a[2], b[0], b[1], b[2], cc[0], cc[1], cc[2], dd[0], dd[1], dd[2], uv || [0, 0, 0, h, w, h, w, 0]);
+    a = P(hw, -hh, -hd); b = P(-hw, -hh, -hd); cc = P(-hw, hh, -hd); dd = P(hw, hh, -hd);
+    this.quad(a[0], a[1], a[2], b[0], b[1], b[2], cc[0], cc[1], cc[2], dd[0], dd[1], dd[2], uv || [0, 0, w, 0, w, h, 0, h]);
     return this;
   }
 
@@ -174,6 +174,8 @@ export class Geo {
   cone(x, y, z, r, h, seg = 8) { return this.cyl(x, y, z, 0, r, h, seg, { capTop: false }); }
 
   sphere(x, y, z, r, seg = 8, rings = 5) {
+    // Pole rows are emitted as triangle fans: a quad whose top edge has zero
+    // length has a zero-area normal and renders black on real drivers.
     for (let j = 0; j < rings; j++) {
       const p0 = (j / rings) * Math.PI;
       const p1 = ((j + 1) / rings) * Math.PI;
@@ -181,24 +183,28 @@ export class Geo {
       const y1 = y + Math.cos(p1) * r;
       const r0 = Math.sin(p0) * r;
       const r1 = Math.sin(p1) * r;
+      const v0 = (j / rings) * Math.PI * r;
+      const v1 = ((j + 1) / rings) * Math.PI * r;
       for (let i = 0; i < seg; i++) {
         const a0 = (i / seg) * TAU, a1 = ((i + 1) / seg) * TAU;
         const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
         const u0 = (i / seg) * TAU * r, u1 = ((i + 1) / seg) * TAU * r;
-        const v0 = (j / rings) * Math.PI * r, v1 = ((j + 1) / rings) * Math.PI * r;
-        this.quad(
-          x + c0 * r0, y0, z + s0 * r0,
-          x + c0 * r1, y1, z + s0 * r1,
-          x + c1 * r1, y1, z + s1 * r1,
-          x + c1 * r0, y0, z + s1 * r0,
-          [u0, v0, u0, v1, u1, v1, u1, v0]
-        );
+        const ax = x + c0 * r0, az = z + s0 * r0;
+        const bx = x + c1 * r0, bz = z + s1 * r0;
+        const cx = x + c1 * r1, cz = z + s1 * r1;
+        const dx = x + c0 * r1, dz = z + s0 * r1;
+        if (r0 < 1e-4) {
+          this.tri(x, y0, z, cx, y1, cz, dx, y1, dz, u0, v0, u1, v1, u0, v1);
+        } else if (r1 < 1e-4) {
+          this.tri(ax, y0, az, bx, y0, bz, x, y1, z, u0, v0, u1, v0, u0, v1);
+        } else {
+          this.quad(ax, y0, az, bx, y0, bz, cx, y1, cz, dx, y1, dz, [u0, v0, u1, v0, u1, v1, u0, v1]);
+        }
       }
     }
     return this;
   }
 
-  /** Triangular prism (gable roof). Ridge runs along Z. */
   gable(x, y, z, w, h, d, opts = {}) {
     const hw = w / 2, hd = d / 2;
     const rot = opts.rotY || 0;

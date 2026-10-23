@@ -327,8 +327,8 @@ export class Audio {
     o.frequency.value = f;
     const g = this.ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.linearRampToValueAtTime(0.06, t + 0.02);
-    g.exponentialRampToValueAtTime(0.0001, t + 2.6);
+    g.gain.linearRampToValueAtTime(0.06, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
     o.connect(g).connect(this.musicGain);
     o.start(t); o.stop(t + 2.7);
   }

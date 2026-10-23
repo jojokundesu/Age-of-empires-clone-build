@@ -15,8 +15,8 @@ export const WORLD = {
   seaLevel: -1.6,
   navCells: 256,
   navCell: 2,
-  fowCells: 96,
-  fowCell: 512 / 96
+  fowCells: 128,
+  fowCell: 512 / 128
 };
 
 export const BIOME = {

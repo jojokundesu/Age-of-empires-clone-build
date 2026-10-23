@@ -163,12 +163,13 @@ export function createMesh(gl, verts, indices) {
   const use32 = vertexCount > 65535;
   const idx = indices instanceof Uint32Array || indices instanceof Uint16Array
     ? indices : (use32 ? new Uint32Array(indices) : new Uint16Array(indices));
+  // The index buffer binding is part of VAO state, so the VAO must be bound
+  // *before* the IBO is attached — otherwise drawElements has no index buffer.
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
   const ibo = gl.createBuffer();
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
-
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
   const S = VERTEX_BYTES;
   gl.enableVertexAttribArray(ATTR.POS);

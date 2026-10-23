@@ -140,7 +140,7 @@ check('every uniform the renderer sets is declared', () => {
   const re = /\b(?:s|shader)\.(?:f|i|v2|v3|v4|m4|tex)\('(\w+)'/g;
   let m;
   while ((m = re.exec(RENDERER))) set.add(m[1]);
-  const missing = [...set].filter((u) => !new RegExp(`uniform\\s+\\w+\\s+${u}\\s*[;\\[]`).test(all));
+  const missing = [...set].filter((u) => !new RegExp(`uniform\\s+(?:(?:lowp|mediump|highp)\\s+)?\\w+\\s+${u}\\s*[;\\[]`).test(all));
   assert(!missing.length, 'not declared anywhere: ' + missing.join(', '));
 });
 

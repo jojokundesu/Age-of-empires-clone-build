@@ -494,11 +494,31 @@ class App {
     // the renderer wants a byte per cell: 0 hidden, 1 explored memory, 2 visible
     const fow = g.fow;
     const size = Math.round(Math.sqrt(fow.length));
-    if (!this.fogBuf || this.fogBuf.length !== fow.length) this.fogBuf = new Uint8Array(fow.length);
-    const buf = this.fogBuf;
+    if (!this.fogBuf || this.fogBuf.length !== fow.length) {
+      this.fogBuf = new Uint8Array(fow.length);
+      this.fogTmp = new Uint8Array(fow.length);
+    }
+    const buf = this.fogBuf, tmp = this.fogTmp;
     for (let i = 0; i < fow.length; i++) {
       const v = fow[i];
-      buf[i] = v === 2 ? 255 : v === 1 ? 96 : 0;
+      buf[i] = v === 2 ? 255 : v === 1 ? 118 : 0;
+    }
+    // separable 3-tap blur: turns the blocky cell grid into a soft sight edge
+    for (let y = 0; y < size; y++) {
+      const row = y * size;
+      for (let x = 0; x < size; x++) {
+        const i = row + x;
+        const a = buf[i - (x > 0 ? 1 : 0)], b = buf[i], c = buf[i + (x < size - 1 ? 1 : 0)];
+        tmp[i] = (a + b + b + c) >> 2;
+      }
+    }
+    for (let y = 0; y < size; y++) {
+      const row = y * size;
+      const up = (y > 0 ? y - 1 : y) * size, dn = (y < size - 1 ? y + 1 : y) * size;
+      for (let x = 0; x < size; x++) {
+        const a = tmp[up + x], b = tmp[row + x], c = tmp[dn + x];
+        buf[row + x] = (a + b + b + c) >> 2;
+      }
     }
     this.renderer.setFog(buf, size);
   }

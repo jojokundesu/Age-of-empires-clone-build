@@ -493,27 +493,27 @@ export class Renderer {
 
     if (!isNight) {
       const warm = lowSun;
-      this.sunColor[0] = lerp(1.42, 1.66, warm);
-      this.sunColor[1] = lerp(1.34, 0.92, warm);
-      this.sunColor[2] = lerp(1.22, 0.58, warm);
+      this.sunColor[0] = lerp(1.86, 2.05, warm);
+      this.sunColor[1] = lerp(1.72, 1.18, warm);
+      this.sunColor[2] = lerp(1.52, 0.72, warm);
       this.zenith[0] = lerp(0.13, 0.19, warm);
       this.zenith[1] = lerp(0.30, 0.31, warm);
       this.zenith[2] = lerp(0.58, 0.46, warm);
       this.horizon[0] = lerp(0.60, 0.98, warm);
       this.horizon[1] = lerp(0.74, 0.70, warm);
       this.horizon[2] = lerp(0.86, 0.54, warm);
-      this.fogColor[0] = lerp(0.60, 0.90, warm);
-      this.fogColor[1] = lerp(0.70, 0.68, warm);
-      this.fogColor[2] = lerp(0.80, 0.54, warm);
-      this.skyColor[0] = lerp(0.44, 0.66, warm);
-      this.skyColor[1] = lerp(0.58, 0.54, warm);
-      this.skyColor[2] = lerp(0.80, 0.54, warm);
-      this.groundColor[0] = lerp(0.19, 0.27, warm);
-      this.groundColor[1] = lerp(0.21, 0.20, warm);
-      this.groundColor[2] = lerp(0.17, 0.13, warm);
+      this.fogColor[0] = lerp(0.40, 0.62, warm);
+      this.fogColor[1] = lerp(0.46, 0.46, warm);
+      this.fogColor[2] = lerp(0.52, 0.36, warm);
+      this.skyColor[0] = lerp(0.30, 0.44, warm);
+      this.skyColor[1] = lerp(0.40, 0.38, warm);
+      this.skyColor[2] = lerp(0.56, 0.34, warm);
+      this.groundColor[0] = lerp(0.15, 0.20, warm);
+      this.groundColor[1] = lerp(0.14, 0.14, warm);
+      this.groundColor[2] = lerp(0.11, 0.09, warm);
       this.night = dusk * 0.35;
       this.starAmount = 0;
-      this.exposure = lerp(0.94, 1.02, warm);
+      this.exposure = lerp(1.0, 1.06, warm);
     } else {
       this.sunColor[0] = 0.20; this.sunColor[1] = 0.26; this.sunColor[2] = 0.42;
       this.zenith[0] = 0.028; this.zenith[1] = 0.042; this.zenith[2] = 0.085;
@@ -527,7 +527,7 @@ export class Renderer {
     }
     this.cloudOffset[0] += dt * 0.0018;
     this.cloudOffset[1] += dt * 0.0009;
-    this.fogDensity = 0.0026 + lowSun * 0.0014;
+    this.fogDensity = 0.00105 + lowSun * 0.0007;
   }
 
   resize() {
@@ -1115,9 +1115,9 @@ export class Renderer {
     const s = this.pPost.use();
     s.tex('uScene', this.postTarget.color, gl.TEXTURE_2D);
     s.v2('uTexel', 1 / this.renderW, 1 / this.renderH);
-    s.f('uVignette', 0.34);
+    s.f('uVignette', 0.26);
     s.f('uTime', this.time);
-    s.f('uGrain', 0.012);
+    s.f('uGrain', 0.004);
     drawFullscreen(gl, this.fsTri);
     this.stats.drawCalls++;
     gl.enable(gl.DEPTH_TEST);

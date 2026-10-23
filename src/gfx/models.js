@@ -794,7 +794,11 @@ const UNITS = {};
 const U = (type, fn) => { UNITS[type] = fn; };
 
 U('villager', () => {
-  const g = humanoid({ torsoCol: [0.55, 0.48, 0.36], legCol: [0.34, 0.3, 0.24], helmet: false });
+  // peasants wear undyed linen and leather — the only team colour is a sash
+  const g = humanoid({ torsoCol: [0.62, 0.55, 0.42], torsoMat: M.LEATHER, legCol: [0.34, 0.3, 0.24], helmet: false });
+  g.part_(PART.BODY, 0, 1.25, 0);
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.panel(0, 1.34, 0.152, 0.5, 0.16, 0);
   g.part_(PART.ARM_R, 0.29, 1.45, 0);
   g.material(M.WOOD).color(0.5, 0.38, 0.26);
   g.beam(0.03, -0.5, 0.05, 0.08, 0.5, 0.4, 0.05);      // hoe handle

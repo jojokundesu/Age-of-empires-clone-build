@@ -49,20 +49,26 @@ export const TERRAIN_LAYER = {
 function paintGrass(lush) {
   const S = 256;
   return pixelPass(S, (d) => {
-    const cA = lush ? [74, 96, 46] : [112, 110, 62];
-    const cB = lush ? [104, 128, 58] : [140, 132, 74];
+    const cA = lush ? [70, 92, 44] : [110, 108, 62];
+    const cB = lush ? [104, 130, 60] : [142, 134, 76];
+    const cC = lush ? [52, 74, 36] : [92, 92, 54];   // shade between blades
     for (let y = 0; y < S; y++) {
       for (let x = 0; x < S; x++) {
         const i = (y * S + x) * 4;
-        const n = fbm2(x * 0.055, y * 0.055, 4) * 0.5 + 0.5;
-        const fine = noise2(x * 0.5, y * 0.5) * 0.5 + 0.5;
-        const blade = Math.pow(noise2(x * 0.22 + 31, y * 0.11), 1.4);
-        let v = 0.55 + n * 0.5 + fine * 0.16 + blade * 0.18;
-        const c = shade(cA, v);
-        const t = clamp(n * 0.7 + fine * 0.4, 0, 1);
-        d[i] = lerp(c[0], cB[0] * v, t * 0.8);
-        d[i + 1] = lerp(c[1], cB[1] * v, t * 0.8);
-        d[i + 2] = lerp(c[2], cB[2] * v, t * 0.7);
+        // broad tonal drift + medium clumps + a whisper of fine grain
+        const broad = fbm2(x * 0.012, y * 0.012, 3) * 0.5 + 0.5;
+        const clump = fbm2(x * 0.06 + 13, y * 0.06, 4) * 0.5 + 0.5;
+        const fine = noise2(x * 0.42, y * 0.42) * 0.5 + 0.5;
+        const t = clamp(broad * 0.55 + clump * 0.45, 0, 1);
+        let r = lerp(cC[0], cB[0], t) * (0.86 + fine * 0.20);
+        let g = lerp(cC[1], cB[1], t) * (0.86 + fine * 0.20);
+        let b = lerp(cC[2], cB[2], t) * (0.86 + fine * 0.18);
+        // sun-bleached patches
+        const bleach = Math.max(0, broad - 0.62) * 1.4;
+        r = lerp(r, cA[0] + 46, bleach * 0.6);
+        g = lerp(g, cA[1] + 40, bleach * 0.6);
+        b = lerp(b, cA[2] + 12, bleach * 0.6);
+        d[i] = clamp(r, 0, 255); d[i + 1] = clamp(g, 0, 255); d[i + 2] = clamp(b, 0, 255);
         d[i + 3] = 255;
       }
     }
@@ -261,8 +267,10 @@ function paintAsh() {
    ===================================================================== */
 export const MAT = {
   STONE: 0, STONE_LIGHT: 1, PLASTER: 2, WOOD: 3, WOOD_DARK: 4, ROOF: 5, THATCH: 6,
-  CLOTH: 7, IRON: 8, GOLD: 9, MARBLE: 10, BRICK: 11, GLASS: 12, GRAVEL: 13, LEATHER: 14, LEAF: 15
+  CLOTH: 7, IRON: 8, GOLD: 9, MARBLE: 10, BRICK: 11, GLASS: 12, GRAVEL: 13, LEATHER: 14, LEAF: 15,
+  SKIN: 16
 };
+const MAT_COUNT = 17;
 
 function paintStone(base, variation, blockW = 42, blockH = 22, mortar = '#3a3631') {
   const S = 128;
@@ -306,18 +314,22 @@ function paintStone(base, variation, blockW = 42, blockH = 22, mortar = '#3a3631
 function paintPlaster() {
   const S = 128;
   return pixelPass(S, (d) => {
-    const base = [214, 198, 166];
+    const base = [206, 190, 160];
     for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4;
-      const n = fbm2(x * 0.04, y * 0.04, 4) * 0.5 + 0.5;
-      const speck = noise2(x * 0.9, y * 0.9) * 0.5 + 0.5;
-      const stain = Math.max(0, fbm2(x * 0.02 + 7, y * 0.02, 3) - 0.1) * 1.6;
-      const v = 0.86 + n * 0.20 + speck * 0.06 - stain * 0.20;
-      d[i] = base[0] * v; d[i + 1] = base[1] * v * 0.99; d[i + 2] = base[2] * v * 0.95;
+      // long trowel sweeps (anisotropic fbm) read as hand-applied render
+      const sweep = fbm2(x * 0.012, y * 0.075, 4) * 0.5 + 0.5;
+      const grit = noise2(x * 0.85, y * 0.85) * 0.5 + 0.5;
+      const stain = Math.max(0, fbm2(x * 0.017 + 7, y * 0.023, 3) - 0.34) * 1.9;
+      const chip = Math.max(0, fbm2(x * 0.05 + 19, y * 0.05, 2) - 0.62) * 3.4;
+      const v = 0.70 + sweep * 0.42 + grit * 0.09 - stain * 0.30;
+      // chipped render shows the rubble core underneath
+      const chipMix = Math.min(1, chip);
+      d[i] = clamp(base[0] * v * (1 - chipMix) + 96 * chipMix, 0, 255);
+      d[i + 1] = clamp(base[1] * v * 0.995 * (1 - chipMix) + 92 * chipMix, 0, 255);
+      d[i + 2] = clamp(base[2] * v * 0.94 * (1 - chipMix) + 84 * chipMix, 0, 255);
       d[i + 3] = 255;
     }
-    // hairline cracks
-    const g = null;
   });
 }
 
@@ -500,6 +512,22 @@ function paintLeather() {
       const n = fbm2(x * 0.07, y * 0.07, 4) * 0.5 + 0.5;
       const grain = Math.pow(noise2(x * 0.5, y * 0.5), 2) * 26;
       d[i] = 108 + n * 44 + grain; d[i + 1] = 74 + n * 32 + grain * 0.7; d[i + 2] = 48 + n * 22 + grain * 0.5;
+      d[i + 3] = 255;
+    }
+  });
+}
+
+function paintSkin() {
+  const S = 128;
+  return pixelPass(S, (d) => {
+    for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+      const i = (y * S + x) * 4;
+      const n = fbm2(x * 0.05, y * 0.05, 3) * 0.5 + 0.5;
+      const pore = noise2(x * 0.6, y * 0.6) * 0.5 + 0.5;
+      const v = 0.88 + n * 0.16 + pore * 0.05;
+      d[i] = clamp(226 * v, 0, 255);
+      d[i + 1] = clamp(180 * v, 0, 255);
+      d[i + 2] = clamp(148 * v, 0, 255);
       d[i + 3] = 255;
     }
   });
@@ -714,6 +742,22 @@ function dirtDetail(size = 256) {
 /* =====================================================================
    GPU UPLOAD
    ===================================================================== */
+/* Array-texture layers must all be exactly `size`; art helpers legitimately
+   paint at their own resolution, so rescale instead of silently failing the
+   upload (a failed layer uploads nothing and renders as transparent black). */
+function fitCanvas(cv, size) {
+  if (cv.width === size && cv.height === size) return cv;
+  const out = typeof document !== 'undefined' && document.createElement
+    ? document.createElement('canvas')
+    : new OffscreenCanvas(size, size);
+  out.width = size; out.height = size;
+  const ctx = out.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(cv, 0, 0, cv.width, cv.height, 0, 0, size, size);
+  return out;
+}
+
 function uploadArray(gl, canvases, size, opts = {}) {
   const layers = canvases.length;
   const levels = Math.floor(Math.log2(size)) + 1;
@@ -721,7 +765,7 @@ function uploadArray(gl, canvases, size, opts = {}) {
   gl.bindTexture(gl.TEXTURE_2D_ARRAY, tex);
   gl.texStorage3D(gl.TEXTURE_2D_ARRAY, levels, gl.RGBA8, size, size, layers);
   for (let i = 0; i < layers; i++) {
-    const cv = canvases[i];
+    const cv = fitCanvas(canvases[i], size);
     gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, size, size, 1, gl.RGBA, gl.UNSIGNED_BYTE, cv);
   }
   gl.generateMipmap(gl.TEXTURE_2D_ARRAY);
@@ -764,7 +808,7 @@ export function buildTextures(gl, onStep = () => {}) {
     paintPlaster(), paintWood([124, 86, 52]), paintWood([74, 50, 30], 22),
     paintRoof(), paintThatch(), paintCloth([150, 46, 40]), paintIron(),
     paintGoldMat(), paintMarble(), paintBrick(), paintGlass(), paintGravel(),
-    paintLeather(), paintLeaf()
+    paintLeather(), paintLeaf(), paintSkin()
   ];
   onStep('Kindling sparks and smoke…', 0.58);
   const sprites = new Array(16).fill(null).map(() => puffSprite(128, 0.4));
@@ -786,8 +830,8 @@ export function buildTextures(gl, onStep = () => {}) {
   sprites[SPRITE.WATER] = radial(64, [[0, 'rgba(200,235,255,0.9)'], [1, 'rgba(140,200,235,0)']]);
 
   onStep('Uploading to the GPU…', 0.8);
-  t.terrain = uploadArray(gl, terrain, 256, { aniso: 4 });
-  t.materials = uploadArray(gl, materials, 128, { aniso: 2 });
+  t.terrain = uploadArray(gl, terrain, 256, { aniso: 4, name: 'terrain' });
+  t.materials = uploadArray(gl, materials, 128, { aniso: 2, name: 'mat' });
   t.sprites = uploadArray(gl, sprites, 128, { aniso: 1 });
   t.waterNormal = upload2D(gl, waterNormalMap(256), { aniso: 4 });
   t.clouds = upload2D(gl, cloudMap(256));
