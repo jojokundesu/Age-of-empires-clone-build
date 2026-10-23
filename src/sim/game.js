@@ -22,6 +22,77 @@ export const TEAM_ENEMY = 2;
 const RES_KEYS = ['food', 'wood', 'gold', 'stone'];
 const FOW = WORLD.fowCells;
 
+/* ============================================================
+   DECREES — the council's standing offers. Each one is a short,
+   decisive swing rather than a passive bonus, so they reward timing:
+   save favour for the push you actually want to make.
+   ============================================================ */
+const DECREE_LIST = [
+  {
+    id: 'harvest', name: 'Harvest Festival', icon: 'leaf', cost: 40, age: 0,
+    desc: 'All villagers gather 40% faster for 90 s.',
+    apply(g, st, team) {
+      g.addBuff(team, 'gather', 1.4, 90, 'Harvest Festival');
+      for (const u of g.units) {
+        if (!u.dead && u.team === team && u.type === 'villager') g.fx.glowPulse(u.x, u.y + 0.6, u.z, 0.5, 1.0, 0.6);
+      }
+    }
+  },
+  {
+    id: 'rally', name: 'War Rally', icon: 'sword', cost: 55, age: 1,
+    desc: 'Every soldier deals 30% more damage for 60 s.',
+    apply(g, st, team) {
+      g.addBuff(team, 'attack', 1.3, 60, 'War Rally');
+      for (const u of g.units) {
+        if (!u.dead && u.team === team && u.def.attack > 0) g.fx.sparks(u.x, u.y + 1.2, u.z, 3, [1, 0.75, 0.35]);
+      }
+    }
+  },
+  {
+    id: 'forced_march', name: 'Forced March', icon: 'boot', cost: 45, age: 1,
+    desc: 'Your army moves 35% faster for 50 s.',
+    apply(g, st, team) {
+      g.addBuff(team, 'speed', 1.35, 50, 'Forced March');
+    }
+  },
+  {
+    id: 'blessing', name: 'Field Blessing', icon: 'heart', cost: 60, age: 2,
+    desc: 'Heal every unit to full and grant +2 armour for 70 s.',
+    apply(g, st, team) {
+      let any = false;
+      for (const u of g.units) {
+        if (u.dead || u.team !== team) continue;
+        if (u.hp < u.maxHp) { u.heal(u.maxHp); any = true; }
+        g.fx.heal(u.x, u.y + 0.9, u.z, 2);
+      }
+      g.addBuff(team, 'armor', 2, 70, 'Field Blessing');
+      g.statsVersion++;
+      return any || true;
+    }
+  },
+  {
+    id: 'conscription', name: 'Conscription', icon: 'people', cost: 80, age: 2, once: true,
+    desc: 'Instantly raise 6 spearmen at your town centre.',
+    apply(g, st, team) {
+      const tc = g.buildings.find((b) => !b.dead && b.team === team && b.type === 'town_center');
+      if (!tc) return false;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2;
+        const u = g.spawnUnitRaw('spearman', team, tc.x + Math.cos(a) * 2.6, tc.z + Math.sin(a) * 2.6);
+        if (u) { u.state = STATE.IDLE; g.fx.dust(u.x, u.y, u.z, 4, 0.8); }
+      }
+      return true;
+    }
+  },
+  {
+    id: 'golden_age', name: 'Golden Age', icon: 'crown', cost: 120, age: 3, once: true,
+    desc: 'For 120 s: +20% damage, gathering and movement.',
+    apply(g, st, team) {
+      g.addBuff(team, 'all', 1.2, 120, 'Golden Age');
+    }
+  }
+];
+
 export class Game {
   constructor(opts) {
     this.world = opts.world;
@@ -78,6 +149,10 @@ export class Game {
         losses: 0,
         gathered: 0,
         trained: 0,
+        favor: 0,
+        favorRate: 1,
+        buffs: [],           // { kind, mul, time, name }
+        decreesUsed: {},
         resigned: false
       });
     }
@@ -100,6 +175,8 @@ export class Game {
     this.notifyQueue = [];
     this.wonderProgress = 0;
     this.elapsed = 0;
+    this.worldTime = 8.6;              // hour of the day, advanced by update()
+    this.dayLength = 900;              // real seconds for a full cycle
     this.alerts = [];
     this.unitLimit = 220;
     this.stats = { tickMs: 0, units: 0, buildings: 0 };
@@ -438,6 +515,7 @@ export class Game {
     if (civ === 'persians' && unit.type === 'villager') rate *= 1.05;
     if (team !== TEAM_PLAYER) rate *= this.difficulty.gather;
     if (this.difficultyKey === 'sandbox') rate *= 1.25;
+    rate *= this.buffMul(team, 'gather');
     return rate;
   }
 
@@ -738,7 +816,95 @@ export class Game {
 
   unitSpeedMul(unit) {
     // packed formation cohesion: slight slowdown when very close to allies
-    return 1;
+    return this.buffMul(unit.team, 'speed');
+  }
+
+  /* ==========================================================
+     IMPERIAL DECREES (favour)
+     ========================================================== */
+  buffMul(team, kind) {
+    const st = this.teams.get(team);
+    if (!st || !st.buffs || !st.buffs.length) return 1;
+    let m = 1;
+    for (let i = 0; i < st.buffs.length; i++) {
+      const b = st.buffs[i];
+      if (b.kind === kind) {
+        m *= b.mul;
+        continue;
+      }
+      // a golden age lifts every multiplier a little
+      if (b.kind === 'all') m *= 1 + (b.mul - 1) * 0.6;
+    }
+    return m;
+  }
+
+  /** The council's standing offers. Cheap data so the HUD can list them. */
+  get decrees() { return DECREE_LIST; }
+
+  activateDecree(team, id) {
+    const st = this.teams.get(team);
+    const def = DECREE_LIST.find((d) => d.id === id);
+    if (!st || !def) return { ok: false, reason: 'Unknown decree' };
+    if (st.favor < def.cost) return { ok: false, reason: `Needs ${def.cost} favour` };
+    if (def.age !== undefined && st.age < def.age) return { ok: false, reason: 'Requires a later age' };
+    if (def.once && st.decreesUsed[id]) return { ok: false, reason: 'Already proclaimed' };
+    st.favor -= def.cost;
+    st.decreesUsed[id] = (st.decreesUsed[id] || 0) + 1;
+    const result = def.apply(this, st, team);
+    if (result === false) {
+      st.favor += def.cost;                 // refund a no-op
+      return { ok: false, reason: 'Nothing to affect' };
+    }
+    if (team === TEAM_PLAYER) {
+      this.notify(def.name + ': ' + def.desc, 'good');
+      this.sound.play('horn');
+    }
+    this.onEvent('decree', { team, id });
+    return { ok: true, msg: def.name };
+  }
+
+  addBuff(team, kind, mul, time, name) {
+    const st = this.teams.get(team);
+    if (!st) return;
+    const existing = st.buffs.find((b) => b.kind === kind && b.name === name);
+    if (existing) existing.time = Math.max(existing.time, time);
+    else st.buffs.push({ kind, mul, time, name });
+    this.statsVersion++;
+  }
+
+  /* ==========================================================
+     MARKET — the classic 100-resource trade with a moving price
+     ========================================================== */
+  marketPrice(kind, amount = 100) {
+    if (!this._marketBase) this._marketBase = { food: 100, wood: 100, gold: 100, stone: 130 };
+    const base = this._marketBase[kind] ?? 100;
+    const st = this.teams.get(TEAM_PLAYER);
+    const stock = st ? st.res[kind] : 0;
+    // scarcity: the price climbs when the store is nearly empty
+    const scarcity = 1 + Math.max(0, 250 - stock) / 420;
+    return Math.round(base * scarcity * (amount / 100) * 1.0);
+  }
+
+  marketTrade(team, kind, amount = 100, isBuy = true) {
+    const st = this.teams.get(team);
+    if (!st) return { ok: false, reason: 'No such team' };
+    if (!RES_KEYS.includes(kind)) return { ok: false, reason: 'Unknown good' };
+    const market = this.buildings.some((b) => !b.dead && b.team === team && b.type === 'market' && b.buildProgress >= 1);
+    if (!market) return { ok: false, reason: 'Build a market first' };
+    amount = Math.max(100, Math.round(amount / 100) * 100);
+    const price = Math.max(1, Math.round(this.marketPrice(kind, amount) * (isBuy ? 1 : 0.72)));
+    if (isBuy) {
+      if (st.res.gold < price) return { ok: false, reason: 'Not enough gold' };
+      st.res.gold -= price;
+      st.res[kind] += amount;
+    } else {
+      if (kind === 'gold') return { ok: false, reason: 'Cannot sell gold for gold' };
+      if (st.res[kind] < amount) return { ok: false, reason: `Need ${amount} ${kind}` };
+      st.res[kind] -= amount;
+      st.res.gold += price;
+    }
+    if (team === TEAM_PLAYER) this.sound.play('coin');
+    return { ok: true, price, amount };
   }
 
   findWoundedAlly(unit, range) {
@@ -814,7 +980,11 @@ export class Game {
     const st = this.teams.get(unit.team);
     if (st) st.losses++;
     const killer = attacker && attacker.team !== undefined ? this.teams.get(attacker.team) : null;
-    if (killer) killer.kills++;
+    if (killer) {
+      killer.kills++;
+      // every fallen enemy is a small offering to the court
+      killer.favor = Math.min(400, killer.favor + 0.6);
+    }
     unit.deadT = 0;
     this.deadUnits.push(unit);
     this.popDirty = true;
@@ -946,6 +1116,34 @@ export class Game {
     for (let i = 0; i < res.length; i++) if (!res[i].dead) res[i].update(dt);
 
     this.projectiles.update(dt, this);
+
+    // time of day (drives the renderer's sun, the HUD clock and unit vision)
+    this.worldTime = (this.worldTime + (dt * 24) / this.dayLength) % 24;
+
+    // favour and temporary decree buffs
+    for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
+      const st = this.teams.get(team);
+      if (!st) continue;
+      // favour trickles in; shrines and monasteries speed it up, kills top it up
+      let rate = 0.5 + st.age * 0.18;
+      for (const b of this.buildings) {
+        if (b.dead || b.team !== team) continue;
+        if (b.type === 'outpost_shrine') rate += 0.35;
+        else if (b.type === 'monastery') rate += 0.25;
+      }
+      st.favor = Math.min(400, st.favor + rate * dt);
+      if (st.buffs.length) {
+        for (let i = st.buffs.length - 1; i >= 0; i--) {
+          const bf = st.buffs[i];
+          bf.time -= dt;
+          if (bf.time <= 0) {
+            st.buffs.splice(i, 1);
+            if (team === TEAM_PLAYER) this.notify(`${bf.name} has ended`, 'info');
+          }
+        }
+        this.statsVersion++;
+      }
+    }
 
     // age research
     for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {

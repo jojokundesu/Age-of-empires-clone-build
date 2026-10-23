@@ -186,6 +186,40 @@ check('tech / decrees / market modals', () => {
   ui.openDecrees(); menu.closeModal();
   ui.openMarket(); menu.closeModal();
 });
+check('a decree can be proclaimed from the council', () => {
+  const t = game.teams.get(1);
+  t.favor = 400;
+  ui.openDecrees();
+  const row = document.querySelector('#modalBody [data-decree]');
+  assert(row, 'no decree buttons rendered');
+  assert(!row.disabled, 'decree button disabled with 400 favour');
+  row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  assert(t.buffs.length > 0, 'no buff after proclaiming a decree');
+  assert(t.favor < 400, 'favour was not spent');
+  menu.closeModal();
+});
+check('market sells and buys at a moving price', () => {
+  const t = game.teams.get(1);
+  // stand up a finished market so trade is legal
+  const tc = game.buildings.find((b) => b.team === 1 && b.type === 'town_center');
+  const m = game.placeBuilding('market', 1, tc.x + 6, tc.z + 6, true);
+  const mart = Array.isArray(m) ? m[0] : m;
+  if (mart) mart.buildProgress = 1;
+  t.res.gold = 5000;
+  const before = t.res.food;
+  const buy = game.marketTrade(1, 'food', 200, true);
+  assert(buy.ok, 'buy failed: ' + buy.reason);
+  assert(t.res.food > before, 'food did not increase');
+  const before2 = t.res.gold;
+  const sell = game.marketTrade(1, 'wood', 200, false);
+  assert(sell.ok, 'sell failed: ' + sell.reason);
+  assert(t.res.gold > before2 - 5000, 'gold sanity');
+  ui.openMarket();
+  const buyBtn = document.querySelector('#modalBody [data-buy]');
+  assert(buyBtn, 'no buy buttons in the market modal');
+  buyBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  menu.closeModal();
+});
 check('age advance', () => {
   game.teams.get(1).res.food = 9000; game.teams.get(1).res.gold = 9000;
   ui.ageAdvance();

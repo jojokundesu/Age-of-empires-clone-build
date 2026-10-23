@@ -134,8 +134,39 @@ export class AIController {
     // ---------- age up ----------
     this.manageAges(st, age);
 
+    // ---------- court: market + decrees ----------
+    this.manageCourt(st, age);
+
     // ---------- military ----------
     this.manageMilitary(st, age);
+  }
+
+  /* ---------------- court ---------------- */
+  manageCourt(st, age) {
+    const g = this.game;
+    const my = this.myBuildings();
+    // the market turns a gold mountain into the food the army actually eats
+    if (st.res.gold > 650 && my.some((b) => b.type === 'market' && b.buildProgress >= 1)) {
+      const spare = Math.min(3, Math.floor((st.res.gold - 500) / 700));
+      for (let i = 0; i < spare; i++) {
+        if (st.res.food > 500) break;
+        if (!g.marketTrade(this.team, 'food', 200, true).ok) break;
+      }
+    }
+    // decrees are spent the moment they pay off
+    if (st.favor < 40) return;
+    const army = this.militaryUnits();
+    const wounded = army.filter((u) => u.hp < u.maxHp * 0.6).length;
+    const inCombat = army.some((u) => u.state === STATE.ATTACK || u.state === STATE.ATTACK_MOVE || (u.target && !u.target.dead));
+    const pick = [];
+    if (age >= 2 && wounded >= Math.max(3, army.length * 0.4)) pick.push('blessing');
+    if (age >= 1 && inCombat && army.length >= 8) pick.push('rally');
+    if (age >= 1 && inCombat && st.favor > 160) pick.push('forced_march');
+    if (st.res.food < 60 && st.res.gold > 700) pick.push('harvest');
+    if (age >= 2 && army.length < 3 && st.favor > 220) pick.push('conscription');
+    for (const id of pick) {
+      if (g.activateDecree(this.team, id).ok) break;
+    }
   }
 
   /* ---------------- economy ---------------- */
@@ -335,10 +366,11 @@ export class AIController {
     // villagers: the goal rises with the age, and every town centre trains
     const goal = age === 0 ? Math.min(16, target) : age === 1 ? Math.min(24, target) : target;
     if (villagerCount < goal && popFree > 1) {
+      const vcost = this.game.unitCost('villager', this.team);
       for (const b of this.myBuildings()) {
         if (!b.def.ageAdvance || b.buildProgress < 1) continue;
         if (b.queue.length >= 1) continue;
-        if (st.res.food < 52) break;
+        if (!this.affordableWithReserve(st, age, vcost)) break;
         if (b.queueUnit('villager')) break;
       }
     }
@@ -346,12 +378,12 @@ export class AIController {
     // military: keep a mix and never stall the barracks
     const armyTarget = Math.min(this.diff.maxArmy, 6 + Math.floor((g.time - 60) / 40));
     const armyCount = this.militaryUnits().length;
-    if (armyCount < armyTarget) {
+    if (armyCount < armyTarget && !this.ageReserve(st, age)) {
       const buildings = this.myBuildings().filter((b) => b.buildProgress >= 1 && b.queue.length < 1);
       for (const b of buildings) {
         if (b.type === 'town_center' || b.def.ageAdvance) continue;
         if (!b.def.trains || !b.def.trains.length) continue;
-        const pick = this.pickUnitFor(b);
+        const pick = this.pickUnitFor(b, age);
         if (pick) {
           b.queueUnit(pick);
           break;
@@ -360,7 +392,7 @@ export class AIController {
     }
   }
 
-  pickUnitFor(building) {
+  pickUnitFor(building, age = 0) {
     const st = this.game.teams.get(this.team);
     const options = building.def.trains.filter((t) => {
       if (isUnique(t) && this.civ.unique !== t) return false;
@@ -374,7 +406,7 @@ export class AIController {
     options.sort((a, b) => (counts.get(a) || 0) - (counts.get(b) || 0));
     for (const opt of options) {
       const cost = this.game.unitCost(opt, this.team);
-      if (this.game.canAfford(this.team, cost) && this.game.popFree(this.team) >= (UNIT_DEFS[opt].pop || 1)) return opt;
+      if (this.affordableWithReserve(st, age, cost) && this.game.popFree(this.team) >= (UNIT_DEFS[opt].pop || 1)) return opt;
     }
     return null;
   }
@@ -407,6 +439,46 @@ export class AIController {
   savingForAge(st, age) {
     if (st.ageResearch || age >= 3) return false;
     return this.countUnits('villager') >= ([6, 12, 18][age] ?? 6);
+  }
+
+  /** Resources that must stay in the bank so the pending age-up is not
+      starved by unit production.
+
+      Real players only "push" for an age once they are a good way there: while
+      far off they keep a small army flowing, and once they are close they stop
+      spending food/gold on anything else. Without that split an AI either never
+      ages up (spends every coin) or never fights (saves from minute two). */
+  ageReserve(st, age) {
+    if (!this.savingForAge(st, age)) return null;
+    const cost = AGES[age + 1] && AGES[age + 1].cost;
+    if (!cost) return null;
+    let readiness = 1;
+    for (const k of ['food', 'wood', 'gold', 'stone']) {
+      if (!cost[k]) continue;
+      readiness = Math.min(readiness, st.res[k] / cost[k]);
+    }
+    // a floor of troops is never sacrificed for an age-up
+    if (this.militaryUnits().length < 4) return null;
+    if (readiness < 0.55) return null;
+    const need = {};
+    let any = false;
+    for (const k of ['food', 'wood', 'gold', 'stone']) {
+      const short = Math.max(0, (cost[k] || 0) - st.res[k]);
+      if (short > 0) { need[k] = short; any = true; }
+    }
+    return any ? need : null;
+  }
+
+  /** True when paying `cost` still leaves the age-up reserve intact. */
+  affordableWithReserve(st, age, cost) {
+    const reserve = this.ageReserve(st, age);
+    if (!reserve) return true;
+    return this.game.canAfford(this.team, {
+      food: (cost.food || 0) + (reserve.food || 0),
+      wood: (cost.wood || 0) + (reserve.wood || 0),
+      gold: (cost.gold || 0) + (reserve.gold || 0),
+      stone: (cost.stone || 0) + (reserve.stone || 0)
+    });
   }
 
   manageAges(st, age) {

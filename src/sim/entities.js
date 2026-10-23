@@ -76,6 +76,10 @@ export class Entity {
       armor = kind === 'pierce' ? (this.def.pierceArmor || 0) : (this.def.armor || 0);
     }
     if (kind === 'siege') armor *= 0.35;
+    if (this.game && this.game.buffMul) {
+      const blessed = this.game.buffMul(this.team, 'armor');
+      if (blessed > 1) armor += blessed;
+    }
     amount = Math.max(1, amount - armor);
     this.hp = Math.max(0, this.hp - amount);
     this.hitFlash = Math.min(1, this.hitFlash + 0.55);
@@ -528,9 +532,10 @@ export class Unit extends Entity {
       if (this.type === 'villager') dmg += 2 + (g.hasTech(this.team, 'sappers') ? 13 : 0);
       if (this.def.siege) dmg = stats.attack + (bonus.building || 0);
     }
-    // aura
+    // aura and decree buffs
     const aura = g.auraBonusFor(this);
     dmg *= 1 + aura;
+    dmg *= g.buffMul(this.team, 'attack');
     const isRanged = this.def.range > 1.2 && def.attack > 0;
     if (isRanged && def.attack > 0) {
       g.fireProjectile(this, target, dmg, def.projectile || 'arrow');

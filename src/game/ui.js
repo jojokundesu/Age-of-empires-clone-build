@@ -877,6 +877,8 @@ export class UI {
     let msg = '';
     let kind = '';
     if (g.gameOver) return;
+    const buff = t.buffs && t.buffs.length ? t.buffs[t.buffs.length - 1] : null;
+    if (buff) msg = `${buff.name} · ${Math.ceil(buff.time)}s`;
     if (t.ageResearch) msg = `Advancing — ${Math.ceil(t.ageResearch.time)}s`;
     else if (t.popUsed >= t.popCap) { msg = 'Population capped — build houses'; kind = 'warn'; }
     else if (g.alerts && g.alerts.length) {
@@ -961,14 +963,17 @@ export class UI {
       ctx.fillRect(0, 0, W, H);
     }
     // fog overlay
-    if (g.showFog !== false && g.fow) {
-      const FOW = 96;
+    if (g.showFog !== false && g.fow && g.fow.length) {
+      // derive the grid from the buffer: a hard-coded size silently breaks the
+      // moment the simulation changes its fog resolution
+      const FOW = Math.round(Math.sqrt(g.fow.length));
       const step = W / FOW;
       for (let z = 0; z < FOW; z++) {
+        const row = z * FOW;
         for (let x = 0; x < FOW; x++) {
-          const v = g.fow[z * FOW + x];
+          const v = g.fow[row + x];
           if (v === 2) continue;
-          ctx.fillStyle = v === 1 ? 'rgba(6,10,14,0.42)' : 'rgba(4,7,10,0.94)';
+          ctx.fillStyle = v === 1 ? 'rgba(8,12,16,0.34)' : 'rgba(4,7,10,0.88)';
           ctx.fillRect(x * step, z * step, step + 0.6, step + 0.6);
         }
       }

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const SUITES = [
+  ['contract', 'tests/contract.test.mjs'],
   ['geo', 'tests/geo.test.mjs'],
   ['audio', 'tests/audio.test.mjs'],
   ['shaders', 'tests/shaders.test.mjs'],

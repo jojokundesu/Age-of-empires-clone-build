@@ -20,7 +20,7 @@ const STEP = 1 / 60;
 const SAVE_VERSION = 2;
 
 const DEFAULT_SETTINGS = {
-  quality: 'medium', music: true, sound: true, fog: true, shake: true, showBars: true
+  quality: 'medium', autoQuality: true, music: true, sound: true, fog: true, shake: true, showBars: true
 };
 
 function loadSettings() {
@@ -458,25 +458,37 @@ class App {
     if (this.renderer && this.renderer.ready) this.renderer.render(dt, g);
     if (this.ui) this.ui.update(dt);
 
-    // adaptive quality: only ever steps down automatically
-    this.frameTimes.push(dt * 1000);
+    // ---- adaptive quality -------------------------------------------------
+    // Median frame time over ~1.5 s, with hysteresis: step down when we miss
+    // 60 fps consistently, step back up when we have plenty of headroom. A
+    // single GC spike must never downgrade the game, and a downgrade must not
+    // be undone the moment the camera stops moving.
+    this.frameTimes.push(Math.min(200, dt * 1000));
     if (this.frameTimes.length > 90) this.frameTimes.shift();
     this.statsFrames++;
     if (this.statsFrames >= 30) {
       this.statsFrames = 0;
-      const avg = this.frameTimes.reduce((a, b) => a + b, 0) / Math.max(1, this.frameTimes.length);
-      this.fps = 1000 / Math.max(1, avg);
+      const sorted = this.frameTimes.slice().sort((a, b) => a - b);
+      const med = sorted[sorted.length >> 1] || 16.7;
+      this.fps = 1000 / Math.max(1, med);
       this.qualityCooldown -= 0.5;
-      if (this.qualityCooldown <= 0 && avg > 26 && this.frameTimes.length > 40) {
-        this.qualityCooldown = 3;
-        const order = ['ultra', 'high', 'medium', 'low'];
-        const idx = order.indexOf(this.renderer.qualityName);
-        if (idx >= 0 && idx < order.length - 1) {
-          const next = order[idx + 1];
+      if (this.settings.autoQuality !== false && this.renderer && this.renderer.ready && this.frameTimes.length > 45) {
+        const ladder = ['low', 'medium', 'high', 'ultra'];
+        const cur = this.renderer.qualityName;
+        const idx = ladder.indexOf(cur);
+        if (this.qualityCooldown <= 0 && med > 21 && idx > 0) {
+          const next = ladder[idx - 1];
+          this.qualityCooldown = 6;
           this.settings.quality = next;
           this.renderer.setQuality(next);
-          this.ui?.toast(`Graphics set to ${next} for smoother play`, 'warn');
-        } else if (this.renderer.scale > 0.62) {
+          this.ui?.toast(`Graphics set to ${next === 'medium' ? 'balanced' : next} for smoother play`, 'warn');
+        } else if (this.qualityCooldown <= 0 && med < 11.5 && idx >= 0 && idx < ladder.length - 1 && this.game.time > 20) {
+          const next = ladder[idx + 1];
+          this.qualityCooldown = 14;
+          this.settings.quality = next;
+          this.renderer.setQuality(next);
+        } else if (this.qualityCooldown <= 0 && med > 26 && this.renderer.scale > 0.62) {
+          this.qualityCooldown = 8;
           this.renderer.setRenderScale(this.renderer.scale - 0.08);
         }
       }

@@ -331,13 +331,14 @@ export class Menu {
       <div class="metricRow"><span>Music</span><button class="seg ${s.music ? 'active' : ''}" id="setMusic">${s.music ? 'On' : 'Off'}</button></div>
       <div class="metricRow"><span>Fog of war</span><button class="seg ${s.fog ? 'active' : ''}" id="setFog">${s.fog ? 'On' : 'Off'}</button></div>
       <div class="metricRow"><span>Screen shake</span><button class="seg ${s.shake ? 'active' : ''}" id="setShake">${s.shake ? 'On' : 'Off'}</button></div>
-      <p class="dim tiny" style="margin-top:10px">Low removes post-processing and drops the render scale — the safest choice on older phones.</p>
+      <p class="dim tiny" style="margin-top:10px">Picking a level turns off automatic scaling. <b>Balanced</b> is the default for phones; <b>Low</b> removes post-processing for older devices.</p>
     `);
     const body = this.el.modalBody;
     body.querySelector('#setQuality')?.addEventListener('click', (e) => {
       const b = e.target.closest('.seg');
       if (!b) return;
       s.quality = b.dataset.q;
+      s.autoQuality = false;      // an explicit choice wins over the auto-scaler
       for (const c of body.querySelectorAll('#setQuality .seg')) c.classList.toggle('active', c === b);
       this.onSettingsChanged(this.state);
       this._syncSummary();

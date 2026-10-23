@@ -7,6 +7,7 @@
        (no recursive raycasts, no per-frame allocations)
    ============================================================ */
 import { clamp } from '../core/math.js';
+import { STATE } from '../sim/entities.js';
 
 const TAP_MOVE_PX = 12;
 const TAP_TIME_MS = 460;
@@ -417,7 +418,7 @@ export class Input {
         if (u.kind !== 'unit' || !u.carry || u.carry.amount <= 0) continue;
         if (dropoff.includes(u.carry.kind)) {
           u.dropOff = building;
-          u.state = 5;                       // STATE.RETURN
+          u.state = STATE.RETURN;
           u.path = null;
           handled = true;
         }
