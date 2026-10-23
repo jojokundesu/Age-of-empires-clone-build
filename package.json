@@ -1,7 +1,7 @@
 {
   "name": "imperial-crown-3d",
   "private": true,
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Imperial Crown 3D \u2014 a hand-built, mobile-first real-time strategy engine for Android (Realme 9i tuned).",
   "type": "module",
   "scripts": {

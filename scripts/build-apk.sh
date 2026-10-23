@@ -18,6 +18,9 @@ BUILD_TOOLS="${BUILD_TOOLS:-$(ls -d "$SDK"/build-tools/* 2>/dev/null | sort -V |
 PLATFORM="${PLATFORM:-$(ls -d "$SDK"/platforms/android-* 2>/dev/null | sort -V | tail -1)}"
 AJAR="$PLATFORM/android.jar"
 VERSION="$(node -p "require('./package.json').version" 2>/dev/null || echo 2.0.0)"
+# versionCode must climb for every release or an upgrade install is refused.
+# 2.0.1 -> 20001; see android/app/src/main/AndroidManifest.xml (aapt2 --version-code wins).
+VERSION_CODE="$(node -p "const [a,b,c]=require('./package.json').version.split('.').map(Number); a*10000+b*100+(c||0)" 2>/dev/null || echo 20000)"
 NAME="imperial-crown-${VERSION}"
 OUT="$ROOT/build"
 APP="$ROOT/android/app/src/main"
@@ -60,7 +63,7 @@ echo "== 3/6 aapt2 compile + link =="
   --java "$OUT/gen" \
   --min-sdk-version 24 \
   --target-sdk-version 34 \
-  --version-code 20000 \
+  --version-code "$VERSION_CODE" \
   --version-name "$VERSION" \
   --auto-add-overlay
 
@@ -72,7 +75,10 @@ javac -encoding UTF-8 -source 8 -target 8 -nowarn \
   -d "$OUT/classes" @"$OUT/sources.txt" 2>&1 | grep -v "bootstrap class path" || true
 "$BUILD_TOOLS/d8" --release --min-api 24 --lib "$AJAR" \
   --output "$OUT/dex" $(find "$OUT/classes" -name '*.class')
-cd "$OUT/dex" && zip -q "$OUT/base.apk" classes.dex && cd "$ROOT"
+# Stored, not deflated: a compressed entry cannot be four-byte aligned, and
+# Android 11+ is strict about the layout of a package it will install. This is
+# what the Gradle plugin does for dex; hand-rolled builds usually forget it.
+cd "$OUT/dex" && zip -0 -q "$OUT/base.apk" classes.dex && cd "$ROOT"
 echo "   base.apk: $(du -h "$OUT/base.apk" | cut -f1)"
 
 echo
@@ -81,30 +87,55 @@ echo "== 5/6 zipalign =="
 
 echo
 echo "== 6/6 sign =="
-KS="$OUT/imperial-debug.keystore"
+# The signing key MUST be the same for every build. It used to be generated
+# fresh into build/ on every run, so every release came out under a different
+# certificate -- and a phone that already had the previous build answered the
+# next one with "app not installed, package appears to be invalid", because it
+# is a signature conflict, not a packaging error. android/imperial.p12 is
+# committed precisely so upgrades work (it is a demo key: fine for sideloading,
+# never for a store).
+KS="$ROOT/android/imperial.p12"
+KS_TYPE=PKCS12
+STOREPASS="${KEYSTORE_PASSWORD:-imperial}"
+KEYPASS="${KEY_PASSWORD:-$STOREPASS}"
+ALIAS="${KEY_ALIAS:-imperial}"
+
 if [ -n "${KEYSTORE_BASE64:-}" ]; then
+  KS="$OUT/imperial.p12"
   echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
-  STOREPASS="${KEYSTORE_PASSWORD:-imperial}"
-  KEYPASS="${KEY_PASSWORD:-$STOREPASS}"
-  ALIAS="${KEY_ALIAS:-imperial}"
-elif [ -f "$ROOT/android/imperial.keystore" ]; then
-  KS="$ROOT/android/imperial.keystore"
-  STOREPASS="${KEYSTORE_PASSWORD:-imperial}"
-  KEYPASS="${KEY_PASSWORD:-$STOREPASS}"
-  ALIAS="${KEY_ALIAS:-imperial}"
-else
-  echo "   generating a project keystore (fine for sideloading)"
-  keytool -genkeypair -v -keystore "$KS" -alias imperial \
-    -keyalg RSA -keysize 2048 -validity 10000 \
-    -storepass imperial -keypass imperial \
-    -dname "CN=Imperial Crown, OU=Arena, O=Arena, L=Internet, S=Web, C=IN" >/dev/null 2>&1
-  STOREPASS=imperial; KEYPASS=imperial; ALIAS=imperial
+elif [ ! -f "$KS" ]; then
+  if [ -f "$ROOT/android/imperial.keystore" ]; then
+    KS="$ROOT/android/imperial.keystore"; KS_TYPE=JKS
+  else
+    KS="$OUT/imperial.keystore"; KS_TYPE=JKS
+    echo "   WARNING: no project keystore -- generating a throwaway one."
+    echo "            Builds signed this way cannot upgrade each other."
+    keytool -genkeypair -v -keystore "$KS" -alias imperial \
+      -keyalg RSA -keysize 2048 -validity 10000 \
+      -storepass imperial -keypass imperial \
+      -dname "CN=Imperial Crown, OU=Arena, O=Arena, L=Internet, S=Web, C=IN" >/dev/null 2>&1
+  fi
 fi
-"$BUILD_TOOLS/apksigner" sign --ks "$KS" --ks-key-alias "$ALIAS" \
+
+# v1 *and* v2. v2 is what Android 7+ verifies; v1 is what some OEM installers
+# and package scanners still look at, and an APK carrying only v2 is the other
+# way to get "package appears to be invalid" on a Chinese-market ROM.
+"$BUILD_TOOLS/apksigner" sign --ks "$KS" --ks-type "$KS_TYPE" --ks-key-alias "$ALIAS" \
   --ks-pass "pass:$STOREPASS" --key-pass "pass:$KEYPASS" \
-  --min-sdk-version 24 --v2-signing-enabled true \
+  --min-sdk-version 24 \
+  --v1-signing-enabled true --v2-signing-enabled true \
   --out "$OUT/$NAME.apk" "$OUT/aligned.apk"
-"$BUILD_TOOLS/apksigner" verify --print-certs "$OUT/$NAME.apk" | head -4
+
+echo
+echo "== verify signature schemes and archive layout =="
+VERIFY="$("$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$OUT/$NAME.apk")"
+echo "$VERIFY" | grep -E "Verified using|Signer #1 certificate SHA-256" || true
+echo "$VERIFY" | grep -q "Verified using v1 scheme (JAR signing): true" || {
+  echo "ERROR: v1 signature missing"; exit 1; }
+echo "$VERIFY" | grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" || {
+  echo "ERROR: v2 signature missing -- Android 11+ refuses this APK"; exit 1; }
+"$BUILD_TOOLS/zipalign" -c -p 4 "$OUT/$NAME.apk" || {
+  echo "ERROR: the signed APK is not 4-byte aligned"; exit 1; }
 
 echo
 echo "== verify contents =="
@@ -124,7 +155,19 @@ if missing:
     sys.exit("MISSING from APK: " + ", ".join(missing))
 if len(www) < 3:
     sys.exit("web bundle is not inside the APK")
-print("   APK contents OK")
+# Android 11+ requires resources.arsc to be stored (not deflated) and aligned;
+# the dex is stored for the same reason. A deflated entry is the difference
+# between an APK that installs and "package appears to be invalid".
+bad = []
+for name in ('resources.arsc', 'classes.dex'):
+    info = z.getinfo(name)
+    if info.compress_type != zipfile.ZIP_STORED:
+        bad.append(f"{name} is compressed (method {info.compress_type})")
+    if info.header_offset % 4:
+        bad.append(f"{name} is not 4-byte aligned (offset {info.header_offset})")
+if bad:
+    sys.exit("bad package layout: " + "; ".join(bad))
+print("   resources.arsc + classes.dex: stored and aligned")
 PYVERIFY
 
 echo

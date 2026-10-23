@@ -180,7 +180,13 @@ jobs:
         run: |
           APK=$(ls build/imperial-crown-*.apk | head -1)
           echo "APK=$APK" >> "$GITHUB_ENV"
-          "$BUILD_TOOLS/apksigner" verify --verbose "$APK"
+          # every scheme a phone might ask for, and the exact certificate, so a
+          # key change (which breaks upgrade installs) cannot slip through
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee apk-verify.txt
+          grep -q "Verified using v1 scheme (JAR signing): true" apk-verify.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apk-verify.txt
+          grep "Signer #1 certificate SHA-256" apk-verify.txt
+          "$BUILD_TOOLS/zipalign" -c -p 4 "$APK"
           "$BUILD_TOOLS/aapt2" dump badging "$APK" | head -12
           cp "$APK" "imperial-crown.apk"
           ls -lh imperial-crown.apk
