@@ -301,10 +301,15 @@ export class Game {
       const r = list[i];
       const node = new ResourceNode(this, r.type, r.x, r.z, r.amount, {
         resKind: r.resKind, radius: r.radius, scale: r.scale, variant: r.variant,
-        herd: r.herd, yOff: r.y, team: TEAM_NEUTRAL
+        herd: r.herd, team: TEAM_NEUTRAL
       });
       node.scale = r.scale;
       node.herd = !!r.herd;
+      /* One height, in one field. v2 mirrored the sampled terrain height into
+         both `y` and `yOff`, and the renderer adds the two -- so every tree,
+         rock and deer on the island floated at twice its ground height (a
+         herd on the 40 m hill hung 40 m in the sky). `yOff` stays for the
+         few decor props that really do want a lift above their cell. */
       node.y = r.y;
       node.facing = (i * 2.399) % 6.283;
       this.resources.push(node);
@@ -706,6 +711,31 @@ export class Game {
       if (gap > bestGap) { bestGap = gap; best = k; }
     }
     return best;
+  }
+
+  /**
+   * Remove every unit and building *cleanly*: footprints un-marked, spatial
+   * hashes emptied, selection cleared. Loading a save used to do
+   * `units.length = 0` on the arrays, which left every building's nav
+   * footprint counted in navBuild forever -- each load stacked another +1 on
+   * the same cells, so after two or three loads the whole town centre was
+   * permanently unwalkable and villagers piled up at its edge.
+   */
+  clearEntities() {
+    for (const b of this.buildings) if (!b.dead) this.markBuildingFootprint(b, false);
+    this.buildings.length = 0;
+    this.units.length = 0;
+    this.spatial.clear();
+    this.buildingSpatial.clear();
+    this.resourceSpatial.clear();
+    this.buildingSpatialDirty = true;
+    this.navBuild.fill(0);
+    this.navFinal.set(this.navTerrain);
+    this.navDirty = true;
+    this.selection.length = 0;
+    this.selectionSet.clear();
+    this.popDirty = true;
+    this.refreshNav();
   }
 
   addBuilding(b) {
@@ -1135,6 +1165,41 @@ export class Game {
      it was reading `.ok` off a boolean, so the age card was disabled for the
      whole match and no player could ever advance an age from the UI. */
   /* ==========================================================
+     save support
+     ========================================================== */
+  /** Everything about a side's empire that is not a unit or a building. */
+  exportTeam(team) {
+    const st = this.teams.get(team);
+    if (!st) return null;
+    return {
+      civ: st.civ, res: { ...st.res }, favor: st.favor,
+      age: st.age, techs: [...st.techs], gathered: st.gathered,
+      trained: st.trained, kills: st.kills, losses: st.losses,
+      buffs: (st.buffs || []).map((b) => ({ ...b }))
+    };
+  }
+
+  importTeam(team, data) {
+    const st = this.teams.get(team);
+    if (!st || !data) return;
+    if (data.civ) st.civ = data.civ;
+    if (data.res) Object.assign(st.res, data.res);
+    st.favor = data.favor || 0;
+    st.age = data.age || 0;
+    st.techs = new Set(data.techs || []);
+    st.gathered = data.gathered || 0;
+    st.trained = data.trained || 0;
+    st.kills = data.kills || 0;
+    st.losses = data.losses || 0;
+    st.buffs = (data.buffs || []).filter((b) => b && b.time > 0);
+    st.ageResearch = null;
+    this.statsVersion++;
+    this._costCache.clear();
+    this._buildCostCache.clear();
+    this.popDirty = true;
+  }
+
+  /* ==========================================================
      wonder race
      ========================================================== */
   /** Seconds a team's standing wonder has held, 0 if none stands. */
@@ -1362,13 +1427,12 @@ export class Game {
     if (this.selection.length) this.selection = this.selection.filter((e) => !e.dead);
   }
 
-  /* The starting valley is known ground, not a circle of torchlight. A fresh
-     match used to reveal a ~22 m disc, which read as a spotlight parked on a
-     dark field; the settlement has been here for years, so its people know the
-     near country. The edge is noisy and irregular, and it stops well short of
-     the enemy base -- exploring is still the opening move. 68 m also keeps
-     the boundary off-screen at the default camera distance, so the town does
-     not sit inside a visible lit ellipse. */
+  /* The starting valley is known ground, not a circle of torchlight. v2
+     revealed a ~22 m disc, which read as a spotlight parked on a dark field;
+     v3's 96 m keeps the boundary off the top of the screen at the default 46 m
+     camera (the visible ground there is 150-250 m away), so the town never
+     sits inside a lit ellipse. It still stops well short of the enemy base, so
+     exploring is the opening move. The edge is intentionally ragged. */
   surveyHome(base) {
     const fow = this.fow;
     const size = WORLD.fowCell;
@@ -1383,7 +1447,7 @@ export class Game {
         // three cheap harmonics: a ragged, organic edge, identical every match
         const wob = Math.sin(a * 3.1 + 1.7) * 5.5 + Math.sin(a * 7.3 - 0.4) * 3.2
           + Math.sin(a * 13.7 + 2.2) * 1.8;
-        if (d < 68 + wob * 1.4) fow[cz * FOW + cx] = 1;
+        if (d < 96 + wob * 1.8) fow[cz * FOW + cx] = 1;
       }
     }
   }

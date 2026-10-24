@@ -226,6 +226,42 @@ await acheck('load restores the campaign', async () => {
   assert(Math.abs(t.res.wood - savedRes.wood) < 1, `wood ${t.res.wood} != ${savedRes.wood}`);
   assert(app.renderer.stats.drawCalls > 5, 'renderer stopped after load');
 });
+/* Loading a save must be *clean*: the previous match's buildings have to take
+   their navigation footprints with them. v2 truncated the entity arrays, so
+   every footprint stayed counted and each reload stacked another blocked layer
+   on the same cells -- after three loads the town centre was an island. */
+await acheck('two reloads do not poison the navigation grid', async () => {
+  const raf = (fn) => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf;
+  window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, quality: 'low' });
+  globalThis.requestAnimationFrame = () => 0;
+  window.requestAnimationFrame = () => 0;
+  const g = app.game;
+  const base = g.world.playerBase;
+  const baseline = g.navBuild.reduce((a, v) => a + v, 0);
+  for (let pass = 0; pass < 3; pass++) {
+    assert(app.saveMatch(), 'save failed');
+    const save = JSON.parse(window.localStorage.getItem('imperial-crown-save'));
+    const r = (fn) => setTimeout(() => fn(performance.now()), 0);
+    globalThis.requestAnimationFrame = r; window.requestAnimationFrame = r;
+    await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, load: save });
+    globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  }
+  const g2 = app.game;
+  const after = g2.navBuild.reduce((a, v) => a + v, 0);
+  assert(after === baseline, `blocked nav cells grew ${baseline} -> ${after} over three reloads`);
+  // and the town's own footprint is walkable again where it should be
+  const passable = g2.isPassable(g2.world.playerBase.x + 9, g2.world.playerBase.z + 9, { radius: 0.4, def: {} });
+  assert(passable, 'ground beside the town centre is permanently blocked');
+  // a villager dropped next to the town centre must be able to walk away
+  const v = g2.spawnUnitRaw('villager', 1, g2.world.playerBase.x + 9, g2.world.playerBase.z + 9);
+  g2.orderMove([v], g2.world.playerBase.x + 26, g2.world.playerBase.z + 9);
+  for (let i = 0; i < 240; i++) step();
+  assert(Math.hypot(v.x - (g2.world.playerBase.x + 9), v.z - (g2.world.playerBase.z + 9)) > 4,
+    'a villager could not walk away from the town centre after a reload');
+});
+
 check('end screen', () => {
   app.game.endGame(true, 'Test victory');
   for (let i = 0; i < 30; i++) step();

@@ -21,7 +21,7 @@ import { clamp } from './core/math.js';
    simulation steals from the frame. The renderer interpolates between the two
    most recent ticks, so nothing looks stepped. */
 const STEP = 1 / 30;
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 
 const DEFAULT_SETTINGS = {
   quality: 'medium', autoQuality: true, music: true, sound: true, fog: true, shake: true, showBars: true
@@ -245,8 +245,10 @@ class App {
     this.qualityCooldown = 2;
     this.saveTimer = 0;
     this.startTime = performance.now();
-    ui.toast(`${CIVS[game.civ].name} · ${DIFFICULTY[opts.difficulty]?.name || ''} · ${GAME_MODES[opts.mode]?.name || ''}`, 'gold');
-    setTimeout(() => ui.toast('Drag to pan · pinch to zoom · tap to command'), 2200);
+    /* One toast, not three. The match-start stack used to cover the town for
+       the first five seconds -- the exact seconds a new player spends working
+       out where they are. */
+    ui.toast(`${CIVS[game.civ].name} · ${DIFFICULTY[opts.difficulty]?.name || ''} · ${GAME_MODES[opts.mode]?.name || ''} — drag to pan, tap to command`, 'gold');
     this.audio.unlock();
     this.audio.play('horn');
     console.log(`[imperial] world + match built in ${(performance.now() - t0).toFixed(0)} ms`);
@@ -379,7 +381,6 @@ class App {
   saveMatch() {
     const g = this.game;
     if (!g) return false;
-    const t = g.teams.get(1);
     const data = {
       version: SAVE_VERSION,
       seed: g.world.seed,
@@ -388,12 +389,13 @@ class App {
       difficulty: g.difficultyKey,
       time: g.time,
       worldTime: g.worldTime,
-      res: { ...t.res },
-      favor: t.favor || 0,
-      age: t.age,
-      techs: [...t.techs],
+      /* Both sides. Saving only the player's economy meant a reload handed
+         the AI a brand-new Dark Age town while the player kept Castle Age --
+         a free win that also made the enemy look broken. */
+      teams: { 1: g.exportTeam(1), 2: g.exportTeam(2) },
+      wonder: [...g.wonderClocks.entries()],
       units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp)]),
-      buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress]),
+      buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
     };
     const ok = Menu.writeSave(data);
@@ -403,37 +405,45 @@ class App {
 
   applySave(game, save) {
     if (!save || save.version !== SAVE_VERSION) return;
-    const t = game.teams.get(1);
-    if (save.res) Object.assign(t.res, save.res);
-    t.favor = save.favor || 0;
-    t.age = save.age || 0;
-    if (save.techs) t.techs = new Set(save.techs);
+    /* Clean removal, not array truncation: footprints and spatial hashes have
+       to come out with the entities or the reloaded map is subtly poisoned. */
+    game.clearEntities();
     game.time = save.time || 0;
     game.elapsed = save.time || 0;
     game.worldTime = save.worldTime || 8.6;
-    game.units.length = 0;
-    game.buildings.length = 0;
-    for (const [type, team, x, z, hp, prog] of save.buildings || []) {
+
+    for (const team of [1, 2]) {
+      const t = save.teams?.[team];
+      if (t) game.importTeam(team, t);
+    }
+    game.wonderClocks = new Map((save.wonder || []).filter(([team]) => team === 1 || team === 2));
+
+    for (const [type, team, x, z, hp, prog, facing] of save.buildings || []) {
       if (team !== 1 && team !== 2) continue;   // neutral shrines regenerate with the world
-      const b = game.placeBuilding(type, team, x, z, { instant: true, free: true });
-      if (b) { b.hp = hp; b.maxHp = Math.max(b.maxHp, hp); b.buildProgress = prog ?? 1; }
+      const b = game.placeBuilding(type, team, x, z, { instant: true, free: true, facing });
+      if (b) {
+        b.hp = Math.min(b.maxHp, hp);
+        b.buildProgress = prog ?? 1;
+        if (b.buildProgress >= 1) game.onBuildingComplete(b);
+      }
     }
     for (const [type, team, x, z, hp] of save.units || []) {
       if (team !== 1 && team !== 2) continue;
       const u = game.spawnUnit(type, team, x, z);
-      if (u) { u.hp = hp; u.maxHp = Math.max(u.maxHp, hp); }
+      if (u) { u.maxHp = Math.max(u.maxHp, hp); u.hp = Math.min(u.maxHp, hp); }
     }
     if (save.resources) {
       const map = new Map();
-      for (const [type, x, z, amount, variant] of save.resources) map.set(`${Math.round(x)},${Math.round(z)},${type}`, amount);
+      for (const [type, x, z, amount] of save.resources) map.set(`${Math.round(x)},${Math.round(z)},${type}`, amount);
       for (const r of game.resources) {
         const k = `${Math.round(r.x)},${Math.round(r.z)},${r.type}`;
-        if (map.has(k)) r.amount = map.get(k);
+        if (map.has(k)) { r.amount = map.get(k); if (r.amount <= 0) { r.dead = true; r.deadT = 9; } }
       }
     }
-    game.statsVersion++;
-    game.recomputePop();
+    game.spawnUnit && game.recomputePop();
+    game.buildingSpatialDirty = true;
     game.refreshNav();
+    game.statsVersion++;
   }
 
   /* ================= frame loop ================= */
@@ -545,21 +555,25 @@ class App {
          brightness leaves one honest boundary -- the edge of the known world. */
       buf[i] = v === 2 ? 255 : v === 1 ? 200 : 0;
     }
-    // separable 3-tap blur: turns the blocky cell grid into a soft sight edge
-    for (let y = 0; y < size; y++) {
-      const row = y * size;
-      for (let x = 0; x < size; x++) {
-        const i = row + x;
-        const a = buf[i - (x > 0 ? 1 : 0)], b = buf[i], c = buf[i + (x < size - 1 ? 1 : 0)];
-        tmp[i] = (a + b + b + c) >> 2;
+    /* Two separable 3-tap blurs per axis = a 5-tap gaussian over ~24 m of
+       world, which is the difference between "a soft edge of the known world"
+       and "a spotlight parked on the town". 16 000 cells, twice a second. */
+    for (let pass = 0; pass < 2; pass++) {
+      for (let y = 0; y < size; y++) {
+        const row = y * size;
+        for (let x = 0; x < size; x++) {
+          const i = row + x;
+          const a = buf[i - (x > 0 ? 1 : 0)], b = buf[i], c = buf[i + (x < size - 1 ? 1 : 0)];
+          tmp[i] = (a + b + b + c) >> 2;
+        }
       }
-    }
-    for (let y = 0; y < size; y++) {
-      const row = y * size;
-      const up = (y > 0 ? y - 1 : y) * size, dn = (y < size - 1 ? y + 1 : y) * size;
-      for (let x = 0; x < size; x++) {
-        const a = tmp[up + x], b = tmp[row + x], c = tmp[dn + x];
-        buf[row + x] = (a + b + b + c) >> 2;
+      for (let y = 0; y < size; y++) {
+        const row = y * size;
+        const up = (y > 0 ? y - 1 : y) * size, dn = (y < size - 1 ? y + 1 : y) * size;
+        for (let x = 0; x < size; x++) {
+          const a = tmp[up + x], b = tmp[row + x], c = tmp[dn + x];
+          buf[row + x] = (a + b + b + c) >> 2;
+        }
       }
     }
     this.renderer.setFog(buf, size);

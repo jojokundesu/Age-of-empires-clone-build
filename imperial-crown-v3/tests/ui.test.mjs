@@ -95,11 +95,19 @@ check('settings modal', () => {
 });
 check('help modal', () => { menu.openHelp(); menu.closeModal(); });
 check('save round-trip', () => {
-  const data = { version: 2, seed: 5, res: { food: 100 } };
+  /* readSave is version-gated so a save from an older build cannot be loaded
+     into a newer simulation; the fixture has to carry the live version. */
+  const { SAVE_VERSION } = globalThis.__saveVersion || {};
+  const data = { version: SAVE_VERSION ?? 3, seed: 5, res: { food: 100 } };
   assert(Menu.writeSave(data), 'write failed');
   assert(Menu.readSave().seed === 5, 'read mismatch');
   Menu.clearSave();
   assert(Menu.readSave() === null, 'clear failed');
+});
+check('a save from an older build is rejected rather than half-loaded', () => {
+  Menu.writeSave({ version: 2, seed: 5, res: { food: 100 } });
+  assert(Menu.readSave() === null, 'a v2 save was accepted by a v3 build');
+  Menu.clearSave();
 });
 check('start fires', () => {
   document.getElementById('btnStart').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

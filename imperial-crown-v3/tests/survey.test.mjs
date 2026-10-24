@@ -33,9 +33,12 @@ const fresh = () => {
    not the edge of the valley the survey drew. */
 function radiusAt(g, base, ang) {
   let last = 0;
-  for (let d = 2; d < 90; d += 0.5) {
+  for (let d = 2; d < 132; d += 0.5) {
     const x = base.x + Math.cos(ang) * d;
     const z = base.z + Math.sin(ang) * d;
+    // the home base sits near a corner of the island; past the edge of the
+    // grid every sample clamps to the same cell, so stop there
+    if (Math.abs(x) > HALF - CELL || Math.abs(z) > HALF - CELL) break;
     const cx = Math.min(N - 1, Math.max(0, Math.floor((x + HALF) / CELL)));
     const cz = Math.min(N - 1, Math.max(0, Math.floor((z + HALF) / CELL)));
     if (g.fow[cz * N + cx]) last = d;
@@ -62,11 +65,12 @@ check('the home valley starts well explored, not as a torchlight disc', () => {
   };
   for (const v of g.fow) if (v) known++;
   const area = known * CELL * CELL;
-  // a 44 m disc is ~6000 m^2; the whole 512 m island is 262 000 m^2, so this
-  // is a village-sized clearing rather than the entire map
-  assert(area > 11000 && area < 24000, `known ground is ${Math.round(area)} m^2`);
-  assert(within(30) / within(70) > 0.14, 'the reveal is a thin ring, not a solid valley');
-  assert(within(60) > 0, 'nothing is known inside 60 m of the base');
+  /* A valley-sized clearing, not the map: v3 widened the reveal from 68 m to
+     96 m so the boundary sits beyond the top of the screen at the default
+     46 m camera. The whole 512 m island is ~262 000 m^2. */
+  assert(area > 24000 && area < 42000, `known ground is ${Math.round(area)} m^2`);
+  assert(within(30) / within(90) > 0.10, 'the reveal is a thin ring, not a solid valley');
+  assert(within(85) > 0, 'nothing is known inside 85 m of the base');
 });
 
 check('the edge of the known world is ragged, not a perfect circle', () => {
@@ -76,10 +80,10 @@ check('the edge of the known world is ragged, not a perfect circle', () => {
   for (let i = 0; i < 72; i++) rs.push(radiusAt(g, base, (i / 72) * Math.PI * 2));
   const mean = rs.reduce((a, b) => a + b, 0) / rs.length;
   const sd = Math.sqrt(rs.reduce((a, b) => a + (b - mean) ** 2, 0) / rs.length);
-  assert(mean > 58 && mean < 78, `mean reveal radius is ${mean.toFixed(1)} m`);
+  assert(mean > 86 && mean < 110, `mean reveal radius is ${mean.toFixed(1)} m`);
   assert(sd > 4, `reveal radius varies by only ${sd.toFixed(1)} m — that is a circle`);
-  assert(Math.min(...rs) > 48, `some directions reveal only ${Math.min(...rs).toFixed(1)} m`);
-  assert(Math.max(...rs) < 88, `some directions reveal ${Math.max(...rs).toFixed(1)} m`);
+  assert(Math.min(...rs) > 70, `some directions reveal only ${Math.min(...rs).toFixed(1)} m`);
+  assert(Math.max(...rs) < 120, `some directions reveal ${Math.max(...rs).toFixed(1)} m`);
 });
 
 check('the enemy base stays hidden until somebody walks there', () => {

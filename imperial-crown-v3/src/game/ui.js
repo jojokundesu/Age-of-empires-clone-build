@@ -663,7 +663,10 @@ export class UI {
     node.textContent = text;
     layer.appendChild(node);
     this.toasts.push({ node, t: 0, life: 2.6 });
-    while (layer.children.length > 4) layer.removeChild(layer.firstChild);
+    /* Two at a time. Four toasted messages stacked over the middle of the
+       play area, which is exactly where a build, a training click and a
+       population warning all land together. */
+    while (layer.children.length > 2) layer.removeChild(layer.firstChild);
   }
 
   floatText(x, y, z, text, kind = '') {

@@ -174,10 +174,18 @@ vec3 applyFoW(vec3 color, vec3 worldPos){
   /* Unexplored country reads as distance haze, not as a hole in the world.
      v2 painted it almost black, which from an RTS camera looks like the map
      ends in a void -- and it took a fifth of the screen on a wide shot. */
-  float dark = smoothstep(0.0, 0.66, vis);
-  vec3 unseen = mix(shown * mix(vec3(0.40, 0.44, 0.50), vec3(0.30, 0.34, 0.42), uNight),
-                    vec3(0.030, 0.038, 0.056), 0.38);
-  return mix(unseen, shown, dark);
+  /* Unknown country is a cool, desaturated veil at ~45 % brightness: you can
+     still read the shape of the hills and the line of the coast, so it looks
+     like distance haze rather than a hole in the world -- but it is clearly
+     not somewhere you have been. (v2 painted it near-black, which from a 46 m
+     camera reads as the map simply ending.) The transition is deliberately
+     wide, because a hard rim around the surveyed disc is what made the town
+     look like it was sitting under a spotlight. */
+  float l2 = dot(shown, vec3(0.299, 0.587, 0.114));
+  vec3 haze = mix(vec3(l2), shown, 0.34) * mix(vec3(0.46, 0.50, 0.58), vec3(0.34, 0.38, 0.47), uNight);
+  haze = mix(haze, uFogColor * (0.30 - uNight * 0.10), 0.30);
+  float dark = smoothstep(0.0, 0.82, vis);
+  return mix(haze, shown, dark);
 }
 `;
 

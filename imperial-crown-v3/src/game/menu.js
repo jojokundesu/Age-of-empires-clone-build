@@ -378,7 +378,7 @@ export class Menu {
       const raw = localStorage.getItem('imperial-crown-save');
       if (!raw) return null;
       const d = JSON.parse(raw);
-      return d && d.version === 2 ? d : null;
+      return d && d.version === 3 ? d : null;
     } catch (e) { return null; }
   }
   static clearSave() {
