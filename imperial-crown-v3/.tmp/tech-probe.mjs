@@ -1,0 +1,11 @@
+import { generateWorld } from '../src/sim/worldgen.js';
+import { Game } from '../src/sim/game.js';
+const g = new Game({ world: generateWorld(20261), civ: 'franks', mode: 'campaign', difficulty: 'standard' });
+g.start();
+const st = g.teams.get(1);
+st.res = { food: 3000, wood: 3000, gold: 3000, stone: 3000 };
+const b0 = g.world.playerBase;
+const camp = g.placeBuilding('lumber_camp', 1, b0.x - 16, b0.z + 10, { instant: true });
+console.log('camp', !!camp, camp && camp.type, 'research', camp && camp.def.research, 'progress', camp && camp.buildProgress);
+const t = g.techDef ? null : null;
+console.log('queueTech ->', camp && camp.queueTech('double_bit_axe'));
