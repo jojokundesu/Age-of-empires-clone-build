@@ -219,8 +219,10 @@ jobs:
             imperial-crown-v3/apk-sha256.txt
           retention-days: 90
 
+      # Publishing is deliberately narrow: main, an explicit v3 tag, or a manual
+      # dispatch that asks for it. A branch push only produces the artifact.
       - name: Publish release
-        if: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v3') || github.event_name == 'workflow_dispatch' && inputs.release) }}
+        if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v3') || (github.event_name == 'workflow_dispatch' && inputs.release) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -241,7 +243,35 @@ jobs:
             gh release edit "$TAG" --notes "$NOTES"
           else
             gh release create "$TAG" imperial-crown-3d.apk apk-sha256.txt \
+              --target "$GITHUB_SHA" \
               --title "Imperial Crown 3D — $TAG" --notes "$NOTES"
+          fi
+          gh release view "$TAG" --json assets,url -q '.url, .assets[].url'
+
+      # A moving pre-release for the branch builds, so the phone can install
+      # straight from a stable URL instead of digging an artifact zip out of a
+      # finished run:
+      #   .../releases/download/v3-dev-mobile/imperial-crown-3d.apk
+      # It is marked prerelease and never shadows the numbered release.
+      - name: Publish dev build
+        if: ${{ startsWith(github.ref, 'refs/heads/arena/') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v3-dev-mobile"
+          NOTES="Current v3 branch build — **not a stable release**.
+
+          * engine $(node -p "require('./package.json').version"), commit \`${GITHUB_SHA::7}\`
+          * built $(date -u +%Y-%m-%d) from \`${GITHUB_REF_NAME}\`
+          * install with \`adb install -r imperial-crown-3d.apk\`, or open the
+            .apk link on the phone and allow install from this browser."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" imperial-crown-3d.apk apk-sha256.txt --clobber
+            gh release edit "$TAG" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" imperial-crown-3d.apk apk-sha256.txt \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Imperial Crown 3D — v3 dev build" --notes "$NOTES"
           fi
           gh release view "$TAG" --json assets,url -q '.url, .assets[].url'
 
