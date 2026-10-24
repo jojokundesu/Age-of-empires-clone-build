@@ -3,15 +3,16 @@ package ai.arena.imperialcrown;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.pm.ActivityInfo;
+import android.content.pm.ApplicationInfo;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
-import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
@@ -32,8 +33,20 @@ import java.util.Map;
  * Assets are served from https://appassets.local/ rather than file:// so that
  * the game runs in a *secure origin*: localStorage (save games), pointer events,
  * WebAudio and WebGL2 all behave exactly as they do in Chrome, and there is no
- * same-origin/CORS weirdness.  Requests are answered straight from the APK's
+ * same-origin/CORS weirdness. Requests are answered straight from the APK's
  * assets folder by a WebViewClient override, so nothing touches the network.
+ *
+ * v3 additions, all of them aimed at a mid-range phone (Realme 9i, Adreno 610):
+ *
+ *   • the renderer process is raised to IMPORTANT priority, so Android stops
+ *     scheduling the game behind other work (the "one slow frame every second"
+ *     stutter that no amount of shader optimisation can remove);
+ *   • no scroll bars, no overscroll glow, no haptics: each of those is an extra
+ *     layer the compositor has to merge over a full-screen GL surface;
+ *   • the HTTP cache is left ON (the asset client supplies its own headers),
+ *     which takes a second of black off a cold start;
+ *   • WebView debugging is a debug-build feature only;
+ *   • a killed renderer reloads the menu instead of taking the game down.
  */
 public class MainActivity extends Activity {
 
@@ -59,13 +72,63 @@ public class MainActivity extends Activity {
 
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
+        setContentView(root);
+        createWebView();
+
+        /* Debug-only: enabling inspection in a release build makes Chromium
+           keep extra bookkeeping (and exposes the page to adb). */
+        boolean debuggable = (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+        WebView.setWebContentsDebuggingEnabled(debuggable);
+
+        if (savedInstanceState == null) {
+            web.loadUrl(START_URL);
+        } else {
+            web.restoreState(savedInstanceState);
+        }
+        hideSystemUi();
+    }
+
+    private void createWebView() {
         web = new WebView(this);
         web.setBackgroundColor(Color.BLACK);
         root.addView(web, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
-        setContentView(root);
 
-        WebSettings s = web.getSettings();
+        applySettings(web.getSettings());
+
+        /* The WebView renderer is a separate process. Without this it runs at
+           the default background priority and Android is free to schedule it
+           behind other work -- which shows up as one slow frame every second
+           or two, exactly the stutter this build exists to remove. */
+        if (Build.VERSION.SDK_INT >= 26) {
+            web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
+        }
+        // no scrollbars, no overscroll glow, no haptics: the page is a fixed
+        // full-screen canvas and each of those is an extra compositor layer
+        web.setVerticalScrollBarEnabled(false);
+        web.setHorizontalScrollBarEnabled(false);
+        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        web.setHapticFeedbackEnabled(false);
+
+        if (Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams lp = getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(lp);
+        }
+
+        web.setWebViewClient(new AssetClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage m) {
+                Log.d(TAG, m.message() + " @" + m.lineNumber());
+                return true;
+            }
+        });
+    }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    private void applySettings(WebSettings s) {
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);           // save games
         s.setDatabaseEnabled(true);
@@ -76,39 +139,22 @@ public class MainActivity extends Activity {
         s.setUseWideViewPort(true);
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
-        s.setCacheMode(WebSettings.LOAD_NO_CACHE);
-        s.setOffscreenPreRaster(true);
+        /* LOAD_DEFAULT, not LOAD_NO_CACHE: the asset client already answers
+           every request out of the APK and sets its own Cache-Control, so
+           disabling the cache only forces the two bundle files to be decoded
+           out of the zip again on every reload (a visible second of black on
+           a cold start). */
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setOffscreenPreRaster(false);
         if (Build.VERSION.SDK_INT >= 21) {
             s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         }
         if (Build.VERSION.SDK_INT >= 26) {
             s.setSafeBrowsingEnabled(false);
         }
-        // let the page use the whole screen including display cut-outs
-        if (Build.VERSION.SDK_INT >= 28) {
-            WindowManager.LayoutParams lp = getWindow().getAttributes();
-            lp.layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
-            getWindow().setAttributes(lp);
+        if (Build.VERSION.SDK_INT >= 33) {
+            s.setAlgorithmicDarkeningAllowed(false);
         }
-
-        WebView.setWebContentsDebuggingEnabled(true);
-
-        web.setWebViewClient(new AssetClient());
-        web.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public boolean onConsoleMessage(ConsoleMessage m) {
-                Log.d(TAG, m.message() + " @" + m.lineNumber());
-                return true;
-            }
-        });
-
-        if (savedInstanceState == null) {
-            web.loadUrl(START_URL);
-        } else {
-            web.restoreState(savedInstanceState);
-        }
-        hideSystemUi();
     }
 
     private void hideSystemUi() {
@@ -146,6 +192,15 @@ public class MainActivity extends Activity {
     }
 
     @Override
+    public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        // let the renderer drop its caches before Android kills the process
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            web.clearCache(false);
+        }
+    }
+
+    @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         web.saveState(outState);
@@ -167,14 +222,6 @@ public class MainActivity extends Activity {
                         finish();
                     }
                 });
-    }
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            return super.onKeyDown(keyCode, event);
-        }
-        return super.onKeyDown(keyCode, event);
     }
 
     /** Serves the bundled web build from https://appassets.local/ with correct MIME types. */
@@ -262,6 +309,25 @@ public class MainActivity extends Activity {
         @Override
         public void onPageFinished(WebView view, String url) {
             Log.d(TAG, "page loaded: " + url);
+        }
+
+        /**
+         * A mid-range phone will eventually kill the renderer under memory
+         * pressure. The default behaviour is to take the whole game down with
+         * it; instead, rebuild the view and reload so the player lands back on
+         * the menu with their saved campaign intact.
+         */
+        @Override
+        public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+            Log.e(TAG, "renderer gone (crashed=" + detail.didCrash() + ")");
+            try {
+                root.removeView(view);
+                view.destroy();
+            } catch (Exception ignored) {
+            }
+            createWebView();
+            web.loadUrl(START_URL);
+            return true;
         }
     }
 }

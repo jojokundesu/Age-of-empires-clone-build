@@ -99,7 +99,10 @@ vec3 townLights(vec3 p, vec3 N){
     vec3 L = uTownLight[i] - p;
     float d2 = dot(L, L);
     float flick = 0.86 + 0.14 * sin(uTime * (5.0 + float(i) * 1.7) + float(i) * 2.1);
-    float att = uTownLightI * flick / (1.0 + d2 * 0.013 + d2 * d2 * 0.00022);
+    /* Tighter falloff than v2's: a fire lights its own yard, not the quarter.
+       The wide version washed whole meadows in orange and left the walls of
+       the building that owned the fire just as dark as before. */
+    float att = uTownLightI * flick / (1.0 + d2 * 0.019 + d2 * d2 * 0.00042);
     sum += max(dot(N, normalize(L)), 0.0) * att;
   }
   return sum * uTownLightColor;
@@ -112,9 +115,9 @@ vec3 townGlow(vec3 p){
   for (int i = 0; i < 4; i++) {
     vec3 L = uTownLight[i] - p;
     float d2 = dot(L, L);
-    sum += 1.0 / (1.0 + d2 * 0.020 + d2 * d2 * 0.00030);
+    sum += 1.0 / (1.0 + d2 * 0.026 + d2 * d2 * 0.00055);
   }
-  return uTownLightColor * sum * uTownLightI * 0.075;
+  return uTownLightColor * sum * uTownLightI * 0.060;
 }
 `;
 
@@ -153,7 +156,7 @@ float fogOfWar(vec3 worldPos){
   vec2 uv = worldPos.xz / (uWorldHalf * 2.0) + 0.5;
   // the mask is 128x128 for the whole 512 m map; LOD 1 keeps the rim soft and
   // skips trilinear filtering on every fogged pixel of every material
-  return textureLod(uFogTex, uv, 1.0).r;
+  return textureLod(uFogTex, uv, 2.0).r;
 }
 vec3 applyFog(vec3 color, float dist){
   float f = 1.0 - exp(-dist * uFogDensity);
@@ -168,9 +171,12 @@ vec3 applyFoW(vec3 color, vec3 worldPos){
   float l = dot(color, vec3(0.299, 0.587, 0.114));
   vec3 memory = mix(vec3(l), color, 0.56) * vec3(0.82, 0.86, 0.95);
   vec3 shown = mix(color, memory, clamp((1.0 - vis) * 1.25, 0.0, 0.48));
-  float dark = smoothstep(0.0, 0.78, vis);
-  vec3 unseen = mix(shown * mix(vec3(0.19, 0.22, 0.26), vec3(0.12, 0.15, 0.21), uNight),
-                    vec3(0.008, 0.011, 0.019), 0.62);
+  /* Unexplored country reads as distance haze, not as a hole in the world.
+     v2 painted it almost black, which from an RTS camera looks like the map
+     ends in a void -- and it took a fifth of the screen on a wide shot. */
+  float dark = smoothstep(0.0, 0.66, vis);
+  vec3 unseen = mix(shown * mix(vec3(0.40, 0.44, 0.50), vec3(0.30, 0.34, 0.42), uNight),
+                    vec3(0.030, 0.038, 0.056), 0.38);
   return mix(unseen, shown, dark);
 }
 `;
@@ -388,7 +394,7 @@ void main(){
   vec3 ambient = mix(uGroundColor * 1.15, skyFill, N.y * 0.5 + 0.5) * (0.66 + 0.46 * N.y);
   ambient *= mix(1.0, ao, 0.85);
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.02 + ambient);
-  color += mix(albedo, vec3(0.58, 0.40, 0.22), 0.42) * townLights(vWorld, N) * 2.0;
+  color += mix(albedo, vec3(0.60, 0.44, 0.28), 0.34) * townLights(vWorld, N) * 1.55;
   color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5) * 1.1;
 
   // wet sheen near the waterline
@@ -594,14 +600,14 @@ void main(){
   if (layer == M_GLASS) {
     // window panes and brazier coals: warm, never clipped to white.
     float flicker = 0.86 + 0.14 * sin(uTime * 9.0 + vWorld.x * 2.3 + vWorld.z * 1.7);
-    emissive = vec3(1.0, 0.42, 0.10) * (0.14 + uNight * 2.3) * flicker
+    emissive = vec3(1.0, 0.46, 0.13) * (0.14 + uNight * 2.9) * flicker
              * (0.45 + 0.75 * texture(uNoise, vWorld.xz * 0.05).g);
   } else if (layer == M_GOLD) {
     emissive = vec3(1.0, 0.62, 0.22) * uNight * 0.22;
   }
 
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
-  color += mix(albedo, vec3(0.62, 0.44, 0.26), 0.55) * townLights(vWorld, N) * 2.4;
+  color += mix(albedo, vec3(0.64, 0.48, 0.30), 0.42) * townLights(vWorld, N) * 2.0;
   color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5) * 1.15;
   color += uSunColor * spec * sh * cl * 1.4;
   color += emissive;
@@ -738,9 +744,14 @@ void main(){
   float rl = max(dot(R, L), 0.0);
   float spec = pow340(rl) * 3.4 + p16(rl) * p8(rl) * 0.32;
   vec3 body = mix(uDeepColor, uShallowColor, shallow);
+  // a third, finer ripple layer: what sells "water" from 40 m up is that the
+  // horizon line never stays exactly straight
+  vec4 w3 = texture(uWater, vWorld.xz * 0.115 + uNormalOffset * 2.1);
   float sh = shadowFactor(vWorld, 1.0);
-  vec3 col = mix(body, sky * 0.95, clamp(0.16 + fres * 0.95, 0.0, 1.0));
-  col += uSunColor * spec * sh;
+  float glint = p16(max(dot(normalize(vec3((w3.r - 0.5) * 0.55 + nrm.x, 2.2, (w3.g - 0.5) * 0.55 + nrm.z)), L), 0.0));
+  vec3 col = mix(body, sky * 1.02, clamp(0.23 + fres * 1.02, 0.0, 1.0));
+  col += uShallowColor * shallow * 0.10;                 // light through the shallows
+  col += uSunColor * (spec + glint * 0.85) * sh;
 
   // shoreline foam: the tile's foam channel, broken up by the second layer
   float foamTile = w1.a * 0.65 + w2.a * 0.35 + w1.b * 0.20;

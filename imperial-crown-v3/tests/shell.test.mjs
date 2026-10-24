@@ -76,10 +76,46 @@ check(/imperial\.p12/.test(apkScript), 'apk uses the committed signing key (upgr
 check(/classes\.dex/.test(apkScript) && /-s "\$OUT\/dex\/classes\.dex"/.test(apkScript),
   'apk build fails when d8 produced no dex');
 const manifestXml = 'android/app/src/main/AndroidManifest.xml';
-if (existsSync(manifestXml)) {
-  const xml = readFileSync(manifestXml, 'utf8');
-  check(/android:hardwareAccelerated="true"/.test(xml), 'WebView activity is hardware accelerated');
-  check(/INTERNET|WAKE_LOCK|VIBRATE/.test(xml), 'permissions declared');
+const androidXml = existsSync(manifestXml) ? readFileSync(manifestXml, 'utf8') : '';
+if (androidXml) {
+  check(/android:hardwareAccelerated="true"/.test(androidXml), 'WebView activity is hardware accelerated');
+  check(/INTERNET|WAKE_LOCK|VIBRATE/.test(androidXml), 'permissions declared');
+  /* The manifest versionCode is what a package installer compares on upgrade.
+     If it does not climb with the package version the phone refuses the
+     install with "app not installed", which reads like a corrupted APK. */
+  const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
+  const [maj, min, patch] = pkg.version.split('.').map(Number);
+  const expected = maj * 10000 + min * 100 + (patch || 0);
+  const code = Number((androidXml.match(/android:versionCode="(\d+)"/) || [])[1]);
+  check(code >= expected, `manifest versionCode ${code} climbs with package ${pkg.version} (>= ${expected})`);
+  check(new RegExp(`android:versionName="${pkg.version}"`).test(androidXml),
+    `manifest versionName matches package.json (${pkg.version})`);
+}
+
+/* ---- the WebView shell itself -------------------------------------------
+   Every one of these is a frame-rate or an installability property, and every
+   one of them is invisible from the web side -- so they are asserted here. */
+const mainJava = 'android/app/src/main/java/ai/arena/imperialcrown/MainActivity.java';
+if (existsSync(mainJava)) {
+  const java = readFileSync(mainJava, 'utf8');
+  check(/setRendererPriorityPolicy\(WebView\.RENDERER_PRIORITY_IMPORTANT/.test(java),
+    'the WebView renderer process runs at IMPORTANT priority');
+  check(!/^\s*WebView\.setWebContentsDebuggingEnabled\(true\);\s*$/m.test(java),
+    'WebView debugging is not forced on in release builds');
+  check(/boolean debuggable/.test(java), 'WebView debugging is gated on FLAG_DEBUGGABLE');
+  check(/onRenderProcessGone/.test(java), 'a killed renderer reloads instead of taking the game down');
+  check(/OVER_SCROLL_NEVER/.test(java), 'no overscroll glow layer over the game');
+  check(/setCacheMode\(WebSettings\.LOAD_DEFAULT\)/.test(java), 'the asset cache is left on');
+  check(/setMediaPlaybackRequiresUserGesture\(false\)/.test(java), 'audio unlocks on the first tap');
+  /* Comments mention file:// on purpose (they explain why it is avoided), so
+     the assertions look at real statements only: the host constant, the url
+     the shell loads, and the asset path it opens. */
+  check(/String HOST = "https:\/\/appassets\.local\/"/.test(java), 'assets come from a secure (https) origin');
+  check(!/loadUrl\(\s*"file:/.test(java) && !/WebViewAssetLoader|file:\/\/android_asset/.test(java),
+    'the shell never loads a file:// url');
+  check(/getAssets\(\)\.open\("www\/"/.test(java), 'the shell serves the bundle from assets/www/');
+  // no blocking calls on the UI thread
+  check(!/Thread\.sleep|strictmode/i.test(java), 'no blocking sleeps in the shell');
 }
 
 /* Nothing may be left referenced from a public directory that vite does not

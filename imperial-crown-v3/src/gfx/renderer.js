@@ -148,7 +148,7 @@ export class Renderer {
     this.townLight = new Float32Array(12);
     this.townLightY = new Float32Array(4);
     this.townLightI = 0;
-    this.townLightColor = new Float32Array([2.30, 1.30, 0.58]);
+    this.townLightColor = new Float32Array([1.55, 0.90, 0.42]);
     this.fogTexture = null;
     this.fogEnabled = false;
     this.playerTeam = 1;
@@ -1180,8 +1180,8 @@ export class Renderer {
     s.tex('uWater', this.textures.water, gl.TEXTURE_2D);
     s.tex('uHeightMap', this.heightTex || this.textures.noise, gl.TEXTURE_2D);
     s.v2('uNormalOffset', this.time * 0.018, this.time * 0.011);
-    s.v3('uShallowColor', 0.20, 0.44, 0.40);
-    s.v3('uDeepColor', 0.03, 0.09, 0.14);
+    s.v3('uShallowColor', 0.24, 0.53, 0.48);
+    s.v3('uDeepColor', 0.05, 0.13, 0.19);
     s.v3('uZenithColor', this.zenith[0], this.zenith[1], this.zenith[2]);
     s.v3('uHorizonColor', this.horizon[0], this.horizon[1], this.horizon[2]);
     gl.depthMask(false);
