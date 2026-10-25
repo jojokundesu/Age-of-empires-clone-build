@@ -21,6 +21,7 @@ const SUITES = [
   ['input', 'tests/input.test.mjs'],
   ['pacing', 'tests/pacing.test.mjs'],
   ['ai', 'tests/ai.test.mjs', '240'],
+  ['logistics', 'tests/logistics.mjs'],
   ['hud', 'tests/ui.test.mjs'],
   ['application', 'tests/app.test.mjs'],
   ['bundle', 'tests/dist.test.mjs', true]

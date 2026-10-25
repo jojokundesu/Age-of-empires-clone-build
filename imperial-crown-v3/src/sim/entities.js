@@ -62,6 +62,12 @@ export class Entity {
     this.height = 1.8;
     this.lastAttacker = null;
     this.lastAttackTime = -99;
+    /* Measured velocities, for aim-leading and for the renderer. They are
+       filled in by Game.update, but an entity that appears *during* a tick
+       (a trained unit walking out of its queue) is never visited by that
+       loop, and read as undefined until the next one. */
+    this.vx = 0;
+    this.vz = 0;
   }
   takeDamage(amount, attacker, kind = 'melee') {
     if (this.dead) return 0;
@@ -271,6 +277,13 @@ export class Unit extends Entity {
       this.targetPos = [destX, destZ];
       this.hopTarget = hop;
       this.arrived = false;
+      /* A best-effort path (the goal cell was unreachable, or the search hit
+         its node budget) ends short of where we asked to go. Callers that
+         need to *be* somewhere -- dropping a load, building, repairing --
+         must not treat "walked as far as I could" as arrival, or they re-ask
+         forever from the same spot. */
+      const tail = p[p.length - 1];
+      this.partialPath = !hop && Math.hypot(tail[0] - destX, tail[1] - destZ) > 2.5;
     } else if (pf.lastWasSkip) {
       // the pathfinder ran out of budget this tick: try again next tick
       this.path = null;
@@ -297,22 +310,74 @@ export class Unit extends Entity {
     this.setPath(x, z, force);
   }
 
+  /**
+   * "Am I close enough to use that building?" with a watchdog.
+   *
+   * Returns true when the unit is within `near` metres of the building's
+   * rectangle, *or* when it has spent 2.5 s within `near + 3` metres without
+   * getting closer -- a crowd, a wall or a doorway can hold a villager a
+   * couple of metres off its own town centre indefinitely, and standing there
+   * with a full load is a worse answer than handing the load over the fence.
+   *
+   * The timer counts since the distance last really improved, so unlike the
+   * old `stallT` check it cannot be reset by jitter or by a nudge from another
+   * unit.
+   */
+  _nearEnough(dt, b, near) {
+    const d = rectDist(this, b);
+    if (d < (this.nearBest ?? 1e9) - 0.25) { this.nearBest = d; this.nearT = 0; }
+    else this.nearT = (this.nearT || 0) + dt;
+    return d <= near || (this.nearT > 2.5 && d < near + 3.2);
+  }
+  _clearNear() { this.nearBest = 1e9; this.nearT = 0; }
+
   /** Walk to the nearest free edge of a building, never to its centre. */
   approachBuilding(b, pad = 1.2) {
-    edgePoint(this, b, pad, _edge);
-    this.moveTo(_edge[0], _edge[1], true);
-    if (this.path) return;
-    const half = (b.def?.size || 2) * 0.5 + pad * 1.1;
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const px = b.x + Math.cos(a) * half;
-      const pz = b.z + Math.sin(a) * half;
-      if (this.game.isPassable(px, pz, this)) {
+    const g = this.game;
+    /* Three pads, nearest side first. A town centre with a house and a farm
+       pushed against it has sides whose "1.2 m outside the wall" point is
+       inside the neighbour's footprint; the old code then asked for a path to
+       a blocked cell, got a short best-effort path, walked it, asked again,
+       and looped there forever (a villager jiggling by its own town centre
+       with a full load and never depositing). Widening the ring until a
+       genuinely free, genuinely reachable point is found fixes the cause; the
+       caller's progress timer handles whatever is left. */
+    /* A point can be perfectly walkable and still be *inside a blocked nav
+       cell*: the grid is 2 m, so a 5.8 m town centre stamps 8 m of it, and a
+       "1.0 m outside the wall" point lands in a cell the pathfinder refuses.
+       Asking for a path there returns a best-effort path that stops a couple
+       of metres short, which is how villagers ended up circling their own
+       drop-off with a full load. Every candidate is now checked against both
+       the walk test and the nav cell. */
+    const pf = g.pathFinder;
+    const free = (x, z) => {
+      if (!g.isPassable(x, z, this)) return false;
+      if (!pf) return true;
+      const [cx, cz] = pf.worldToCell(x, z);
+      return !pf.isBlocked(cx, cz);
+    };
+    for (let k = 0; k < 3; k++) {
+      const p = pad + 0.5 + k * 0.8;
+      edgePoint(this, b, p, _edge);
+      if (free(_edge[0], _edge[1])) {
+        this.moveTo(_edge[0], _edge[1], true);
+        if (this.path) return;
+      }
+      const half = (b.def?.size || 2) * 0.5 + p;
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + k * 0.4;
+        const px = b.x + Math.cos(a) * half;
+        const pz = b.z + Math.sin(a) * half;
+        if (!free(px, pz)) continue;
         this.moveTo(px, pz, true);
         if (this.path) return;
       }
     }
-    this.moveTo(b.x, b.z, true);
+    /* Nothing around the building is reachable. Aim at the wall anyway so the
+       unit closes the distance instead of standing still; the callers' own
+       "close enough, just do it" rules take over from there. */
+    edgePoint(this, b, 0.2, _edge);
+    this.moveTo(_edge[0], _edge[1], true);
   }
 
   stop() {
@@ -665,8 +730,17 @@ export class Unit extends Entity {
       return;
     }
     const d = rectDist(this, drop);
-    // stuck guard: if we are jammed near the drop-off, deliver anyway
-    if (d > 2.6 && !(this.stallT > 0.85 && d < 6.0)) {
+    /* Two ways out of a jammed approach, because either one alone can be
+       fooled:
+         - progress: the distance stopped improving for 2.5 s (a crowd, a
+           blocked doorway);
+         - patience:  this villager has been carrying this load for 6 s while
+           inside 14 m of the drop-off. If a building cluster has grown around
+           the drop-off, the closest point it can actually stand on may be
+           eight metres away -- and no excuse is worth a villager holding wood
+           forever.                                                        */
+    this.returnT = (this.returnT || 0) + dt;
+    if (d > 2.6 && !this._nearEnough(dt, drop, 2.6) && !(this.returnT > 6 && d < 14)) {
       this.repathTimer -= dt;
       if (!this.path || this.repathTimer <= 0) {
         this.repathTimer = 3.0;
@@ -678,6 +752,8 @@ export class Unit extends Entity {
     this.moving = false;
     this.path = null;
     this.stallT = 0;
+    this._clearNear();
+    this.returnT = 0;
     this.desiredFacing = Math.atan2(drop.x - this.x, drop.z - this.z);
     g.deposit(this, this.carry.kind, this.carry.amount);
     this.turnIn();
@@ -718,26 +794,26 @@ export class Unit extends Entity {
       this.state = STATE.IDLE;
       return;
     }
-    const d = rectDist(this, target);
-    if (d > 2.0 && !(this.stallT > 0.85 && d < 4.5)) {
+    if (!this._nearEnough(dt, target, 2.0)) {
       this.repathTimer -= dt;
       if (!this.path || this.repathTimer <= 0) {
         this.repathTimer = 3.0;
         this.approachBuilding(target, 1.0);
       }
       if (this.targetPos) this.stepMovement(dt, stats);
-      if (this.stallT > 4.0) { this.buildTarget = null; this.state = STATE.IDLE; this.stallT = 0; }
       return;
     }
     this.moving = false;
     this.path = null;
     this.stallT = 0;
+    this._clearNear();
     this.desiredFacing = Math.atan2(target.x - this.x, target.z - this.z);
     target.addBuilder(this, dt);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 7) * 0.5 + 0.35);
     if (Math.random() < dt * 2.2) g.fx.dust(target.x + randRange(-1, 1), target.y + 0.2, target.z + randRange(-1, 1), 1, 0.8);
     if (target.buildProgress >= 1) {
       this.buildTarget = null;
+      this._clearNear();
       this.state = STATE.IDLE;
     }
   }
@@ -750,8 +826,7 @@ export class Unit extends Entity {
       this.state = STATE.IDLE;
       return;
     }
-    const d = rectDist(this, target);
-    if (d > 1.3) {
+    if (!this._nearEnough(dt, target, 1.3)) {
       this.repathTimer -= dt;
       if (!this.path || this.repathTimer <= 0) {
         this.repathTimer = 3.0;
