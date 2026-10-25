@@ -1,8 +1,8 @@
 {
-  "name": "imperial-crown-3d-v3",
+  "name": "imperial-crown-3d-v4",
   "private": true,
-  "version": "3.0.0",
-  "description": "Imperial Crown 3D v3 — a mobile-first real-time strategy engine rebuilt for smooth 60 fps on an Adreno 610 (Realme 9i).",
+  "version": "4.0.0",
+  "description": "Imperial Crown 3D v4 \u2014 a mobile-first real-time strategy engine rebuilt for smooth 60 fps on an Adreno 610 (Realme 9i).",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5273",
