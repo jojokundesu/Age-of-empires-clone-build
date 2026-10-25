@@ -49,22 +49,26 @@ export const QUALITY = {
   low: {
     name: 'Low', shadowSize: 512, shadows: true, resolution: 0.72, maxDpr: 1.25,
     particleCap: 260, propDistance: 105, water: true, post: true, foliage: 0.5,
-    unitCull: 84, buildingCull: 160, sharpen: 0, shadowHz: 20, adaptive: true
+    unitCull: 84, buildingCull: 160, sharpen: 0, shadowHz: 20, adaptive: true,
+    cloudStrength: 0
   },
   medium: {
     name: 'Balanced', shadowSize: 1024, shadows: true, resolution: 0.9, maxDpr: 1.5,
     particleCap: 420, propDistance: 132, water: true, post: true, foliage: 0.8,
-    unitCull: 100, buildingCull: 190, sharpen: 0.18, shadowHz: 30, adaptive: true
+    unitCull: 100, buildingCull: 190, sharpen: 0.18, shadowHz: 30, adaptive: true,
+    cloudStrength: 0.06
   },
   high: {
     name: 'High', shadowSize: 1536, shadows: true, resolution: 1.0, maxDpr: 2.0,
     particleCap: 620, propDistance: 165, water: true, post: true, foliage: 1.0,
-    unitCull: 120, buildingCull: 230, sharpen: 0.28, shadowHz: 30, adaptive: true
+    unitCull: 120, buildingCull: 230, sharpen: 0.28, shadowHz: 30, adaptive: true,
+    cloudStrength: 0.085
   },
   ultra: {
     name: 'Ultra', shadowSize: 2048, shadows: true, resolution: 1.0, maxDpr: 2.0,
     particleCap: 900, propDistance: 200, water: true, post: true, foliage: 1.0,
-    unitCull: 140, buildingCull: 260, sharpen: 0.34, shadowHz: 60, adaptive: false
+    unitCull: 140, buildingCull: 260, sharpen: 0.34, shadowHz: 60, adaptive: false,
+    cloudStrength: 0.10
   }
 };
 
@@ -131,6 +135,7 @@ export class Renderer {
     this.horizon = new Float32Array([0.7, 0.76, 0.8]);
     this.cloudOffset = new Float32Array([0, 0]);
     this.cloudCover = 0.5;
+    this.cloudStrength = QUALITY[this.qualityName]?.cloudStrength ?? 0.085;
     this.starAmount = 0;
     this.moonAmount = 0;
     this.moonDir = new Float32Array([0.3, 0.62, -0.72]);
@@ -325,6 +330,7 @@ export class Renderer {
     if (!QUALITY[name] || name === this.qualityName) return;
     this.qualityName = name;
     this.quality = QUALITY[name];
+    if (this.quality.cloudStrength !== undefined) this.cloudStrength = this.quality.cloudStrength;
     this._createShadowTarget(this.quality.shadowSize);
     this.adaptiveScale = 1;
     this.renderW = 0;
@@ -827,6 +833,9 @@ export class Renderer {
     s.f('uTime', this.time);
     s.f('uNight', this.night);
     s.v2('uCloudOffset', this.cloudOffset[0], this.cloudOffset[1]);
+    /* Cloud shading is a mood, not a mechanic: on the lowest tier it is gone
+       so a 512² fetch per terrain fragment disappears with it. */
+    s.f('uCloudStrength', this.cloudStrength);
     s.f('uFogEnabled', this.fogEnabled && this.fogTexture ? 1 : 0);
     s.v3('uTownLightColor', this.townLightColor[0], this.townLightColor[1], this.townLightColor[2]);
     s.f('uTownLightI', this.townLightI);

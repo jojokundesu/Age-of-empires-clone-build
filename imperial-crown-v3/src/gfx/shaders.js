@@ -76,6 +76,7 @@ uniform float uShadowTexel;
 uniform float uShadowStrength;
 uniform sampler2D uClouds;
 uniform vec2 uCloudOffset;
+uniform float uCloudStrength;
 uniform sampler2D uFogTex;
 uniform float uFogEnabled;
 uniform float uWorldHalf;
@@ -145,11 +146,23 @@ float shadowFactor(vec3 worldPos, float ndl){
   return mix(1.0, mix(1.0, s, inside), uShadowStrength);
 }
 float cloudShadow(vec2 worldXZ){
-  /* Broad, soft and shallow: a ~520 m drifting bank at 10 % strength.
-     Explicit LOD 3: the bank is 500 m across, everything finer is noise. */
+  /* A drifting bank, broad and shallow. Two things used to go wrong here and
+     both read as "somebody painted a wedge on the meadow":
+
+       - clamp(c * 1.2, 0, 1) saturates over every thick bank, so the shading
+         became a flat plate with a hard edge instead of a gradient;
+       - the whole term was 10 % of direct sun, and at dawn and dusk -- when
+         the sun barely touches the ground -- that 10 % was most of the light
+         the meadow had.
+
+     A smoothstep over the coverage gives a real falloff, and the strength is
+     an explicit uniform so the quality ladder (and the settings toggle) can
+     turn it down without a shader rebuild. */
+  if (uCloudStrength < 0.001) return 1.0;
   vec2 uv = worldXZ * 0.0017 + uCloudOffset;
-  float c = textureLod(uClouds, uv, 3.0).a;
-  return mix(1.0, 0.90, clamp(c * 1.2, 0.0, 1.0));
+  float c = textureLod(uClouds, uv, 3.5).a;
+  float k = smoothstep(0.28, 1.0, c);
+  return 1.0 - k * uCloudStrength;
 }
 float fogOfWar(vec3 worldPos){
   if (uFogEnabled < 0.5) return 1.0;

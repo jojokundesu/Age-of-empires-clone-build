@@ -331,6 +331,68 @@ class App {
     }
   }
 
+  /* ---------- device check -------------------------------------------
+     The phone is the only place that can answer "is it smooth", so the pause
+     menu measures it there: the real frame loop, six seconds, camera orbiting
+     (a still camera is too easy to render and reads as a fake 60). What comes
+     back is the median and the 95th-percentile frame time plus the quality the
+     adaptive controller settled on -- enough to tell "it is fine" from "it is
+     dropping every third frame". */
+  perfSnapshot() {
+    const ft = this.frameTimes;
+    if (!ft || ft.length < 8) return { fps: this.fps || 0, med: 16.7, p95: 16.7, n: 0 };
+    const s = ft.slice().sort((a, b) => a - b);
+    const med = s[s.length >> 1];
+    const p95 = s[Math.min(s.length - 1, Math.floor(s.length * 0.95))];
+    return { fps: 1000 / Math.max(1, med), med, p95, n: s.length };
+  }
+
+  perfLine() {
+    const r = this.renderer;
+    const p = this.perfSnapshot();
+    if (!r) return `${Math.round(p.fps)} fps`;
+    const pct = Math.round((r.quality.resolution || 1) * r.adaptiveScale * 100);
+    return `${Math.round(p.fps)} fps · p95 ${Math.round(p.p95)} ms · ${r.qualityName.toLowerCase()} ${pct}%`;
+  }
+
+  runDeviceCheck() {
+    if (this._check || !this.running) return;
+    const line = document.getElementById('perfLine');
+    if (line) line.textContent = 'Measuring… hold still for six seconds';
+    const cam = this.camera;
+    this._check = {
+      t0: performance.now(), n: 0, samples: [], line,
+      yaw: cam ? cam.desiredYaw : 0, pitch: cam ? cam.desiredPitch : 0.6
+    };
+  }
+
+  _pumpDeviceCheck(dt) {
+    const c = this._check;
+    c.n++;
+    if (c.n > 4) c.samples.push(Math.min(200, dt * 1000));
+    const el = (performance.now() - c.t0) / 1000;
+    const cam = this.camera;
+    if (cam) cam.desiredYaw = c.yaw + el * 0.55;
+    if (el < 6) return;
+    this._check = null;
+    if (cam) { cam.desiredYaw = c.yaw; cam.desiredPitch = c.pitch; }
+    const s = c.samples.sort((a, b) => a - b);
+    const med = s[s.length >> 1] || 16.7;
+    const p95 = s[Math.min(s.length - 1, Math.floor(s.length * 0.95))] || med;
+    const r = this.renderer;
+    const fps = Math.round(1000 / Math.max(1, med));
+    const pct = r ? Math.round((r.quality.resolution || 1) * r.adaptiveScale * 100) : 100;
+    /* Both numbers matter. A phone can hold a 60 fps *median* and still feel
+       broken if every fifth frame takes 60 ms, so the verdict is only "smooth"
+       when the median is under 18 ms AND the 95th percentile under 30. */
+    const verdict = (med <= 18 && p95 <= 30) ? 'smooth'
+      : (med <= 26 && p95 <= 60) ? 'playable' : 'slow';
+    const txt = `${fps} fps · p95 ${Math.round(p95)} ms · ${r ? r.qualityName.toLowerCase() : '?'} ${pct}% — ${verdict}`;
+    if (c.line) c.line.textContent = txt;
+    this.ui?.toast(`Device check: ${txt}`, verdict === 'slow' ? 'warn' : 'good');
+    this.deviceCheck = txt;
+  }
+
   openPause() {
     if (!this.running) return;
     this.paused = true;
@@ -341,14 +403,16 @@ class App {
       <div class="metricRow"><span>Army</span><b>${g.units.filter((u) => !u.dead && u.team === 1 && u.def.attack > 0 && !u.def.classes.includes('villager')).length}</b></div>
       <div class="metricRow"><span>Villagers</span><b>${g.units.filter((u) => !u.dead && u.team === 1 && u.type === 'villager').length}</b></div>
       <div class="metricRow"><span>Population</span><b>${t.popUsed} / ${t.popCap}</b></div>
+      <div class="metricRow"><span>This device</span><b id="perfLine">${this.perfLine()}</b></div>
       <div class="row" style="margin-top:10px;gap:6px;display:flex;flex-wrap:wrap">
         <button class="ghostBtn" data-act="resume"><svg class="ic"><use href="#i-play"/></svg> Resume</button>
         <button class="ghostBtn" data-act="save"><svg class="ic"><use href="#i-save"/></svg> Save</button>
         <button class="ghostBtn" data-act="settings"><svg class="ic"><use href="#i-cog"/></svg> Settings</button>
+        <button class="ghostBtn" data-act="check"><svg class="ic"><use href="#i-hourglass"/></svg> Check device</button>
         <button class="ghostBtn" data-act="restart"><svg class="ic"><use href="#i-load"/></svg> Restart</button>
         <button class="ghostBtn" data-act="quit"><svg class="ic"><use href="#i-home"/></svg> Quit</button>
       </div>`,
-      '<span class="dim tiny">Tip: the game auto-saves every minute.</span>');
+      '<span class="dim tiny">Tip: the game auto-saves every minute. “Check device” runs a six-second orbit and reports the frame rate — useful when reporting how the game runs on your phone.</span>');
     const body = document.getElementById('modalBody');
     body?.addEventListener('click', (e) => {
       const b = e.target.closest('[data-act]');
@@ -357,6 +421,7 @@ class App {
       if (act === 'resume') { this.paused = false; this.menu.closeModal(); }
       else if (act === 'save') { this.saveMatch(); this.ui?.toast('Campaign saved', 'good'); }
       else if (act === 'settings') this.menu.openSettings();
+      else if (act === 'check') this.runDeviceCheck();
       else if (act === 'restart') { this.menu.closeModal(); this.startMatch(this.matchOpts); }
       else if (act === 'quit') this.quitToMenu();
     });
@@ -482,6 +547,7 @@ class App {
       cam.update(dt);
     }
     if (this.input) this.input.update(dt);
+    if (this._check) this._pumpDeviceCheck(dt);
     if (cam) this.audio.setListener(cam.target[0], cam.target[2], cam.yaw);
     if (this.fx) this.fx.update(dt);
     if (g.fowDirty && this.renderer) {

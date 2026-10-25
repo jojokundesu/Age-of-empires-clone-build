@@ -1307,12 +1307,16 @@ export class Game {
 
     // units
     const units = this.units;
+    /* One reciprocal for the whole loop (it used to divide twice per unit, and
+       a caller passing dt = 0 turned every velocity into Infinity, which the
+       archers then used to lead their shots). */
+    const invDt = dt > 1e-6 ? 1 / dt : 0;
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
       const px = u.x, pz = u.z;
       u.update(dt);
-      u.vx = (u.x - px) / dt;
-      u.vz = (u.z - pz) / dt;
+      u.vx = (u.x - px) * invDt;
+      u.vz = (u.z - pz) * invDt;
     }
     // buildings
     const buildings = this.buildings;
