@@ -388,14 +388,29 @@ void main(){
   vec4 alb = texture(uAlbedo, vWorld.xz / 512.0 + 0.5);
   vec3 albedo = alb.rgb;
 
-  /* Close-up detail. Two scales of one seamless tile: a 4 m repeat for blades
-     and pebbles and a 16 m repeat for the larger clumps, both mip-mapped so
-     they fade to a neutral 0.5 before they can alias. Faded out past 100 m,
-     where a blade of grass is smaller than a pixel anyway. */
-  float fade = (1.0 - smoothstep(26.0, 86.0, vDist)) * uDetailStrength;
+  /* Ground detail: one mip-mapped 4 m tile, sampled twice at two scales.
+     The v3 fade ran from 26 to 86 m, and at an RTS camera height of 46 m most
+     of the meadow is further away than that -- so the one thing that gives the
+     ground a surface was switched off wherever the player was actually
+     looking, and the terrain read as flat watercolour. The tile is mip-mapped,
+     so letting it run to 165 m costs a fetch and no aliasing. */
+  float fade = (1.0 - smoothstep(45.0, 165.0, vDist)) * uDetailStrength;
   if (fade > 0.01) {
-    vec4 d1 = texture(uDetail, vWorld.xz * 0.25);
-    float grain = (d1.r - 0.5) * 0.46 + (d1.g - 0.5) * 0.22;
+    /* 14 m per repeat, not 4. The tile is 512 texels, so at the RTS camera a
+       4 m repeat maps about four texels to a pixel: the mip chain averages
+       every blade of grass into neutral grey and the ground comes out
+       featureless. At 14 m the tile is ~1:1 on the visible meadow, which is
+       where its blades, clumps and pebbles actually land on screen. */
+    vec4 d1 = texture(uDetail, vWorld.xz * 0.0714);
+    float grain = (d1.r - 0.5) * 1.35 + (d1.g - 0.5) * 0.65;
+    /* The second scale is only worth a fetch where the first has washed out:
+       a 48 m repeat carries the clumping that survives being seen from 60 m
+       away. Close up it would only double the contrast of the fine tile. */
+    float far = smoothstep(30.0, 110.0, vDist);
+    if (far > 0.01) {
+      vec4 d2 = texture(uDetail, vWorld.xz * 0.0208 + vec2(0.37, 0.71));
+      grain += ((d2.g - 0.5) * 0.95 + (d2.a - 0.5) * 0.30) * far;
+    }
     albedo *= 1.0 + grain * fade;
     // a scatter of petals and bright grit that only exists up close
     float speck = smoothstep(0.60, 0.96, d1.a) * fade * fade;

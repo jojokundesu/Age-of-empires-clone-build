@@ -260,7 +260,12 @@ try {
   // ---- day / night: the same camera, eight hours later -------------------
   // Reads the actual framebuffer, so it catches "night is a black screen" and
   // "the sun never moves" rather than just checking that a uniform was set.
-  const sampleLuma = () => page.evaluate(() => {
+  /* Read the framebuffer from *inside* a rAF callback, immediately after the
+     game's own frame: the drawing buffer is cleared as soon as the browser
+     composites it (preserveDrawingBuffer is false, which is the right trade for
+     a game), so a readPixels issued from a later task always returns zeros. */
+  const sampleLuma = () => page.evaluate(() => new Promise((resolve) => {
+    const read = () => {
     const a = window.__imperial;
     const gl = a.renderer.gl;
     const w = 96, h = 54;
@@ -273,8 +278,10 @@ try {
       warm += r - b;
     }
     const n = px.length / 4;
-    return { luma: sum / n, warmth: warm / n };
-  });
+    resolve({ luma: sum / n, warmth: warm / n });
+    };
+    requestAnimationFrame(() => requestAnimationFrame(read));
+  }));
   const setHour = async (hour) => {
     await page.evaluate((hour) => window.__imperial.game.setTimeOfDay(hour), hour);
     await page.waitForFunction(

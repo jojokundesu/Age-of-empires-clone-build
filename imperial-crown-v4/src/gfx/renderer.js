@@ -91,6 +91,7 @@ const TREE_VARIANTS_LOD = TREE_VARIANTS.map((k) => k + 'L');
 /* Falsy fallbacks, hoisted: a literal inside the per-unit loop allocates an
    object per unit per frame, which is exactly the kind of steady garbage that
    turns into a minor GC inside the frame budget on a phone. */
+const TERRAIN_TEX = 512;    // texels across the 512 m island (1 per metre)
 const NO_ANIM = Object.freeze({ phase: 0, speed: 0, attack: 0, spin: 0 });
 const UNIT_META_FALLBACK = Object.freeze({ height: 1.8, stride: 3, mounted: false, siege: false, naval: false });
 
@@ -375,10 +376,16 @@ export class Renderer {
        six texture fetches, seven fbm fields and a flower lattice on every
        pixel of the screen. One 512x512 sRGB map now carries all of it. */
     const t0 = now();
+    /* One texel per metre over the 512 m island: the *large* structure of the
+       land (field patchwork, dry pockets, the painted splat). A 1024 map costs
+       1.4 s of extra bake on a desktop and ~8 s on the target phone for a
+       ground that is still blurry where it matters, so the close-up structure
+       comes from the 4 m detail tile in the shader instead -- it is already
+       mip-mapped, it costs one fetch, and it is the part the eye reads. */
     const albedo = bakeTerrain(world, RT, this.textures.terrainLayers, {
-      size: 512, cloudData: this.textures.cloudData, cloudSize: 512
+      size: TERRAIN_TEX, cloudData: this.textures.cloudData, cloudSize: 512
     });
-    this.terrainAlbedo = uploadBaked(gl, albedo, 512, 512, {
+    this.terrainAlbedo = uploadBaked(gl, albedo, TERRAIN_TEX, TERRAIN_TEX, {
       srgb: true, aniso: 4, wrap: gl.CLAMP_TO_EDGE
     });
     this.bakeMs = now() - t0;
@@ -682,7 +689,11 @@ export class Renderer {
     const gl = this.gl;
     if (this.postTarget) { this.postTarget.dispose(); this.postTarget = null; }
     if (this.postEnabled && this.quality.sharpen > 0) {
-      this.postTarget = new RenderTarget(gl, w, h, { depth: false });
+      /* The scene is rendered *into* this target, so it needs the depth
+         attachment: without it every fragment passes the depth test, the sky
+         pass (which draws only where depth == 1) covers the whole frame, and
+         the town comes out as a white-out. */
+      this.postTarget = new RenderTarget(gl, w, h, { depth: true });
     }
     this.width = cw; this.height = ch;
     gl.viewport(0, 0, w, h);

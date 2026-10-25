@@ -24,6 +24,7 @@ const args = process.argv.slice(2);
 const argOf = (n, d) => { const i = args.indexOf('--' + n); return i >= 0 ? args[i + 1] : d; };
 const SECONDS = Number(argOf('seconds', 40));
 const UNITS = Number(argOf('units', 260));
+const TIER = argOf('quality', 'medium');
 const ROOT = resolve('dist');
 if (!existsSync(join(ROOT, 'index.html'))) {
   console.error('dist/ not found — run `npm run build` first');
@@ -103,11 +104,17 @@ try {
   await page.waitForFunction('window.__imperial.running === true', { timeout: 120000 });
   console.log('  match started');
 
-  // phone-class settings: low quality, capped dpr — what an Adreno 610 gets
-  await page.evaluate(() => {
+  /* The tier the target phone will actually run: 'medium' is what the governor
+     picks for an Adreno 610. Soaking at 'low' proved nothing about the build
+     people install, so the tier is a flag and the phone default is the default.
+     The governor itself is frozen here -- a soak has to measure one setting,
+     not chase a moving one. */
+  await page.evaluate((tier) => {
     const a = window.__imperial;
-    a.renderer.setQuality('low');
-    a.settings.quality = 'low';
+    a.renderer.setQuality(tier);
+    a.renderer.setPixelScale(1);
+    if (a.governor) a.governor.enabled = false;
+    a.settings.quality = tier;
     a.settings.autoQuality = false;
     window.__soak = { frames: [], gcs: [], pops: [] };
     const loop = a.loop.bind(a);
@@ -118,7 +125,7 @@ try {
       last = now;
       return loop(t);
     };
-  });
+  }, TIER);
   await new Promise((r) => setTimeout(r, 2500));
 
   // spawn a real battle: two armies facing each other across the map centre
@@ -248,7 +255,7 @@ try {
   md = [
     '### Soak test (phone profile)',
     '',
-    `- ${spawned} extra units · quality **low** · 900×414 @2x`,
+    `- ${spawned} extra units · quality **${TIER}** · 900×414 @2x`,
     `- Battle: ${battle.ticks * 2} simulation ticks (${(battle.ticks * 2 / 60).toFixed(0)} s of game time), ` +
       `${battle.alive} alive / ${battle.deaths} killed, ${battle.hpLost} damaged`,
     `- Tick cost: **${msPerTick.toFixed(2)} ms** (budget 3.0)`,

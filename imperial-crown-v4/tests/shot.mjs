@@ -49,9 +49,13 @@ await page.evaluate((mode) => {
 await page.click('#btnStart');
 await page.waitForFunction('window.__imperial.running === true', { timeout: 120000 });
 
+/* A screenshot run asks for one exact look: freeze the governor (it would
+   otherwise spend or reclaim resolution mid-shot) and force the requested
+   tier at full pixel scale. */
 await page.evaluate((q) => {
   const a = window.__imperial;
-  if (q && q !== 'auto') a.renderer.setQuality(q);
+  if (a.governor) { a.governor.enabled = false; a.governor.div = 1; a.governor.scale = 1; }
+  if (q && q !== 'auto') { a.renderer.setQuality(q); a.renderer.setPixelScale(1); }
 }, argOf('quality', 'high'));
 
 // let the match breathe so buildings appear, units walk
