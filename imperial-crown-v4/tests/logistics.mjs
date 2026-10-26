@@ -41,6 +41,42 @@ const fresh = () => {
   return g;
 };
 
+/* Paid for is not the same as delivered. A finished unit used to be shifted
+   off the queue and then refused by spawnUnit() when the population had been
+   cut while it trained -- the food was gone and no man ever appeared. */
+check('a levy that finishes at the cap waits for room instead of vanishing', () => {
+  const g = fresh();
+  const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
+  const st = g.teams.get(1);
+  st.res.food = 8000; st.res.wood = 8000; st.res.gold = 8000;
+  g.recomputePop();
+  /* fill every slot but one */
+  for (let i = 0; i < g.popFree(1) - 1; i++) {
+    g.spawnUnitRaw('villager', 1, tc.x + 4 + (i % 6) * 0.4, tc.z + 4 + Math.floor(i / 6) * 0.4);
+  }
+  g.recomputePop();
+  assert(g.popFree(1) === 1, `expected one free slot, got ${g.popFree(1)}`);
+  assert(tc.queueUnit('villager'), 'the town centre refused the order');
+  /* and now the room goes away while he trains */
+  g.spawnUnitRaw('villager', 1, tc.x + 6, tc.z + 6);
+  g.recomputePop();
+  assert(g.popFree(1) === 0, 'the last slot was not taken after all');
+  const before = g.units.filter((u) => !u.dead && u.team === 1).length;
+  tick(g, 14);
+  const held = tc.queue[0];
+  assert(tc.queue.length === 1 && held && held.time <= 0.001,
+    `the finished levy was thrown away (queue ${tc.queue.length})`);
+  assert(g.units.filter((u) => !u.dead && u.team === 1).length === before,
+    'a unit appeared with no room for it');
+  /* a house goes up: the man marches out on the next tick */
+  g.placeBuilding('house', 1, tc.x - 7, tc.z - 7, { instant: true, free: true });
+  g.recomputePop();
+  tick(g, 0.2);
+  assert(tc.queue.length === 0, 'the levy never left the gate');
+  assert(g.units.filter((u) => !u.dead && u.team === 1).length === before + 1,
+    'the held levy did not arrive');
+});
+
 check('a villager delivers even when the town centre is crowded', () => {
   const g = fresh();
   const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');

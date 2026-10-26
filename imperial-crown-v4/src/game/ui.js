@@ -257,6 +257,9 @@ export class UI {
          its own click with a "not enough resources" toast. */
       slot.el.classList.toggle('poor', c.enabled === false);
       slot.el.setAttribute('aria-disabled', c.enabled === false ? 'true' : 'false');
+      /* a stable handle for tests and for anything that wants to find a
+         command without matching its visible label */
+      if (c.id) slot.el.dataset.cmd = c.id; else delete slot.el.dataset.cmd;
       slot.el.onclick = (e) => {
         e.preventDefault();
         if (c.enabled === false) { this.audio?.play('warn'); this.toast(c.reason || 'Not enough resources', 'warn'); return; }
@@ -320,12 +323,15 @@ export class UI {
         if (ag) {
           const can = g.canAdvanceAge(1);
           out.push({
-            icon: 'crown', label: `Age ${nextAge + 1}`, cost: costText(ag.cost),
+            /* the age's own name, not a number: nothing else in the HUD
+               counts ages, so "Age 2" next to a "Dark Age" chip read as a
+               contradiction instead of "the second age is next" */
+            id: 'age', icon: 'crown', label: ag.short, cost: costText(ag.cost),
             enabled: !!can.ok, reason: can.reason, primary: true,
             action: () => this.ageAdvance()
           });
         } else {
-          out.push({ icon: 'crown', label: 'Max Age', enabled: false });
+          out.push({ id: 'age', icon: 'crown', label: 'Max Age', enabled: false });
         }
       }
       if (def.trains) {
@@ -1230,7 +1236,11 @@ export class UI {
       if (this.crownAcc > 0.5) {
         this.crownAcc = 0;
         el.crownStrip.classList.remove('hidden');
-        const rows = g.scoreboard();
+        /* Fixed positions, not a leaderboard: scoreboard() ranks by strength,
+           which made the pills swap places every few seconds as two kingdoms
+           traded blows -- the one thing a player cannot use to learn "which
+           colour is me". The crowns stand in team order, the player's first. */
+        const rows = g.scoreboard().slice().sort((a, b) => (a.team === 1 ? -1 : b.team === 1 ? 1 : a.team - b.team));
         const sig = rows.map((r) => `${r.team}${r.alive ? 1 : 0}${Math.round(r.score / 10)}`).join('|');
         if (this._lastCrownKey !== sig) {
           this._lastCrownKey = sig;

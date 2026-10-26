@@ -343,6 +343,54 @@ check('the last stride never vaults a wall', () => {
   return `${ring} segments held for 12 s`;
 });
 
+/* Men inside a building are still in `units` with a flag. The release on a
+   roof falling used to push them in again, so a garrison of four became eight
+   entities: double population, double ticks, double draw calls, and the
+   soldiers slid out through the wall they were supposed to be sheltering in. */
+check('a garrison comes out once, on free ground, when the roof falls', () => {
+  const game = newGame();
+  const sp = findFlatRun(game, 16);
+  const hall = game.placeBuilding('town_center', 1, sp.x, sp.z, { free: true, instant: true });
+  const men = [];
+  for (let i = 0; i < 4; i++) {
+    const u = spawnAt(game, 'archer', 1, sp.x + 4 + i * 0.6, sp.z + 4);
+    assert(u, 'archer spawn failed');
+    assert(game.garrisonUnit(u, hall), 'the hall refused the garrison');
+    men.push(u);
+  }
+  game.recomputePop();
+  const pop0 = game.teams.get(1).popUsed;
+  hall.hp = 1;
+  hall.takeDamage(9999, null);
+  const seen = game.units.filter((u) => men.includes(u)).length;
+  assert(seen === men.length, `the garrison was duplicated: ${seen} entries for ${men.length} men`);
+  game.recomputePop();
+  assert(game.teams.get(1).popUsed === pop0,
+    `releasing the garrison changed the population: ${pop0} -> ${game.teams.get(1).popUsed}`);
+  const stuck = men.filter((u) => !game.isPassable(u.x, u.z, u));
+  assert(stuck.length === 0, `${stuck.length} of ${men.length} came out standing inside something`);
+  const [cx, cz] = game.pathFinder.worldToCell(men[0].x, men[0].z);
+  assert(!game.pathFinder.isBlocked(cx, cz), 'a released man came out on a blocked nav cell');
+  assert(hall.garrison.length === 0, 'the rubble still holds a garrison');
+  return `${men.length} men released, population unchanged at ${pop0}`;
+});
+
+/* The same road out is taken by "leave the building", so it has to land on
+   walkable ground too -- right next to the wall, not in the middle of it. */
+check('leaving a building by hand steps outside the wall', () => {
+  const game = newGame();
+  const sp = findFlatRun(game, 16);
+  const tower = game.placeBuilding('watch_tower', 1, sp.x, sp.z, { free: true, instant: true });
+  const u = spawnAt(game, 'archer', 1, sp.x + 3, sp.z);
+  assert(game.garrisonUnit(u, tower), 'the tower refused the garrison');
+  game.removeFromGarrison(u);
+  const half = (tower.def.size || 3) * 0.5;
+  const d = Math.hypot(u.x - tower.x, u.z - tower.z);
+  assert(d > half, `he came out inside the tower (${d.toFixed(2)} m from the centre, half-width ${half})`);
+  assert(game.isPassable(u.x, u.z, u), 'he came out on ground he cannot stand on');
+  return `stepped out to ${d.toFixed(2)} m`;
+});
+
 check('a garrisoned hall is harder to storm than an empty one', () => {
   /* Not a balance claim: a rule. Men inside a building shoot out of it, so a
      hall with a garrison must cost the attacker more than an empty hall. */

@@ -1589,17 +1589,103 @@ export class Game {
     return true;
   }
 
+  /**
+   * Put a man who was inside a building on open ground just outside its walls.
+   *
+   * The old release dropped him at a random point within two metres of the
+   * *centre*, which is inside a town centre's 5.8 m footprint: he came out
+   * standing in the wall, wedged, and either jittered for two seconds until
+   * the watchdog teleported him or slid out through the side he was facing.
+   * Same test as freeSpotNear: walkable ground *and* an open nav cell, so the
+   * pathfinder can plan him away again.
+   */
+  placeLeaver(unit, building, index) {
+    const half = (building.def.size || 3) * 0.5;
+    const pf = this.pfFor(unit);
+    const free = (x, z) => {
+      if (!this.isPassable(x, z, unit)) return false;
+      const [cx, cz] = pf.worldToCell(x, z);
+      return !pf.isBlocked(cx, cz);
+    };
+    const base = (index * 2.399963) % (Math.PI * 2);
+    for (let ring = 0; ring < 4; ring++) {
+      const r = half + 0.9 + ring * 0.6;
+      for (let k = 0; k < 12; k++) {
+        const a = base + (k / 12) * Math.PI * 2;
+        const x = building.x + Math.cos(a) * r;
+        const z = building.z + Math.sin(a) * r;
+        if (free(x, z)) { unit.x = x; unit.z = z; return; }
+      }
+    }
+    const spot = this.freeSpotNear(building.x, building.z, unit, 10);
+    if (spot) { unit.x = spot[0]; unit.z = spot[1]; }
+  }
+
+  /**
+   * Empty a building's garrison onto the field.
+   *
+   * Garrisoned men stay in `units` the whole time (every system skips them by
+   * flag), so a released man must *not* be pushed into the array again. The
+   * old release did exactly that when the roof came down: each man appeared
+   * twice, took every tick twice, drew twice and counted twice against the
+   * population cap -- a garrison of four cost eight pop and walked at double
+   * speed. It also leaked the flag order, so a man could be released while
+   * still marked garrisoned.
+   */
+  releaseGarrison(building) {
+    if (!building || !building.garrison.length) return 0;
+    const leavers = building.garrison.slice();
+    building.garrison.length = 0;
+    for (let i = 0; i < leavers.length; i++) {
+      const u = leavers[i];
+      u.garrisoned = false;
+      u.garrisonTarget = null;
+      u.hp = Math.max(1, u.hp);
+      u.state = STATE.IDLE;
+      u.target = null;
+      u.path = null;
+      u.pathIdx = 0;
+      u.targetPos = null;
+      u.destX = u.destZ = null;
+      u.moving = false;
+      /* a teleport invalidates the "this cell was already proved walkable"
+         shortcut that stepMovement keeps */
+      u._passKey = -1;
+      u.stallT = 0;
+      u.stuckScore = 0;
+      u.wedgeT = 0;
+      this.placeLeaver(u, building, i);
+      if (u.team === TEAM_PLAYER) this.popDirty = true;
+    }
+    this.spatial.clear();
+    this.spatial.insertAll(this.units);
+    return leavers.length;
+  }
+
   removeFromGarrison(unit) {
     const b = unit.garrisonTarget;
+    let index = 0;
     if (b) {
+      index = Math.max(0, b.garrison.indexOf(unit));
       const i = b.garrison.indexOf(unit);
       if (i >= 0) b.garrison.splice(i, 1);
     }
     unit.garrisoned = false;
     unit.garrisonTarget = null;
-    unit.x = (b ? b.x : unit.x) + (this.rng() - 0.5) * 4;
-    unit.z = (b ? b.z : unit.z) + (this.rng() - 0.5) * 4;
+    if (b) this.placeLeaver(unit, b, index);
     unit.state = STATE.IDLE;
+    unit.target = null;
+    unit.path = null;
+    unit.pathIdx = 0;
+    unit.targetPos = null;
+    unit.destX = unit.destZ = null;
+    unit.moving = false;
+    unit._passKey = -1;
+    unit.stallT = 0;
+    unit.stuckScore = 0;
+    if (unit.team === TEAM_PLAYER) this.popDirty = true;
+    this.spatial.clear();
+    this.spatial.insertAll(this.units);
   }
 
   alertAttacked(entity, attacker) {

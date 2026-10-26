@@ -342,8 +342,9 @@ check('end screen', () => {
 const cardLabels = () => [...document.querySelectorAll('#cmdGrid .cmdBtn')]
   .filter((el) => el.style.display !== 'none')
   .map((el) => el.querySelector('.lbl').textContent);
-const ageCard = () => [...document.querySelectorAll('#cmdGrid .cmdBtn')]
-  .find((el) => /^Age \d$/.test(el.querySelector('.lbl').textContent));
+/* the card is found by its command id, not by its label: the label is the
+   name of the age it leads to ("Feudal"), which is what a player needs */
+const ageCard = () => document.querySelector('#cmdGrid .cmdBtn[data-cmd="age"]');
 
 check('the command card never stacks two sets of buttons', () => {
   const tc = game.buildings.find((b) => b.team === 1 && b.def.ageAdvance);

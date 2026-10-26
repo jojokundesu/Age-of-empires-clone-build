@@ -1455,16 +1455,9 @@ export class Building extends Entity {
       });
     }
     if (this.garrison.length) {
-      for (const u of this.garrison.slice()) {
-        g.units.push(u);
-        u.garrisoned = false;
-        u.garrisonTarget = null;
-        u.x = this.x + randRange(-2, 2, rngOf(this));
-        u.z = this.z + randRange(-2, 2, rngOf(this));
-        u.hp = Math.max(1, u.hp);
-        u.state = STATE.IDLE;
-      }
-      this.garrison.length = 0;
+      /* garrisoned men are still in `units`; see Game.releaseGarrison for the
+         duplicate-entity bug this used to cause */
+      g.releaseGarrison(this);
     }
   }
 
@@ -1533,15 +1526,7 @@ export class Building extends Entity {
   }
 
   ungarrisonAll() {
-    const g = this.game;
-    for (const u of this.garrison) {
-      u.garrisoned = false;
-      u.garrisonTarget = null;
-      u.x = this.x + randRange(-this.size, this.size, rngOf(this));
-      u.z = this.z + randRange(-this.size, this.size, rngOf(this));
-      u.state = STATE.IDLE;
-    }
-    this.garrison.length = 0;
+    return this.game.releaseGarrison(this);
   }
 
   update(dt) {
@@ -1564,9 +1549,20 @@ export class Building extends Entity {
       const speed = this.team === g.playerTeam ? 1 : g.aiSpeed;
       item.time -= dt * speed * (g.hasTech(this.team, 'conscription') ? 1.33 : 1) * (def.trainSpeed || 1);
       if (item.time <= 0) {
-        this.queue.shift();
-        g.spawnUnit(item.type, this.team, this.x, this.z, this);
-        g.onUnitTrained(this, item.type);
+        /* Room is reserved when the order is placed, but a house that falls
+           while the man is training takes it back. The finished levy used to be
+           shifted off the queue and then thrown away by spawnUnit() at the cap:
+           paid for, never seen. It waits at the gate instead, and marches out
+           the moment a house goes up. */
+        const need = UNIT_DEFS[item.type]?.pop ?? 1;
+        if (g.popFree(this.team) < need) {
+          item.time = 0;
+        } else {
+          this.queue.shift();
+          const u = g.spawnUnit(item.type, this.team, this.x, this.z, this);
+          if (u) g.onUnitTrained(this, item.type);
+          else { this.queue.unshift(item); item.time = 0; }
+        }
       }
     }
     if (this.researchQueue.length) {
