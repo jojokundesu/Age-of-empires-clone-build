@@ -156,16 +156,41 @@ check('the clock advances and loops', () => {
   assert(g.worldTime < 1, 'clock did not wrap past midnight: ' + g.worldTime);
 });
 
-check('day length is a real, documented number of seconds', () => {
+check('a full day is fifteen real minutes: ten of sun, five of dark', () => {
   assert(game.dayLength >= 300 && game.dayLength <= 2400, 'day length is not playable: ' + game.dayLength);
   const g = makeGame();
-  g.setTimeOfDay(0.001);
-  let t = 0, wrapped = false;
-  while (!wrapped && t < g.dayLength * 2) {
+  /* measure the actual cycle, not the neutral-rate constant: the dark runs on
+     its own multiplier, so a cycle is not dayLength seconds */
+  g.setTimeOfDay(5.0);
+  let t = 0, dark = 0;
+  let wrapped = false;
+  while (t < 1200 && !wrapped) {
+    const phase = g.dayPhase;
     g.update(1 / 60); t += 1 / 60;
-    if (g.worldTime < 0.001 || g.worldTime > 23.9) wrapped = true;
+    if (phase === 'night') dark += 1 / 60;
+    /* one exact loop: the clock passes 05:00 again */
+    if (t > 60 && g.worldTime >= 5.0 && g.worldTime < 5.5) wrapped = true;
   }
-  near(t, g.dayLength, g.dayLength * 0.02, 'a full day takes exactly dayLength seconds');
+  const light = t - dark;
+  near(light, 600, 18, 'the sun is out for ten minutes');
+  near(dark, 300, 18, 'the dark lasts five minutes');
+  near(t, 900, 25, 'a full cycle is fifteen minutes');
+});
+
+check('the Long Night omen lengthens the dark to ten minutes', () => {
+  const g = makeGame();
+  /* the omen is applied by the wheel; pin the same effect directly so the
+     clock's own behaviour is what is under test */
+  Object.defineProperty(g.calendar, 'nightStretch', { value: 2, configurable: true });
+  g.setTimeOfDay(20.0);
+  let dark = 0;
+  for (let i = 0; i < 60 * 700; i++) {
+    const phase = g.dayPhase;
+    g.update(1 / 60);
+    if (phase === 'night') dark += 1 / 60;
+    if (dark > 0 && phase !== 'night') break;
+  }
+  near(dark, 600, 25, 'a long night is ten minutes');
 });
 
 check('renderer follows the clock through a whole day', async () => {});
@@ -296,21 +321,23 @@ check('the terrain mesh is clock-independent (no rebuild hitch at dusk)', () => 
   const game = new Game({ world, civ: 'franks', mode: 'sandbox', difficulty: 'sandbox' });
   game.start();
   const cycle = game.dayLength;
-  check('a full day is at least ten minutes', () => {
-    assert(cycle >= 600, `a full cycle is ${cycle}s`);
-    assert(cycle <= 1200, `a full cycle is ${cycle}s -- too long to plan a match around`);
+  /* the light rate is 24 hours per cycle; the dark runs 1.2x faster per hour,
+     which is exactly what turns 15 daylight hours into 600 s and 9 night
+     hours into 300 s */
+  const perHour = cycle / 24;
+  check('a full day is fifteen minutes', () => {
+    const full = 15 * perHour + 9 / (1 / perHour * game.nightRateMul);
+    assert(Math.abs(full - 900) < 20, `a full cycle is ${full.toFixed(0)}s`);
   });
-  check('the dark is five minutes and the light is the rest', () => {
-    /* night runs 20:00 to 05:00 -- nine of twenty-four hours */
-    const night = cycle * (9 / 24);
-    const light = cycle - night;
+  check('the dark is five minutes and the light is ten', () => {
+    const night = 9 / (1 / perHour * game.nightRateMul);
+    const light = 15 * perHour;
     assert(Math.abs(night - 300) < 12, `night is ${night.toFixed(0)}s`);
-    assert(light >= 450, `daylight is only ${light.toFixed(0)}s`);
+    assert(Math.abs(light - 600) < 12, `daylight is ${light.toFixed(0)}s`);
   });
   check('the Long Night omen makes the dark ten minutes', () => {
-    const night = cycle * (9 / 24);
-    const stretched = night * 2;      // the omen doubles the night clock
-    assert(Math.abs(stretched - 600) < 25, `a long night is ${stretched.toFixed(0)}s`);
+    const night = 9 / (1 / perHour * game.nightRateMul / 2);
+    assert(Math.abs(night - 600) < 25, `a long night is ${night.toFixed(0)}s`);
   });
   check('the clock really spends that long in each phase', () => {
     const g2 = new Game({ world, civ: 'franks', mode: 'sandbox', difficulty: 'sandbox' });

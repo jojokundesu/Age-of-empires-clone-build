@@ -13,7 +13,7 @@ import { Audio } from './game/audio.js';
 import { Menu } from './game/menu.js';
 import { Input } from './game/input.js';
 import { UI } from './game/ui.js';
-import { AGES, CIVS, DIFFICULTY, GAME_MODES, BUILDING_DEFS, UNIT_DEFS } from './sim/data.js';
+import { AGES, CIVS, DIFFICULTY, GAME_MODES, BUILDING_DEFS, UNIT_DEFS, VICTORIES } from './sim/data.js';
 import { clamp } from './core/math.js';
 import { RANKS, MAX_RANK } from './sim/veterancy.js';
 import { Governor, pickInitialTier, TIER_ORDER } from './gfx/quality.js';
@@ -23,7 +23,7 @@ import { Governor, pickInitialTier, TIER_ORDER } from './gfx/quality.js';
    simulation steals from the frame. The renderer interpolates between the two
    most recent ticks, so nothing looks stepped. */
 const STEP = 1 / 30;
-const SAVE_VERSION = 3;
+const SAVE_VERSION = 4;   // keep in step with Menu.SAVE_VERSION
 
 const DEFAULT_SETTINGS = {
   quality: 'medium', autoQuality: true, music: true, sound: true, fog: true, shake: true, showBars: true
@@ -283,9 +283,24 @@ class App {
     this.menu.bootTip('Generating terrain, forests and mines…');
     await new Promise((r) => requestAnimationFrame(r));
 
+    /* A save carries the match it belongs to: the island is rebuilt from the
+       save's own seed and crown count, so a four-crown war reloads as the
+       same four-crown war instead of being squashed into a duel. */
+    if (opts.load) {
+      opts.seed = opts.load.seed;
+      opts.mode = opts.load.mode || opts.mode;
+      opts.civ = opts.load.civ || opts.civ;
+      opts.difficulty = opts.load.difficulty || opts.difficulty;
+      opts.victory = opts.load.victory || opts.victory;
+      opts.kingdoms = opts.load.kingdoms || opts.kingdoms;
+      opts.matchMinutes = opts.load.matchMinutes || opts.matchMinutes;
+    }
     const seed = (opts.seed | 0) || 20261;
     const t0 = performance.now();
-    const world = generateWorld(seed);
+    /* A War of Crowns needs a seat per crown; every other mode is the classic
+       two-corner island, generated exactly as it always was. */
+    const kingdoms = opts.mode === 'kingdoms' ? Math.max(2, Math.min(4, opts.kingdoms | 0 || 3)) : 2;
+    const world = generateWorld(seed, kingdoms > 2 ? { sites: kingdoms } : undefined);
     this.menu.bootProgress(0.4, 'Settling villages…');
 
     const fx = new FX();
@@ -297,6 +312,9 @@ class App {
       civ: opts.civ,
       mode: opts.mode,
       difficulty: opts.difficulty,
+      kingdoms,
+      victory: opts.victory,
+      matchMinutes: opts.matchMinutes,
       fx,
       sound,
       rand: Math.random
@@ -362,9 +380,21 @@ class App {
     /* Sandbox has no opponent: team 2 is never set up, so an AI controller
        there has no base to defend and would grab any team-2 unit that appeared
        (a spawned raid, a scenario) and march it across the map. */
-    const ai = opts.mode === 'sandbox' ? null : new AIController(game, 2, {
-      aggression: DIFFICULTY[opts.difficulty]?.aggression ?? 0.85
-    });
+    /* One opponent in every classic mode; a War of Crowns fields one AI per
+       rival crown, each with its own economy, its own grudges and its own
+       idea of who the real enemy is. `this.ai` stays the first one so every
+       older caller and test keeps working. */
+    const ais = [];
+    if (opts.mode !== 'sandbox') {
+      for (const t of game.teamIds) {
+        if (t === game.playerTeam) continue;
+        ais.push(new AIController(game, t, {
+          aggression: DIFFICULTY[opts.difficulty]?.aggression ?? 0.85
+        }));
+      }
+    }
+    const ai = ais[0] || null;
+    this.ais = ais;
     this.fx = fx;
     this.game = game;
     this.ai = ai;
@@ -468,6 +498,31 @@ class App {
         if (b) this.audio.play('build', { x: b.x, z: b.z });
         break;
       }
+      case 'collapse': {
+        /* A crown has fallen. This is the loudest thing that can happen in a
+           War of Crowns short of the end, so it gets a toast of its own, a
+           shake scaled to distance and a column of gold over the fallen seat. */
+        const heir = data.heir;
+        const fallenName = CIVS[g.civOf(data.team)]?.name || 'A crown';
+        const heirName = heir ? (CIVS[g.civOf(heir)]?.name || 'a rival') : 'nobody';
+        if (data.team === 1) {
+          ui?.toast('Your crown has fallen', 'warn');
+        } else if (heir === 1) {
+          ui?.toast(`${fallenName} has fallen — ${data.spoils.units} soldiers and ${Math.round(data.spoils.resources?.gold || 0)} gold are yours`, 'good');
+        } else {
+          ui?.toast(`${fallenName} has fallen to ${heirName}`, 'info');
+        }
+        const seat = g.baseOf(data.team);
+        if (seat) {
+          this.audio.play('boom', { x: seat.x, z: seat.z });
+          const cam = this.camera;
+          if (cam) {
+            const d = Math.hypot(cam.target[0] - seat.x, cam.target[2] - seat.z);
+            cam.addShake(clamp(1.1 - d / 220, 0.12, 1.1));
+          }
+        }
+        break;
+      }
       case 'gameover': {
         this.running = false;
         if (ui) setTimeout(() => ui.showEnd(g.result?.win !== false, g.result?.reason), 900);
@@ -555,7 +610,12 @@ class App {
     this.paused = true;
     const g = this.game;
     const t = g.teams.get(1);
+    const terms = VICTORIES[g.victory] || VICTORIES.conquest;
+    const crowns = (g.crowns || 2) > 2 ? `<div class="metricRow"><span>Crowns</span><b>${g.teamIds.filter((x) => !g.fallenTeams.has(x)).length} of ${g.crowns} still standing</b></div>` : '';
     this.menu.openModal('CAMPAIGN', 'Paused', `
+      <div class="metricRow"><span>Terms of war</span><b>${terms.name}</b></div>
+      <div class="dim tiny" style="margin:0 0 6px">${terms.desc}</div>
+      ${crowns}
       <div class="metricRow"><span>Age</span><b>${AGES[t.age].name}</b></div>
       <div class="metricRow"><span>Army</span><b>${g.units.filter((u) => !u.dead && u.team === 1 && u.def.attack > 0 && !u.def.classes.includes('villager')).length}</b></div>
       <div class="metricRow"><span>Villagers</span><b>${g.units.filter((u) => !u.dead && u.team === 1 && u.type === 'villager').length}</b></div>
@@ -601,6 +661,7 @@ class App {
     document.getElementById('endScreen')?.classList.add('hidden');
     this.game = null;
     this.ai = null;
+    this.ais = [];
     this.ui = null;
     this.menu.showMenu();
     this.audio.stopMusic?.();
@@ -616,13 +677,19 @@ class App {
       seed: g.world.seed,
       civ: g.civ,
       mode: g.mode,
+      civ: g.civ,
       difficulty: g.difficultyKey,
+      kingdoms: g.crowns,
+      victory: g.victory,
+      matchMinutes: Math.round(g.supremacyClock / 60),
+      fallenTeams: [...(g.fallenTeams || [])],
+      lastBlood: [...(g.lastBlood || [])],
       time: g.time,
       worldTime: g.worldTime,
       /* Both sides. Saving only the player's economy meant a reload handed
          the AI a brand-new Dark Age town while the player kept Castle Age --
          a free win that also made the enemy look broken. */
-      teams: { 1: g.exportTeam(1), 2: g.exportTeam(2) },
+      teams: Object.fromEntries(g.teamIds.map((t) => [t, g.exportTeam(t)])),
       wonder: [...g.wonderClocks.entries()],
       court: g.court ? g.court.toJSON() : null,
       calendar: g.calendar ? g.calendar.toJSON() : null,
@@ -646,16 +713,20 @@ class App {
     game.elapsed = save.time || 0;
     game.worldTime = save.worldTime || 8.6;
 
-    for (const team of [1, 2]) {
+    game.fallenTeams = new Set((save.fallenTeams || []).filter((t) => game.teamIds.includes(t)));
+    game.lastBlood = new Map((save.lastBlood || []).filter(([v, a]) => game.teamIds.includes(v) && game.teamIds.includes(a)));
+    if (save.victory) game.victory = save.victory;
+    if (save.matchMinutes) game.supremacyClock = Math.max(120, save.matchMinutes * 60);
+    for (const team of game.teamIds) {
       const t = save.teams?.[team];
       if (t) game.importTeam(team, t);
     }
     if (save.realm && game.realm) game.realm.fromJSON(save.realm);
     if (save.climate && game.climate) game.climate.fromJSON(save.climate);
-    game.wonderClocks = new Map((save.wonder || []).filter(([team]) => team === 1 || team === 2));
+    game.wonderClocks = new Map((save.wonder || []).filter(([team]) => game.teamIds.includes(team)));
 
     for (const [type, team, x, z, hp, prog, facing] of save.buildings || []) {
-      if (team !== 1 && team !== 2) continue;   // neutral shrines regenerate with the world
+      if (!game.teamIds.includes(team)) continue;   // neutral shrines regenerate with the world
       const b = game.placeBuilding(type, team, x, z, { instant: true, free: true, facing });
       if (b) {
         b.hp = Math.min(b.maxHp, hp);
@@ -664,7 +735,7 @@ class App {
       }
     }
     for (const [type, team, x, z, hp, rank, xp, morale] of save.units || []) {
-      if (team !== 1 && team !== 2) continue;
+      if (!game.teamIds.includes(team)) continue;
       const u = game.spawnUnit(type, team, x, z);
       if (!u) continue;
       if (rank) {
@@ -724,7 +795,7 @@ class App {
     if (steps >= 6) this.acc = 0;
     g.renderAlpha = this.paused ? 1 : Math.min(1, this.acc / STEP);
 
-    if (this.ai && !this.paused && !g.gameOver) this.ai.update(dt);
+    if (!this.paused && !g.gameOver) for (const a of this.ais || (this.ai ? [this.ai] : [])) a.update(dt);
 
     // camera smoothing always runs so the view never feels stuck
     const cam = this.camera;

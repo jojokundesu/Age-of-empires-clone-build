@@ -54,8 +54,20 @@ export class AIController {
     this.army = [];
     this.armyState = 'gather';
     this.attackTarget = null;
-    this.base = team === 1 ? game.world.playerBase : game.world.enemyBase;
-    this.enemyBase = team === 1 ? game.world.enemyBase : game.world.playerBase;
+    this.base = game.baseOf ? game.baseOf(team) : (team === 1 ? game.world.playerBase : game.world.enemyBase);
+    /* In a war of four crowns there is no single "the enemy". `foe` is the
+       crown this AI is currently campaigning against, re-chosen every couple
+       of minutes from strength and distance; `enemyBase` follows it so all
+       the older code that says "march on the enemy base" keeps working. */
+    this.foe = null;
+    this.enemyBase = game.baseOf && game.baseOf(team === 1 ? 2 : 1)
+      ? game.baseOf(team === 1 ? 2 : 1)
+      : (team === 1 ? game.world.enemyBase : game.world.playerBase);
+    this.foeTimer = 0;
+    /* Choose a foe before the first frame. A controller that waited for its
+       first update had no target at all, so a reloaded war spent its opening
+       seconds doing nothing and the enemy base was stale. */
+    this.chooseFoe();
     this.spots = new Map();          // building type -> cached good spot
     this.failedSpots = new Map();
     this.rally = { x: this.base.x, z: this.base.z };
@@ -123,6 +135,12 @@ export class AIController {
   update(dt) {
     const g = this.game;
     if (g.gameOver) return;
+    /* a crown that has fallen has no economy to run and no army to march:
+       its survivors answer a new king now, and this controller is done */
+    if (g.fallenTeams && g.fallenTeams.has(this.team)) return;
+    /* and if the crown it was campaigning against is gone, think again now
+       rather than marching an army into an empty corner of the island */
+    if (this.foe && g.fallenTeams && g.fallenTeams.has(this.foe)) this.foeTimer = 0;
     this.timer -= dt;
     this.econTimer -= dt;
     this.buildTimer -= dt;
@@ -133,6 +151,12 @@ export class AIController {
 
     const st = g.teams.get(this.team);
     const age = st.age;
+
+    this.foeTimer -= 0.5;
+    if (this.foeTimer <= 0 || !this.foe) {
+      this.foeTimer = 90 + this.rng() * 40;
+      this.chooseFoe();
+    }
 
     // ---------- economy ----------
     if (this.econTimer <= 0) {
@@ -706,6 +730,44 @@ export class AIController {
       this.log.push(['age', this.game.time | 0, next]);
       this.savedForAge = false;
     }
+  }
+
+  /* ---------------- who is the enemy? ----------------
+     With two crowns the answer is obvious. With four it is the most
+     important decision the AI makes: attack the neighbour who is winning
+     and you hand the island to the far one, attack the weak and the strong
+     eat you. The rule is a real one -- score every rival on how close it is,
+     how much army it has, and whether it has recently been in your fields --
+     then campaign against the worst of them for a couple of minutes before
+     thinking again, so the army is not marched back and forth. */
+  chooseFoe() {
+    const g = this.game;
+    if (!g.teamIds || g.teamIds.length <= 2) {
+      this.foe = g.teamIds ? g.teamIds.find((t) => t !== this.team) || null : 2;
+      this.enemyBase = g.baseOf ? g.baseOf(this.foe) : g.world.enemyBase;
+      return this.foe;
+    }
+    let best = null, bestScore = -Infinity;
+    for (const t of g.teamIds) {
+      if (t === this.team) continue;
+      if (g.fallenTeams && g.fallenTeams.has(t)) continue;
+      const seat = g.baseOf(t);
+      if (!seat) continue;
+      const d = Math.hypot(seat.x - this.base.x, seat.z - this.base.z);
+      let army = 0, buildings = 0;
+      for (const u of g.units) if (!u.dead && u.team === t && u.def.attack > 0) army++;
+      for (const b of g.buildings) if (!b.dead && b.team === t) buildings++;
+      /* near is cheap to attack; strong is worth attacking; a crown that has
+         been raiding me is worth attacking *now* */
+      let score = 60 - d * 0.22 + army * 1.1 + buildings * 0.35;
+      if (this.raidedBy && this.raidedBy.has(t)) score += 18;
+      if (g.realm && g.realm.state(t).commons < 25) score += 12;   // a realm in revolt is a target
+      if (this.foe === t) score += 26;                              // stay the course
+      if (score > bestScore) { bestScore = score; best = t; }
+    }
+    this.foe = best || this.foe || 2;
+    this.enemyBase = g.baseOf(this.foe);
+    return this.foe;
   }
 
   /* ---------------- target value ---------------- */

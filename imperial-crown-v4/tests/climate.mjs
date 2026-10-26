@@ -103,6 +103,22 @@ check('eras turn in order and never go backwards', () => {
   assert(c.remaining === Infinity, 'the last era reports a countdown');
 });
 
+check('the sky cannot turn before fifteen minutes, however hard the realm pushes', () => {
+  const g = fresh();
+  const c = g.climate;
+  for (const r of g.resources) if (r.type === 'tree') { r.amount = 0; r.dead = true; }
+  const b = g.world.playerBase;
+  for (let i = 0; i < 60; i++) {
+    const a = (i / 60) * 6.283;
+    g.placeBuilding('farm', TEAM_PLAYER, b.x + Math.cos(a) * (20 + (i % 4) * 7), b.z + Math.sin(a) * (20 + (i % 4) * 7), { instant: true, free: true });
+  }
+  step(g, 840);
+  assert(c.turns === 0, `the sky turned at ${g.time.toFixed(0)}s on a stripped island`);
+  assert(c.era.id === 'temperate', 'the first era ended before fifteen minutes');
+  step(g, 90);
+  assert(c.turns >= 1, 'the sky never turned after fifteen minutes even at maximum strain');
+});
+
 check('a felled island turns the sky early', () => {
   const g = fresh();
   const c = g.climate;

@@ -7,6 +7,23 @@
    economic pressure of drop-off points and population.
    ============================================================ */
 
+/* ============================================================
+   TEAM COLOURS
+   Up to four crowns share an island, and a player must be able to
+   tell them apart at a glance in a battle line. Green is always
+   the player and red is always the old enemy, so every habit
+   built in a duel still holds; the two extra crowns take blue
+   and gold, which are far apart from all four season tints.
+   ============================================================ */
+export const TEAM_COLORS = {
+  1: { ring: [0.35, 0.95, 0.5], unit: [0.42, 0.92, 0.45], css: '#63e88a', name: 'green' },
+  2: { ring: [1, 0.36, 0.3], unit: [0.98, 0.36, 0.3], css: '#e0564b', name: 'red' },
+  3: { ring: [0.36, 0.62, 1], unit: [0.42, 0.62, 1], css: '#5c9bff', name: 'blue' },
+  4: { ring: [0.95, 0.8, 0.32], unit: [0.95, 0.8, 0.32], css: '#f0cb6a', name: 'gold' }
+};
+export const NEUTRAL_COLOR = { ring: [1, 0.86, 0.4], unit: [0.95, 0.84, 0.45], css: '#d9c07a', name: 'gold' };
+export const teamColor = (team) => TEAM_COLORS[team] || NEUTRAL_COLOR;
+
 export const RES = ['food', 'wood', 'gold', 'stone'];
 export const RES_META = {
   food: { name: 'Food', icon: 'wheat', color: '#c8e07a' },
@@ -535,8 +552,51 @@ export const DIFFICULTY = {
 
 export const GAME_MODES = {
   campaign: { name: 'Imperial Conquest', desc: 'Destroy every enemy building to claim the crown.' },
+  kingdoms: { name: 'War of Crowns', desc: 'Three or four kingdoms on one island. The last crown standing rules alone.' },
   regicide: { name: 'Regicide', desc: 'Protect your king. Kill theirs.' },
   wonder: { name: 'Wonder Race', desc: 'Raise a wonder and hold it for 200 seconds.' },
   sandbox: { name: 'Grand Sandbox', desc: 'Ten thousand resources. Build a masterpiece.' },
   mods: { name: 'Mod Workshop', desc: 'The same war, with new rules.' }
 };
+
+/* ============================================================
+   TERMS OF WAR
+   The condition a match is fought under, chosen before the
+   first villager is trained. They are not skins on one rule:
+   each one changes what "winning" means, what "losing" means,
+   and therefore where the army goes.
+
+     Conquest    take every other crown off the map
+     Regicide    one king per crown -- kill them
+     Wonder      raise a wonder and hold it for 200 seconds
+     Supremacy   when the clock runs out, the strongest crown rules
+   ============================================================ */
+export const VICTORIES = {
+  conquest: {
+    id: 'conquest', name: 'Conquest', icon: 'castle',
+    desc: 'Take every other crown off the map: no buildings, no army.',
+    short: 'destroy every rival'
+  },
+  regicide: {
+    id: 'regicide', name: 'Regicide', icon: 'crown',
+    desc: 'Every crown fields a king. Kill every rival king; lose yours and the war is over.',
+    short: 'kill every rival king'
+  },
+  wonder: {
+    id: 'wonder', name: 'Wonder', icon: 'temple',
+    desc: 'Raise a wonder and hold it for 200 seconds while the island comes for you.',
+    short: 'hold a wonder for 200s'
+  },
+  supremacy: {
+    id: 'supremacy', name: 'Supremacy', icon: 'hourglass',
+    desc: 'When the clock runs out, the crown with the strongest realm rules.',
+    short: 'lead when the clock runs out'
+  }
+};
+export const VICTORY_LIST = Object.values(VICTORIES);
+/** Wonder mode means nothing without a clock, and regicide needs kings. */
+export function victoryFor(mode) {
+  if (mode === 'regicide') return 'regicide';
+  if (mode === 'wonder') return 'wonder';
+  return 'conquest';
+}

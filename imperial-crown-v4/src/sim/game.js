@@ -8,11 +8,11 @@ import { Court } from './court.js';
 import { Veterancy } from './veterancy.js';
 import { Morale } from './morale.js';
 import { Calendar } from './calendar.js';
-import { Realm, TEAM_REBEL_P, TEAM_REBEL_E, crownOfRebel } from './realm.js';
+import { Realm, freshRealmState, TEAM_REBEL_P, TEAM_REBEL_E, crownOfRebel } from './realm.js';
 import { Climate } from './climate.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
-  RES, POP_CAP, isUniqueUnit
+  RES, POP_CAP, isUniqueUnit, VICTORIES, victoryFor
 } from './data.js';
 import { Unit, Building, ResourceNode, STATE } from './entities.js';
 import { PathFinder } from './pathfind.js';
@@ -120,6 +120,11 @@ export class Game {
     this.civ = opts.civ || 'franks';
     this.enemyCiv = opts.enemyCiv || this.pickEnemyCiv(this.civ);
     this.mode = opts.mode || 'campaign';
+    /* The terms of war are chosen before the match and can override what the
+       mode implies: a War of Crowns can be fought for conquest, for kings,
+       for a wonder, or to the clock. */
+    this.victory = VICTORIES[opts.victory] ? opts.victory : victoryFor(this.mode);
+    this.supremacyClock = Math.max(120, opts.matchMinutes ? opts.matchMinutes * 60 : 1500);
     this.difficultyKey = opts.difficulty || 'standard';
     this.difficulty = DIFFICULTY[this.difficultyKey] || DIFFICULTY.standard;
     this.playerTeam = TEAM_PLAYER;
@@ -203,11 +208,16 @@ export class Game {
     this.teams = new Map();
     /* Every kingdom in the match. Two by default; kingdoms mode adds more,
        and rebel warbands are allocated from TEAM_REBEL_P upwards. */
-    this.teamIds = [TEAM_PLAYER];
-    if (this.mode !== 'sandbox') this.teamIds.push(TEAM_ENEMY);
-    for (const t of [TEAM_PLAYER, TEAM_ENEMY]) {
+    /* A War of Crowns seats three or four kingdoms on one island; every other
+       mode is the classic duel. `kingdoms` is the number of *crowns*. */
+    const crowns = this.mode === 'kingdoms' ? Math.max(2, Math.min(4, opts.kingdoms | 0 || 3))
+      : (this.mode === 'sandbox' ? 1 : 2);
+    this.crowns = crowns;
+    this.teamIds = [];
+    for (let t = TEAM_PLAYER; t < TEAM_PLAYER + crowns; t++) this.teamIds.push(t);
+    for (const t of this.teamIds) {
       this.teams.set(t, {
-        civ: t === TEAM_PLAYER ? this.civ : this.enemyCiv,
+        civ: this.civForTeam(t),
         res: { food: 0, wood: 0, gold: 0, stone: 0 },
         techs: new Set(),
         age: 0,
@@ -226,6 +236,8 @@ export class Game {
         resigned: false
       });
     }
+    /* one ledger per crown, in team order (the roster is known by now) */
+    for (const t of this.teamIds) this.realm.teams.set(t, freshRealmState());
 
     // fog of war (player vision only; the AI plays fair with its own grid)
     this.fow = new Uint8Array(FOW * FOW);        // 0 hidden, 1 explored, 2 visible
@@ -254,11 +266,14 @@ export class Game {
     this.wonderHold = 200;
     this.elapsed = 0;
     this.worldTime = 8.6;              // hour of the day, advanced by update()
-    /* 800 s a cycle: night is 9 of the 24 hours, so the dark is 5 minutes
-       and the day is 8.3 -- a day you can plan a campaign in, and a night
-       long enough that a raid has time to mean something. `The Long Night`
-       omen doubles it. */
-    this.dayLength = 800;              // real seconds for a full cycle
+    /* One full day-night cycle is 15 real minutes: ten minutes of sun and
+       five of dark. The two halves do not share a clock rate -- the dark
+       passes 1.2x faster per in-game hour, which is what makes 15 daylight
+       hours take 600 s and 9 night hours take 300 s. A match is meant to
+       live through several days, and the night has to be long enough to
+       matter for a raid without eating a third of the session. */
+    this.dayLength = 960;             // real seconds for a full cycle at the neutral rate
+    this.nightRateMul = 1.2;          // in-game hours per real second, dark vs light
     this.alerts = [];
     this.unitLimit = 220;
     this.stats = { tickMs: 0, units: 0, buildings: 0 };
@@ -290,14 +305,65 @@ export class Game {
     return keys[(this.rng() * keys.length) | 0];
   }
 
+  /** A distinct civilisation for every crown on the island. */
+  civForTeam(team) {
+    if (!this._civByTeam) {
+      this._civByTeam = new Map();
+      this._civByTeam.set(TEAM_PLAYER, this.civ);
+      const pool = Object.keys(CIVS).filter((k) => k !== this.civ);
+      /* deterministic shuffle from the game seed, never the live sim stream */
+      let s = (this.seed ^ 0x1b873593) >>> 0;
+      const next = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = (next() * (i + 1)) | 0;
+        const t = pool[i]; pool[i] = pool[j]; pool[j] = t;
+      }
+      for (let t = TEAM_ENEMY; t < TEAM_PLAYER + this.crowns; t++) {
+        this._civByTeam.set(t, pool[(t - TEAM_ENEMY) % pool.length]);
+      }
+    }
+    return this._civByTeam.get(team) || this.enemyCiv;
+  }
+
+  /** The seat of a kingdom on the map. */
+  baseOf(team) {
+    const bases = this.world.bases;
+    if (!bases || !bases.length) return team === TEAM_ENEMY ? this.enemyBase : this.playerBase;
+    const i = team - TEAM_PLAYER;
+    return bases[Math.min(bases.length - 1, Math.max(0, i))] || this.playerBase;
+  }
+
+  /** Every other living crown, nearest seat first. */
+  rivalSeats(team, x, z) {
+    const out = [];
+    for (const t of this.teamIds) {
+      if (t === team) continue;
+      const b = this.baseOf(t);
+      if (!b) continue;
+      out.push({ team: t, base: b, d: Math.hypot(b.x - (x ?? b.x), b.z - (z ?? b.z)) });
+    }
+    out.sort((a, b) => a.d - b.d);
+    return out;
+  }
+
+  /** Is this crown still in the war? (A fallen crown is out for good.) */
+  aliveTeam(team) {
+    if (team === TEAM_NEUTRAL) return true;
+    if (this.fallenTeams && this.fallenTeams.has(team)) return false;
+    return this.buildings.some((b) => !b.dead && b.team === team) || this.units.some((u) => !u.dead && u.team === team && !u.garrisoned);
+  }
+
   /* ==========================================================
      setup
      ========================================================== */
   start() {
     const w = this.world;
     this.spawnResources();
-    this.setupTeam(TEAM_PLAYER, w.playerBase, this.civ);
-    if (this.mode !== 'sandbox') this.setupTeam(TEAM_ENEMY, w.enemyBase, this.enemyCiv);
+    for (const t of this.teamIds) this.setupTeam(t, this.baseOf(t), this.civForTeam(t));
+    this.fallenTeams = new Set();
+    /* who last drew blood on whom: the crown that breaks a rival inherits
+       it, so the map has to exist before the first blow, not after it */
+    this.lastBlood = new Map();
     this.initialised = true;
     this.recomputePop();
     this.surveyHome(w.playerBase);
@@ -354,7 +420,7 @@ export class Game {
       const s = this.spawnUnitRaw('scout_cavalry', team, tx + 4, tz + 3);
       if (s) s.stance = 'defensive';
     }
-    if (this.mode === 'regicide') {
+    if (this.victory === 'regicide') {
       const king = this.spawnUnitRaw('hero_general', team, tx - 4, tz + 2);
       if (king) {
         king.isKing = true;
@@ -1080,6 +1146,7 @@ export class Game {
   /** A blow was struck: rebels remember who hit them. */
   noteAttack(victim, attacker) {
     if (!victim || !attacker || attacker === victim) return;
+    this.noteBlood(victim.team, attacker.team);
     if (attacker.team === undefined || victim.team === undefined) return;
     const a = attacker.team, v = victim.team;
     if (a === v || a === TEAM_NEUTRAL) return;
@@ -1402,8 +1469,13 @@ export class Game {
     unit.target = null;
     unit.gatherTarget = null;
     unit.carry.amount = 0;
-    this.teams.get(team).popUsed++;
-    if (unit.def.pop) this.teams.get(old).popUsed = Math.max(0, this.teams.get(old).popUsed - unit.def.pop);
+    /* population accounting: a rebel or a fallen crown's soldier was never
+       counted against the living crown's cap, and a missing team has no
+       ledger to debit */
+    const to = this.teams.get(team);
+    const from = this.teams.get(old);
+    if (to) to.popUsed = (to.popUsed || 0) + 1;
+    if (from && unit.def.pop) from.popUsed = Math.max(0, (from.popUsed || 0) - unit.def.pop);
     this.fx.glowPulse(unit.x, unit.y + 1, unit.z, 0.9, 0.7, 1);
     this.sound.play('convert', unit.x, unit.z);
     if (team === TEAM_PLAYER) this.notify('Enemy converted to your cause', 'good');
@@ -1474,9 +1546,15 @@ export class Game {
     this.sound.play('death', unit.x, unit.z);
     if (unit.team === TEAM_PLAYER) {
       this.selectedRemove?.(unit);
-      if (unit.isKing) this.endGame(false, 'king');
+      /* A king matters only when the war is fought over kings. In a conquest
+         or a war of crowns, the death of your king is a catastrophe, not a
+         referee's whistle: your heir takes the throne and the war goes on. */
+      if (unit.isKing && this.victory === 'regicide') this.endGame(false, 'king');
     }
-    if (unit.team === TEAM_ENEMY && unit.isKing) this.endGame(true, 'king');
+    /* Any rival king's death is checked by checkVictory, which knows how many
+       crowns are still standing: killing the king of one of four kingdoms
+       must not end the war for the other three. */
+    if (unit.isKing && unit.team !== TEAM_PLAYER && this.victory === 'regicide') this.checkVictory();
     this.onEvent('death', { unit });
   }
 
@@ -1567,7 +1645,9 @@ export class Game {
 
   /** Called by a completed wonder every tick. */
   tickWonder(team, dt) {
-    if (this.mode !== 'wonder' || this.gameOver) return;
+    /* the terms of war decide this now, not just the mode: a War of Crowns
+       can be fought under a wonder term, and a wonder mode is that term */
+    if ((this.victory !== 'wonder' && this.mode !== 'wonder') || this.gameOver) return;
     const t = (this.wonderClocks.get(team) || 0) + dt;
     this.wonderClocks.set(team, t);
     if (t >= this.wonderHold) this.endGame(team === this.playerTeam, 'wonder');
@@ -1575,7 +1655,7 @@ export class Game {
 
   /** The HUD asks for this once per second: who is closest to a wonder win. */
   wonderStatus() {
-    if (this.mode !== 'wonder') return null;
+    if (this.victory !== 'wonder' && this.mode !== 'wonder') return null;
     const mine = this.wonderProgressOf(this.playerTeam);
     let theirs = 0;
     for (const [team, v] of this.wonderClocks) if (team !== this.playerTeam) theirs = Math.max(theirs, v);
@@ -1683,16 +1763,18 @@ export class Game {
 
     // time of day (drives the renderer's sun, the HUD clock and unit vision)
     const prevPhase = this.dayPhase;
-    /* The Long Night omen runs the clock at a different rate after dusk and
-       before dawn, so the dark really is longer rather than merely darker. */
     let dayRate = (dt * 24) / this.dayLength;
+    /* The dark runs on its own rate: 1.2x per in-game hour, so the 15 hours of
+       daylight cost ten real minutes and the 9 hours of night cost five. */
+    const h0 = this.worldTime;
+    const isDark = (h0 >= 20.0 || h0 < 5.0);
+    if (isDark) dayRate *= this.nightRateMul;
+    /* The Long Night omen must *lengthen* the dark, not hasten it. Slowing the
+       clock while it is dark is what turns a five-minute night into ten, and
+       the omen's own words promise exactly that. */
     if (this.calendar) {
       const stretch = this.calendar.nightStretch;
-      if (stretch > 1) {
-        const h = this.worldTime;
-        const dark = (h >= 20.0 || h < 5.0);
-        if (dark) dayRate *= stretch;
-      }
+      if (stretch > 1 && isDark) dayRate /= stretch;
       this.calendar.update(dt);
       this.calendar.tick(dt);
     }
@@ -1708,7 +1790,7 @@ export class Game {
     if (this.realm) this.realm.update(dt);
 
     // favour and temporary decree buffs
-    for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
+    for (const team of this.teamIds) {
       const st = this.teams.get(team);
       if (!st) continue;
       // favour trickles in; shrines and monasteries speed it up, kills top it up
@@ -1732,8 +1814,8 @@ export class Game {
       }
     }
 
-    // age research
-    for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
+    // age research -- every crown ages, not just the first two
+    for (const team of this.teamIds) {
       const st = this.teams.get(team);
       if (!st) continue;
       if (st.ageResearch) {
@@ -1899,25 +1981,47 @@ export class Game {
      ========================================================== */
   checkVictory() {
     if (this.gameOver || this.mode === 'sandbox') return;
-    const enemyAlive = this.buildings.some((b) => !b.dead && b.team === TEAM_ENEMY) || this.units.some((u) => !u.dead && u.team === TEAM_ENEMY);
-    const playerAlive = this.buildings.some((b) => !b.dead && b.team === TEAM_PLAYER) || this.units.some((u) => !u.dead && u.team === TEAM_PLAYER);
-    if (!enemyAlive) { this.endGame(true, 'conquest'); return; }
-    if (!playerAlive) { this.endGame(false, 'conquest'); return; }
+    if (this.victory === 'supremacy') {
+      if (this.time >= this.supremacyClock) {
+        const best = this.scoreboard()[0];
+        this.endGame(best && best.team === TEAM_PLAYER, 'supremacy');
+        return;
+      }
+    }
+    /* Regicide is decided by the kings, not by the towns: a crown whose king
+       is dead is out, whatever it still owns. */
+    if (this.victory === 'regicide') {
+      const playerKing = this.units.some((u) => !u.dead && u.team === TEAM_PLAYER && u.isKing);
+      let rivalKings = 0;
+      for (const t of this.teamIds) {
+        if (t === TEAM_PLAYER) continue;
+        if (this.units.some((u) => !u.dead && u.team === t && u.isKing)) rivalKings++;
+      }
+      if (!playerKing) { this.endGame(false, 'king'); return; }
+      if (rivalKings === 0) { this.endGame(true, 'king'); return; }
+    }
+    /* Every mode still ends when only one crown is left standing. */
+    const rivals = this.teamIds.filter((t) => t !== TEAM_PLAYER && this.aliveTeam(t));
+    if (rivals.length === 0) { this.endGame(true, 'conquest'); return; }
+    if (!this.aliveTeam(TEAM_PLAYER)) { this.endGame(false, 'conquest'); return; }
 
     // Dominance: a team without a single standing building cannot produce,
     // research or house anything, so it is dead even if a lone villager is
     // still hiding in a forest. Without this rule a mirror match could drag
     // on for another ten minutes over one survivor.
     if (!this._roofless) this._roofless = new Map();
-    for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
+    for (const team of this.teamIds) {
+      if (this.fallenTeams && this.fallenTeams.has(team)) continue;
       const hasBuilding = this.buildings.some((b) => !b.dead && b.team === team);
       if (hasBuilding) { this._roofless.delete(team); continue; }
       const since = this._roofless.get(team) ?? this.time;
       this._roofless.set(team, since);
       const grace = this.difficultyKey === 'sandbox' ? Infinity : 60;
       if (this.time - since >= grace) {
-        this.endGame(team === TEAM_ENEMY, 'dominance');
-        return;
+        if (team === TEAM_PLAYER) { this.endGame(false, 'dominance'); return; }
+        /* a rival crown that cannot raise a roof is out of the war, and the
+           crown that broke it inherits what is left -- see collapse() */
+        this.collapse(team, this._rooflessKiller(team));
       }
     }
   }
@@ -1928,6 +2032,186 @@ export class Game {
     this.running = false;
     this.result = { win, reason, time: this.time };
     this.onEvent('gameover', this.result);
+  }
+
+  /* ==========================================================
+     collapse & inheritance
+     ----------------------------------------------------------
+     When a crown falls, its lands do not become a wasteland and
+     its army does not evaporate: the crown that broke it *inherits*
+     them. Treasury, techs, standing decrees and every soldier who
+     is still breathing change allegiance -- with their hard-earned
+     ranks intact, because a veteran who has survived four battles
+     is exactly the asset a conqueror is fighting for.
+
+     The inheritor is the crown that actually did the breaking: the
+     last army to strike the falling crown, or failing that the
+     strongest crown left standing. Inheritance is a real swing in
+     the war, so it is announced loudly and drawn on the map.
+     ========================================================== */
+  /** Who gets the spoils: the crown that last drew blood, else the strongest. */
+  _rooflessKiller(team) {
+    if (this.lastBlood && this.lastBlood.get(team)) {
+      const killer = this.lastBlood.get(team);
+      if (killer !== team && this.teamIds.includes(killer) && this.aliveTeam(killer)) return killer;
+    }
+    let best = null, bestScore = -Infinity;
+    for (const t of this.teamIds) {
+      if (t === team) continue;
+      if (!this.aliveTeam(t)) continue;
+      const score = this.scoreOf(t);
+      if (score > bestScore) { bestScore = score; best = t; }
+    }
+    return best;
+  }
+
+  /** Remember who hit whom, so the spoils go where the war was won. */
+  noteBlood(victimTeam, attackerTeam) {
+    if (victimTeam === undefined || attackerTeam === undefined) return;
+    if (victimTeam === attackerTeam) return;
+    if (!this.lastBlood) this.lastBlood = new Map();
+    if (!this.teamIds.includes(victimTeam)) return;
+    this.lastBlood.set(victimTeam, attackerTeam);
+  }
+
+  /** A crude but honest strength score, used by Supremacy and by spoils. */
+  scoreOf(team) {
+    const st = this.teams.get(team);
+    if (!st) return 0;
+    let score = 0;
+    for (const b of this.buildings) {
+      if (b.dead || b.team !== team) continue;
+      score += 6 + (b.type === 'town_center' ? 12 : b.type === 'castle' ? 10 : b.type === 'wonder' ? 40 : 0);
+    }
+    for (const u of this.units) {
+      if (u.dead || u.team !== team) continue;
+      if (u.type === 'villager') { score += 2; continue; }
+      score += 3 + (u.rank || 0) * 2 + (u.isKing ? 30 : 0) + (u.def.threat ? u.def.threat * 2 : 0);
+    }
+    score += (st.age || 0) * 14;
+    score += (st.kills || 0) * 0.5;
+    score += (st.res.food + st.res.wood + st.res.gold + st.res.stone) / 500;
+    if (this.realm) score += Math.max(0, this.realm.state(team).commons - 40) * 0.2;
+    return score;
+  }
+
+  scoreboard() {
+    const rows = this.teamIds.map((team) => ({
+      team,
+      name: CIVS[this.civOf(team)]?.name || `Crown ${team}`,
+      score: this.scoreOf(team),
+      alive: this.aliveTeam(team),
+      fallen: this.fallenTeams ? this.fallenTeams.has(team) : false
+    }));
+    rows.sort((a, b) => (b.alive ? 1 : 0) - (a.alive ? 1 : 0) || b.score - a.score || a.team - b.team);
+    return rows;
+  }
+
+  /**
+   * Take a crown out of the war and hand what is left to `heir`.
+   * Public because Regicide, Supremacy, dominance and the tests all need it.
+   */
+  collapse(team, heir = null) {
+    if (!this.fallenTeams) this.fallenTeams = new Set();
+    if (this.fallenTeams.has(team)) return { ok: false };
+    this.fallenTeams.add(team);
+    const loser = this.teams.get(team);
+    const spoils = { heir, resources: null, techs: [], units: 0, favor: 0, buffs: 0 };
+    const target = heir && heir !== team && this.teams.has(heir) ? heir : null;
+    if (target && loser) {
+      const winner = this.teams.get(target);
+      /* treasury */
+      spoils.resources = {};
+      for (const k of RES_KEYS) {
+        const amount = Math.max(0, loser.res[k] || 0);
+        winner.res[k] = (winner.res[k] || 0) + amount;
+        loser.res[k] = 0;
+        spoils.resources[k] = Math.round(amount);
+      }
+      /* favour */
+      spoils.favor = Math.round(loser.favor || 0);
+      winner.favor = Math.min(400, (winner.favor || 0) + (loser.favor || 0));
+      loser.favor = 0;
+      /* every technology the fallen crown had researched */
+      for (const tech of loser.techs) {
+        if (!winner.techs.has(tech)) { winner.techs.add(tech); spoils.techs.push(tech); }
+      }
+      spoils.buffs = (loser.buffs || []).length;
+      for (const bf of loser.buffs || []) {
+        const existing = winner.buffs.find((b2) => b2.kind === bf.kind);
+        if (existing) existing.time = Math.max(existing.time, bf.time);
+        else winner.buffs.push({ ...bf });
+      }
+      loser.buffs.length = 0;
+      if (loser.age > winner.age) { winner.age = loser.age; }
+      this.statsVersion++;
+      this._costCache.clear();
+      this._buildCostCache.clear();
+      this.popDirty = true;
+      /* the realm remembers a rival humbled */
+      if (this.realm) {
+        const rs = this.realm.state(target);
+        if (!rs.empty) {
+          rs.commons = Math.min(100, rs.commons + 5);
+          rs.nobles = Math.min(100, rs.nobles + 9);
+          rs.glory = Math.min(40, rs.glory + 6);
+        }
+      }
+    }
+    /* the army changes its colours: a soldier does not stop existing because
+       his king did, and the ranks he earned come with him */
+    if (target) {
+      for (const u of this.units) {
+        if (u.dead || u.team !== team) continue;
+        if (u.isKing) continue;
+        this.convertUnit(u, target);
+        u.morale = Math.min(u.morale ?? 100, 62);
+        u.state = STATE.IDLE;
+        u.target = null;
+        u.aiRole = null;
+        u.isRebel = false;
+        u.rebelAgainst = 0;
+        spoils.units++;
+      }
+    }
+    /* The roofs change hands too. A conqueror who takes a kingdom takes its
+       barracks, its farms and its walls -- otherwise the map is full of
+       orphaned buildings nobody can use and nobody can burn. Footprints are
+       re-stamped because a captured gate now opens for its new owner. */
+    if (target) {
+      for (const b of this.buildings) {
+        if (b.dead || b.team !== team) continue;
+        if (b.def && b.def.neutral) continue;
+        b.team = target;
+        if (b.def.wall || b.def.gate) {
+          this.markBuildingFootprint(b, false);
+          this.markBuildingFootprint(b, true);
+        }
+        spoils.buildings = (spoils.buildings || 0) + 1;
+        if (this.fx) this.fx.sparks(b.x, this.heightAt(b.x, b.z) + 2, b.z, 6, [1, 0.85, 0.5]);
+      }
+      this.popDirty = true;
+      this.recomputePop();
+      this.refreshNav();
+    }
+    /* what cannot be inherited is burned so it cannot be used against the heir */
+    for (const u of this.units) {
+      if (!u.dead && u.team === team && u.isKing) u.takeDamage(u.maxHp, null, 'siege');
+    }
+    /* and every AI that was campaigning against this crown picks a new foe */
+    this.onEvent('collapse', { team, heir: target, spoils });
+    if (this.notify) {
+      const winnerName = target ? (CIVS[this.civOf(target)]?.name || 'a rival') : null;
+      if (team === TEAM_PLAYER) this.notify('Your crown has fallen', 'bad');
+      else if (target === TEAM_PLAYER) this.notify(`${CIVS[this.civOf(team)]?.name || 'A rival crown'} has fallen to you — their treasury, their learning and their army are yours`, 'good');
+      else this.notify(`${CIVS[this.civOf(team)]?.name || 'A crown'} has fallen${winnerName ? ` to ${winnerName}` : ''}`, 'warn');
+    }
+    if (this.sound) this.sound.play('ageUp');
+    if (this.fx && target) {
+      const b = this.baseOf(target);
+      this.fx.glowPulse?.(b.x, this.heightAt(b.x, b.z) + 2, b.z, 2.4, 0.9, 0.5);
+    }
+    return { ok: true, ...spoils };
   }
 
   /* ==========================================================

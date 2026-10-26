@@ -137,6 +137,9 @@
 
     <div id="alertStrip"></div>
 
+    <!-- the crowns of a War of Crowns: one pill per kingdom, only in that mode -->
+    <div id="crownStrip" class="hidden"></div>
+
     <!-- mod session strip: only ever populated in a Mod Workshop match -->
     <div id="modHud" class="hidden"></div>
 
@@ -249,6 +252,11 @@
               <b>Imperial Conquest</b>
               <small>Rival kingdoms, four ages, open warfare.</small>
             </button>
+            <button class="modeCard" data-mode="kingdoms">
+              <svg class="ic big"><use href="#i-flag"/></svg>
+              <b>War of Crowns</b>
+              <small>Three or four kingdoms. The fallen are inherited.</small>
+            </button>
             <button class="modeCard" data-mode="regicide">
               <svg class="ic big"><use href="#i-crown"/></svg>
               <b>Regicide</b>
@@ -281,6 +289,18 @@
             <button class="seg" data-diff="extreme">Imperious</button>
             <button class="seg" data-diff="sandbox">Peaceful</button>
           </div>
+          <div class="segRow" id="victoryRow" title="How this war is won">
+            <button class="seg active" data-victory="conquest">Conquest</button>
+            <button class="seg" data-victory="regicide">Regicide</button>
+            <button class="seg" data-victory="wonder">Wonder</button>
+            <button class="seg" data-victory="supremacy">Supremacy</button>
+          </div>
+          <div class="segRow" id="kingdomRow" title="How many crowns share the island">
+            <button class="seg" data-kingdoms="2">Two crowns</button>
+            <button class="seg active" data-kingdoms="3">Three</button>
+            <button class="seg" data-kingdoms="4">Four</button>
+          </div>
+          <div class="victoryBrief" id="victoryBrief"></div>
           <div class="seedRow">
             <label for="seedInput">Map seed</label>
             <input id="seedInput" type="text" inputmode="numeric" value="20261" maxlength="9" />

@@ -43,6 +43,9 @@ export class Morale {
 
   homeOf(team) {
     const g = this.game;
+    /* every crown has its own seat; the old two-corner fallback is kept for
+       the tests and for callers that run before the world exists */
+    if (g.baseOf) { const b = g.baseOf(team); if (b) return b; }
     return team === 1 ? g.playerBase : g.enemyBase;
   }
 
@@ -195,7 +198,9 @@ export class Morale {
     this._acc = 0;
     const g = this.game;
     const night = g.dayPhase === 'night';
-    this._frameSources = { 1: this._scan(1), 2: this._scan(2) };
+    this._frameSources = {};
+    const roster = g.teamIds || [1, 2];
+    for (let i = 0; i < roster.length; i++) this._frameSources[roster[i]] = this._scan(roster[i]);
     const units = g.units;
     for (let i = 0; i < units.length; i++) {
       const u = units[i];

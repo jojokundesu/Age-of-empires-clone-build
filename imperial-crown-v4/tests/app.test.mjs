@@ -310,6 +310,50 @@ check('quit the sandbox', () => {
   assert(!document.getElementById('menuScreen').classList.contains('hidden'), 'menu not shown');
 });
 
+/* A War of Crowns is the one mode where the save has more than two sides to
+   remember, and where a reload that quietly fell back to a duel would throw
+   the player into a different match. The save carries its own island. */
+await acheck('a four-crown war saves and reloads as the same war', async () => {
+  const raf = (fn) => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf; window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'kingdoms', civ: 'franks', difficulty: 'standard', seed: 20261, kingdoms: 4, victory: 'regicide' });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const g = app.game;
+  assert(g.teamIds.length === 4, `${g.teamIds.length} teams`);
+  assert(app.ais.length === 3, `${app.ais.length} AI controllers`);
+  for (const t of g.teamIds) g.teams.get(t).res.gold = 300 + t * 10;
+  const crownCourt = g.court.rec(4);
+  assert(crownCourt, 'the fourth crown has no court');
+  assert(app.saveMatch(), 'the war could not be saved');
+  const save = JSON.parse(window.localStorage.getItem('imperial-crown-save'));
+  assert(save.kingdoms === 4 && save.victory === 'regicide', `saved as ${save.kingdoms} crowns, ${save.victory}`);
+  assert(Object.keys(save.teams).length === 4, `${Object.keys(save.teams).length} ledgers saved`);
+  g.fallenTeams.add(3);
+  g.lastBlood.set(3, 2);
+  assert(app.saveMatch(), 'the war could not be saved after a fall');
+  const save2 = JSON.parse(window.localStorage.getItem('imperial-crown-save'));
+
+  const r = (fn) => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = r; window.requestAnimationFrame = r;
+  await app.startMatch({ mode: 'kingdoms', civ: 'franks', difficulty: 'standard', seed: 20261, load: save2 });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const g2 = app.game;
+  assert(g2.teamIds.length === 4, `the reloaded war has ${g2.teamIds.length} crowns`);
+  assert(g2.victory === 'regicide', `victory came back as ${g2.victory}`);
+  assert(g2.fallenTeams.has(3), 'the fallen crown came back to life');
+  assert(g2.lastBlood.get(3) === 2, 'the blood debt was forgotten');
+  assert(g2.court.rec(4), 'the fourth crown lost its court on reload');
+  for (const t of g2.teamIds) {
+    assert(Math.abs(g2.teams.get(t).res.gold - (300 + t * 10)) < 1, `crown ${t} came back with ${g2.teams.get(t).res.gold} gold`);
+  }
+  assert(app.ais.length === 3, 'the reloaded war lost its AI crowns');
+  for (const a of app.ais) assert(a.foe !== null, 'an AI crown has no foe after a reload');
+});
+check('quit the war', () => {
+  app.quitToMenu();
+  assert(!document.getElementById('menuScreen').classList.contains('hidden'), 'menu not shown');
+});
+
 console.log('');
 if (fails.length) { console.log(`FAILURES (${fails.length}):`); for (const f of fails) console.log(' - ' + f); process.exit(1); }
 console.log('APPLICATION CHECKS PASSED');

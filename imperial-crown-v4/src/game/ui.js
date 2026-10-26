@@ -6,11 +6,16 @@
    ============================================================ */
 import {
   AGES, CIVS, RES_META, TECH_DEFS, UNIT_DEFS, BUILDING_DEFS, BUILDING_AGE, UNIT_AGE,
-  POP_CAP, unitForCiv
+  POP_CAP, unitForCiv, teamColor
 } from '../sim/data.js';
 import { clamp, fmtTime } from '../core/math.js';
 import { iconFor } from './menu.js';
 import { STATE } from '../sim/entities.js';
+const TEAM_NEUTRAL = 0;
+/* The minimap has always drawn the player in blue and the enemy in red, on a
+   parchment ground; that is part of the map's look, so the extra crowns take
+   colours that read well at six pixels rather than reusing the 3D palette. */
+const MINIMAP_TEAM = { 1: '#63b6e8', 2: '#e0564b', 3: '#9d7bff', 4: '#d9c07a' };
 import { OFFICES as COURT_OFFICES, RANK_AT } from '../sim/court.js';
 import { TAX_RATES } from '../sim/realm.js';
 
@@ -56,7 +61,7 @@ export class UI {
       'inspIcon', 'inspName', 'inspSub', 'inspMultiBtn', 'hpWrap', 'hpFill', 'hpText',
       'inspStats', 'queueWrap', 'queueFill', 'queueText', 'queueDots',
       'cmdBoot', 'cmdGrid', 'toastLayer', 'perfChip', 'diagBtn',
-      'tapFx', 'floatLayer', 'selBox', 'stage', 'modalScreen'];
+      'tapFx', 'floatLayer', 'selBox', 'stage', 'modalScreen', 'crownStrip'];
     for (const id of ids) this.el[id] = document.getElementById(id);
     this.miniCtx = this.el.minimap ? this.el.minimap.getContext('2d') : null;
     this.miniBase = null;
@@ -1117,15 +1122,30 @@ export class UI {
     const clock = fmtTime(g.elapsed || g.time);
     if (last.clock !== clock) { last.clock = clock; if (el.clock) el.clock.textContent = clock; }
     if (el.wonderTimer) {
+      /* The same pill carries the wonder countdown and, under a supremacy
+         term, the clock until the war is decided by strength. A player who
+         cannot see how long is left cannot make the decision the term asks
+         of them: spend everything now, or hold. */
       const w = g.wonderStatus ? g.wonderStatus() : null;
-      const left = w ? Math.max(0, Math.ceil(w.hold - Math.max(w.mine, w.theirs))) : 0;
-      const str = w ? `\u2726 ${fmtTime(left)}` : '';
+      let str = '', side = 'mine', done = false;
+      if (w) {
+        const left = Math.max(0, Math.ceil(w.hold - Math.max(w.mine, w.theirs)));
+        str = `\u2726 ${fmtTime(left)}`;
+        side = w.theirs > w.mine ? 'enemy' : 'mine';
+        done = left <= 0;
+      } else if (g.victory === 'supremacy' && g.supremacyClock) {
+        const left = Math.max(0, Math.ceil(g.supremacyClock - g.time));
+        const board = g.scoreboard ? g.scoreboard() : null;
+        str = `\u29d7 ${fmtTime(left)}`;
+        side = board && board.length && board[0].team !== 1 ? 'enemy' : 'mine';
+        done = left <= 0;
+      }
       if (last.wonder !== str) {
         last.wonder = str;
         el.wonderTimer.textContent = str;
-        el.wonderTimer.classList.toggle('hidden', !w);
-        el.wonderTimer.dataset.side = w && w.theirs > w.mine ? 'enemy' : 'mine';
-        el.wonderTimer.classList.toggle('done', !!w && left <= 0);
+        el.wonderTimer.classList.toggle('hidden', !str);
+        el.wonderTimer.dataset.side = side;
+        el.wonderTimer.classList.toggle('done', done);
       }
     }
     /* ---- the Wheel of the Year ----
@@ -1181,6 +1201,30 @@ export class UI {
        Names the era and carries a strain bar under it. The tooltip is the
        whole rules table plus when the next turn is coming, because a climate
        a player cannot forecast is just a random tax. */
+    /* ---- the crowns ----
+       Only in a War of Crowns, and only every half second: one pill per
+       kingdom with its strength, struck through when it falls. This is the
+       scoreboard a player needs to decide who to hit next. */
+    if (el.crownStrip && g.teamIds && g.teamIds.length > 2) {
+      this.crownAcc = (this.crownAcc || 0) + dt;
+      if (this.crownAcc > 0.5) {
+        this.crownAcc = 0;
+        el.crownStrip.classList.remove('hidden');
+        const rows = g.scoreboard();
+        const sig = rows.map((r) => `${r.team}${r.alive ? 1 : 0}${Math.round(r.score / 10)}`).join('|');
+        if (this._lastCrownKey !== sig) {
+          this._lastCrownKey = sig;
+          el.crownStrip.innerHTML = rows.map((r) => {
+            const col = MINIMAP_TEAM[r.team] || '#b9a678';
+            const label = r.name.split(' ')[0];
+            return `<span class="crown${r.team === 1 ? ' me' : ''}${r.alive ? '' : ' fallen'}" title="${r.name} · ${r.alive ? `${Math.round(r.score)} strength` : 'fallen'}">
+              <i style="background:${col}"></i>${label}<b>${r.alive ? Math.round(r.score) : '✕'}</b></span>`;
+          }).join('');
+        }
+      }
+    } else if (el.crownStrip) {
+      el.crownStrip.classList.add('hidden');
+    }
     if (el.climateChip && g.climate) {
       const c = g.climate.chip();
       const key = `${c.id}|${Math.round(c.strain)}|${Math.round(c.progress * 12)}`;
@@ -1324,7 +1368,7 @@ export class UI {
     const e = sel[0];
     if (el.inspName) el.inspName.textContent = e.name || e.def?.name || e.type;
     if (el.inspIcon) el.inspIcon.innerHTML = icon(e.def?.icon || (e.kind === 'resource' ? 'tree' : 'flag'));
-    const teamName = e.team === 1 ? CIVS[g.civOf(1)]?.name : e.team === 2 ? CIVS[g.civOf(2)]?.name : 'Neutral';
+    const teamName = e.team === 0 ? 'Neutral' : (g.civOf(e.team) ? CIVS[g.civOf(e.team)]?.name : 'Rebels');
     if (el.inspSub) {
       let sub = '';
       if (e.kind === 'building') {
@@ -1561,7 +1605,7 @@ export class UI {
       const b = build[i];
       if (b.dead) continue;
       if (b.team === 1 || g.isVisible(b.x, b.z)) {
-        ctx.fillStyle = b.team === 1 ? '#63b6e8' : b.team === 2 ? '#e0564b' : '#d9c07a';
+        ctx.fillStyle = b.team === TEAM_NEUTRAL ? '#b9a678' : (MINIMAP_TEAM[b.team] || '#b9a678');
         const s = b.def.ageAdvance ? 5 : 3.4;
         ctx.fillRect(px(b.x) - s / 2, pz(b.z) - s / 2, s, s);
       }
@@ -1572,7 +1616,11 @@ export class UI {
       const u = units[i];
       if (u.dead || u.garrisoned) continue;
       if (u.team !== 1 && !g.isVisible(u.x, u.z)) continue;
-      ctx.fillStyle = u.team === 1 ? (u.type === 'villager' ? '#9adfe8' : '#7ac25b') : '#e0564b';
+      /* the player keeps the blue/green it always had; rivals carry their
+         crown's colour so four armies can be told apart on one map */
+      ctx.fillStyle = u.team === 1
+        ? (u.type === 'villager' ? '#9adfe8' : '#7ac25b')
+        : (MINIMAP_TEAM[u.team] || '#e0564b');
       ctx.fillRect(px(u.x) - 1.2, pz(u.z) - 1.2, 2.6, 2.6);
     }
     // camera view
@@ -1608,17 +1656,23 @@ export class UI {
     const t = g.teams.get(1);
     const title = win ? 'The Crown Is Yours' : 'The Empire Falls';
     const kicker = win ? 'VICTORY' : 'DEFEAT';
+    /* A war of crowns has one more way to end and one more way to read: a
+       fallen kingdom's army changes colours, so "conquest" is not always the
+       banner picture a player saw. */
+    const crowns = g.crowns || 2;
     const winDesc = {
       wonder: 'Your wonder stood unchallenged for two hundred seconds. History will remember.',
-      regicide: 'The enemy king is dead. Their lords kneel before yours.',
+      regicide: crowns > 2 ? 'Every rival king is dead. Three thrones, one crown.' : 'The enemy king is dead. Their lords kneel before yours.',
       dominance: 'Nothing of the enemy stands. The land is yours by right of arms.',
-      conquest: 'The enemy banners are down. Your rule begins.'
+      supremacy: crowns > 2 ? 'The clock ran out with your kingdom the strongest on the island. The others bend the knee.' : 'The time of decision came, and your realm stood strongest. The war is won.',
+      conquest: crowns > 2 ? 'Every rival crown is broken. Their armies march under your banner now.' : 'The enemy banners are down. Your rule begins.'
     };
     const loseDesc = {
       wonder: 'Their wonder stood unchallenged. The chronicles will not be kind.',
       regicide: 'Your king has fallen. The line ends here.',
       dominance: 'Not one stone of yours still stands. There is nothing left to defend.',
-      conquest: 'Your last banner has fallen. The chronicles will record this defeat.'
+      supremacy: 'The clock ran out with another crown stronger than yours. The war is theirs by right of strength.',
+      conquest: crowns > 2 ? 'The other crowns outlasted you. Your lands are theirs now, and your soldiers too.' : 'Your last banner has fallen. The chronicles will record this defeat.'
     };
     const desc = win ? (winDesc[reason] || winDesc.conquest) : (loseDesc[reason] || loseDesc.conquest);
     const metrics = [

@@ -37,7 +37,7 @@ import { buildTextures, uploadBaked, MAT, SPRITE } from './textures.js';
 import { bakeTerrain } from './bake.js';
 import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
 import { extractPlanes, sphereInFrustum } from './camera.js';
-import { BUILDING_DEFS } from '../sim/data.js';
+import { BUILDING_DEFS, teamColor } from '../sim/data.js';
 import { OFFICE_BY_ID } from '../sim/court.js';
 import { STATE } from '../sim/entities.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
@@ -1519,7 +1519,7 @@ export class Renderer {
       if (!e || e.dead) continue;
       const meta = this.buildingMeta.get(e.type);
       const r = e.kind === 'building' ? (meta ? meta.footprint * 0.72 : 2.6) : (e.radius || 0.5) * 1.9;
-      const tc = e.team === 1 ? [0.35, 0.95, 0.5] : e.team === 2 ? [1, 0.36, 0.3] : [1, 0.86, 0.4];
+      const tc = teamColor(e.team).ring;
       d.push(e.x, e.y + 0.07, e.z, r, tc[0], tc[1], tc[2], 0.9, 0, 1, 0, 0);
     }
     /* the court's officers keep a ring of their own office's colour on the
@@ -1668,7 +1668,7 @@ export class Renderer {
          over every commander would be noise, not information */
       if (selected || ratio <= 0.995) {
         b.push(u.x, y, u.z, w + 0.06, 0.02, 0.02, 0.02, 0.45, 0.12, 0, 0.6, 0);
-        const col = u.team === 1 ? [0.42, 0.92, 0.45] : u.team === 2 ? [0.98, 0.36, 0.3] : [0.95, 0.84, 0.45];
+        const col = teamColor(u.team).unit;
         b.push(u.x - (w * (1 - ratio)) * 0.5, y, u.z, w * ratio, col[0], col[1], col[2], 0.95, 0.1, 0, 0.9, 0);
       }
     }
@@ -1685,7 +1685,7 @@ export class Renderer {
       const w = clamp(meta.footprint * 0.5, 1.3, 3.2);
       if (!this._inFrustum(bd.x, y, bd.z, w + 2)) continue;
       b.push(bd.x, y, bd.z, w + 0.08, 0.02, 0.02, 0.02, 0.45, 0.16, 0, 0.6, 0);
-      const col = bd.team === 1 ? [0.42, 0.92, 0.45] : bd.team === 2 ? [0.98, 0.36, 0.3] : [0.95, 0.84, 0.45];
+      const col = teamColor(bd.team).unit;
       b.push(bd.x - (w * (1 - ratio)) * 0.5, y, bd.z, w * ratio, col[0], col[1], col[2], 0.95, 0.13, 0, 0.9, 0);
     }
     b.flush();

@@ -169,9 +169,16 @@ export class Climate {
       this.book.drift = perSecond;
       this.book.smoke = this.fuel;
 
-      /* the era turns on strain *or* on time, whichever comes first: a
-         realm that strips the island gets its answer sooner */
-      if (!this.isFinal && (this.strain >= this.next.strainAt || this.t >= this.eraLengths[this.eraIndex])) {
+      /* The era turns on strain *or* on time, but never before the climate
+         has had a long, unhurried stretch to settle: a very busy realm used to
+         be able to strip the island and turn the sky inside ten minutes, which
+         made the slow clock feel like a reaction to the player rather than a
+         world older than the war. Fifteen minutes is the floor, and it is a
+         floor no amount of felling can break -- the first change lands in the
+         15-20 minute band the mode is designed around. */
+      const floor = Math.min(900, this.eraLengths[this.eraIndex]);
+      if (!this.isFinal && this.t >= floor &&
+        (this.strain >= this.next.strainAt || this.t >= this.eraLengths[this.eraIndex])) {
         this.turn();
       }
 

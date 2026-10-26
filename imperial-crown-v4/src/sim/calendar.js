@@ -243,7 +243,7 @@ export class Calendar {
     const g = this.game;
     const s = this.season;
     if (s.harvest) {
-      for (const team of [1, 2]) {
+      for (const team of (g.teamIds || [1, 2])) {
         const st = g.teams.get(team);
         if (!st) continue;
         const villagers = g.units.filter((u) => !u.dead && u.team === team && u.type === 'villager').length;
@@ -301,7 +301,10 @@ export class Calendar {
       for (const u of g.units) {
         if (u.dead || u.garrisoned || u.type === 'villager') continue;
         if (u.team === 0) continue;
-        const enemyBase = u.team === 1 ? g.enemyBase : g.playerBase;
+        /* the plague settles on the armies camped outside somebody else's
+           walls: the rival nearest to this soldier is the one he is besieging */
+        const foe = g.rivalSeats ? g.rivalSeats(u.team, u.x, u.z)[0] : null;
+        const enemyBase = foe ? foe.base : (u.team === 1 ? g.enemyBase : g.playerBase);
         if (!enemyBase) continue;
         if ((u.x - enemyBase.x) ** 2 + (u.z - enemyBase.z) ** 2 > 58 * 58) continue;
         u.takeDamage(1.4, null, 'pierce');
@@ -315,7 +318,7 @@ export class Calendar {
       let victim = null, worst = -1;
       for (const u of g.units) {
         if (u.dead || u.garrisoned || u.team === 0 || u.type === 'villager') continue;
-        const home = u.team === 1 ? g.playerBase : g.enemyBase;
+        const home = g.baseOf ? g.baseOf(u.team) : (u.team === 1 ? g.playerBase : g.enemyBase);
         if (!home) continue;
         const d = Math.hypot(u.x - home.x, u.z - home.z);
         if (d > 26 && d > worst) { worst = d; victim = u; }

@@ -377,7 +377,8 @@ console.log('\nEDGE CASES');
     run(g, 90);
     const h1 = g.worldTime;
     const hours = ((h1 - h0) + 24) % 24;
-    const expected = 90 / (g.dayLength / 24);
+    /* the true cycle: ten minutes of light, five of dark */
+    const expected = 90 * (24 / 900);
     assert(Math.abs(hours - expected) < 0.6, `90 s moved the clock ${hours.toFixed(2)} h, expected ${expected.toFixed(2)}`);
   });
 

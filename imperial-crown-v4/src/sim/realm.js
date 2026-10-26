@@ -43,10 +43,15 @@ import { STATE } from './entities.js';
    is the single place that rule lives. */
 const P = 1;
 const E = 2;
-export const TEAM_REBEL_P = 3;
-export const TEAM_REBEL_E = 4;
-export const rebelTeamOf = (team) => (team === P ? TEAM_REBEL_P : TEAM_REBEL_E);
-export const crownOfRebel = (team) => (team === TEAM_REBEL_P ? P : team === TEAM_REBEL_E ? E : 0);
+/* Rebel teams live in their own range so that a war of four crowns can still
+   have four separate risings. `rebelTeamOf(3)` is 13, `crownOfRebel(13)` is 3:
+   one addition and one subtraction, and every kingdom -- however many there
+   are -- gets a warband that answers only it. */
+export const REBEL_BASE = 10;
+export const TEAM_REBEL_P = REBEL_BASE + P;
+export const TEAM_REBEL_E = REBEL_BASE + E;
+export const rebelTeamOf = (team) => REBEL_BASE + team;
+export const crownOfRebel = (team) => (team > REBEL_BASE ? team - REBEL_BASE : 0);
 
 /** The poll tax dial. Gold is per villager per second, the rest are points of
     target standing: a tax rate is a trade, never a free number. */
@@ -107,7 +112,7 @@ const OMEN_MOOD = {
   still_air: { commons: -1, nobles: -1 }
 };
 
-const freshState = () => ({
+export const freshRealmState = () => ({
   commons: START.commons,
   nobles: START.nobles,
   tax: 'fair',
@@ -139,7 +144,7 @@ export class Realm {
   constructor(game) {
     this.game = game;
     this._acc = 0;
-    this.teams = new Map([[P, freshState()], [E, freshState()]]);
+    this.teams = new Map();
     this.events = [];          // short ring the UI can drain for notices
     this.crises = 0;
   }
@@ -147,8 +152,15 @@ export class Realm {
   /** Never null: an unknown (rebel/neutral) team reads as an empty realm. */
   state(team) {
     let s = this.teams.get(team);
-    if (!s) { s = freshState(); s.empty = true; this.teams.set(team, s); }
+    if (!s) { s = freshRealmState(); s.empty = true; this.teams.set(team, s); }
     return s;
+  }
+
+  /** Every kingdom with a realm (rebels and shrines do not have one). */
+  kingdoms() {
+    const out = [];
+    for (const [team, s] of this.teams) if (!s.empty) out.push(team);
+    return out;
   }
 
   has(team) { return !!this.teams.get(team); }
@@ -378,8 +390,9 @@ export class Realm {
     const spawned = [];
     for (let i = 0; i < count; i++) {
       const home = homes.length ? homes[(i * 7 + (g.frame | 0)) % homes.length] : null;
-      const bx = home ? home.x : (team === P ? g.playerBase.x : g.enemyBase.x);
-      const bz = home ? home.z : (team === P ? g.playerBase.z : g.enemyBase.z);
+      const seat = g.baseOf ? g.baseOf(team) : g.playerBase;
+      const bx = home ? home.x : seat.x;
+      const bz = home ? home.z : seat.z;
       const a = g.rng() * Math.PI * 2;
       const r = 2.5 + g.rng() * 3.5;
       g.ensureRebelTeam(rebel);
@@ -429,8 +442,9 @@ export class Realm {
       if (b.dead || b.team !== team || b.buildProgress < 0.99) continue;
       if (b.type === 'castle' || b.type === 'barracks' || b.type === 'stable' || b.type === 'town_center') { seat = b; break; }
     }
-    const bx = seat ? seat.x : (team === P ? g.playerBase.x : g.enemyBase.x);
-    const bz = seat ? seat.z : (team === P ? g.playerBase.z : g.enemyBase.z);
+    const home = g.baseOf ? g.baseOf(team) : g.playerBase;
+    const bx = seat ? seat.x : home.x;
+    const bz = seat ? seat.z : home.z;
     const spawned = [];
     g.ensureRebelTeam(rebel);
     const lord = g.spawnUnitRaw('claimant_knight', rebel, bx + 5, bz + 4);
@@ -492,7 +506,7 @@ export class Realm {
     if (seat && seatD < 70 * 70) return seat;
     if (best) return best;
     /* no buildings at all: march on the old capital */
-    const base = team === P ? g.playerBase : g.enemyBase;
+    const base = g.baseOf ? g.baseOf(team) : g.playerBase;
     return base ? { x: base.x, z: base.z, dead: false, kind: 'point' } : null;
   }
 
@@ -619,7 +633,7 @@ export class Realm {
     const step = this._acc;
     this._acc = 0;
     const g = this.game;
-    for (const team of [P, E]) {
+    for (const team of this.kingdoms()) {
       const s = this.teams.get(team);
       if (!s) continue;
       const led = this.ledger(team);
@@ -678,7 +692,8 @@ export class Realm {
             if (team === P) {
               g.notify('A golden age — the realm is devoted to your crown', 'good');
               g.sound?.play('ageUp');
-              g.fx?.glowPulse(g.playerBase.x, g.heightAt(g.playerBase.x, g.playerBase.z) + 1, g.playerBase.z, 1, 0.9, 0.6);
+              const seat = g.baseOf ? g.baseOf(team) : g.playerBase;
+              g.fx?.glowPulse(seat.x, g.heightAt(seat.x, seat.z) + 1, seat.z, 1, 0.9, 0.6);
             }
             this._emit(team, 'golden', {});
           }
@@ -754,7 +769,7 @@ export class Realm {
 
   toJSON() {
     const out = { teams: {} };
-    for (const team of [P, E]) {
+    for (const team of this.kingdoms()) {
       const s = this.teams.get(team);
       if (!s) continue;
       out.teams[team] = {
@@ -777,10 +792,14 @@ export class Realm {
 
   fromJSON(data) {
     if (!data || !data.teams) return;
-    for (const team of [P, E]) {
-      const d = data.teams[team];
-      const s = this.teams.get(team);
-      if (!d || !s) continue;
+    /* a save may carry kingdoms this match does not have (or the other way
+       round); only the ones that exist are restored */
+    for (const key of Object.keys(data.teams)) {
+      const team = Number(key);
+      const d = data.teams[key];
+      if (!Number.isFinite(team)) continue;
+      const s = this.state(team);
+      if (!d) continue;
       s.commons = clamp(Number(d.commons) || 50, 0, 100);
       s.nobles = clamp(Number(d.nobles) || 50, 0, 100);
       s.tax = TAX_BY_ID.has(d.tax) ? d.tax : 'fair';

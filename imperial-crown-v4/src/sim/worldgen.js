@@ -195,11 +195,22 @@ export function generateWorld(seed = 20261, opts = {}) {
     }
   }
 
-  // ---- spawn sites: two opposite corners, flattened and cleared
-  const playerBase = findBaseSite(hf, walk, -150, 150, rng);
-  const enemyBase = findBaseSite(hf, walk, 150, -150, rng);
-  flattenPlateau(hf, playerBase.x, playerBase.z, 26, playerBase.h);
-  flattenPlateau(hf, enemyBase.x, enemyBase.z, 26, enemyBase.h);
+  // ---- spawn sites: up to four corners, each flattened and cleared
+  /* A War of Crowns puts three or four kingdoms on one island, so the map
+     has to find a fair site in every corner it is asked for. `sites` is 2
+     for every classic match, which produces exactly the same two sites the
+     game has always used -- the extra corners are only searched when the
+     match actually asks for them, so a two-player game's island is
+     byte-identical to before. */
+  const sites = Math.max(2, Math.min(4, (opts && opts.sites) | 0 || 2));
+  const CORNERS = [[-150, 150], [150, -150], [150, 150], [-150, -150]];
+  const playerBase = findBaseSite(hf, walk, CORNERS[0][0], CORNERS[0][1], rng);
+  const enemyBase = findBaseSite(hf, walk, CORNERS[1][0], CORNERS[1][1], rng);
+  const SEATS = [playerBase, enemyBase];
+  for (let i = 2; i < sites; i++) {
+    SEATS.push(findBaseSite(hf, walk, CORNERS[i][0], CORNERS[i][1], rng, SEATS));
+  }
+  for (const b of SEATS) flattenPlateau(hf, b.x, b.z, 26, b.h);
   // recompute walkability inside plateaus
   for (let z = 0; z < n; z++) {
     for (let x = 0; x < n; x++) {
@@ -220,7 +231,7 @@ export function generateWorld(seed = 20261, opts = {}) {
   const decor = [];
   const roads = [];
 
-  const nearBase = (x, z, r) => (dist2(x, z, playerBase.x, playerBase.z) < r * r) || (dist2(x, z, enemyBase.x, enemyBase.z) < r * r);
+  const nearBase = (x, z, r) => SEATS.some((b) => dist2(x, z, b.x, b.z) < r * r);
 
   // Helper: find a clear spot near a hint point
   const findSpot = (hx, hz, minR, maxR, tries = 26, needLand = true) => {
@@ -264,7 +275,7 @@ export function generateWorld(seed = 20261, opts = {}) {
   }
 
   // Straggler trees near each base
-  for (const base of [playerBase, enemyBase]) {
+  for (const base of SEATS) {
     for (let i = 0; i < 7; i++) {
       const s = findSpot(base.x, base.z, 16, 24, 20);
       if (!s) continue;
@@ -273,7 +284,7 @@ export function generateWorld(seed = 20261, opts = {}) {
   }
 
   // Gold + stone clusters, one guaranteed close to each base
-  for (const base of [playerBase, enemyBase]) {
+  for (const base of SEATS) {
     const gs = findSpot(base.x, base.z, 18, 26, 30);
     if (gs) for (let i = 0; i < 5; i++) {
       const a = (i / 5) * TAU;
@@ -366,17 +377,25 @@ export function generateWorld(seed = 20261, opts = {}) {
     decor.push({ type: rng() < 0.5 ? 'log' : 'tuft', x, z, y: h, scale: 0.5 + rng() * 0.7, rot: rng() * TAU, tint: rng() });
   }
 
-  // Roads between the bases (a curving dirt path) — pushed into the splat map
+  /* Roads between the seats of every kingdom (a curving dirt path) — pushed
+     into the splat map. Two seats produce exactly the one road this map has
+     always had; four produce a web, which is what makes a war of four crowns
+     read as one road network instead of four private corners. */
   const roadPts = [];
   {
-    const steps = 70;
-    for (let i = 0; i <= steps; i++) {
-      const t = i / steps;
-      const bend = Math.sin(t * 5.4) * 34 + Math.sin(t * 11.1 + 1.3) * 12;
-      const x = lerp(playerBase.x, enemyBase.x, t) + Math.cos(t * 3.1) * bend * 0.55;
-      const z = lerp(playerBase.z, enemyBase.z, t) + Math.sin(t * 2.4) * bend * 0.4;
-      if (hfSample(hf, x, z) < -0.3) continue;
-      roadPts.push([x, z]);
+    const pairs = [];
+    for (let i = 0; i < SEATS.length; i++) for (let j = i + 1; j < SEATS.length; j++) pairs.push([SEATS[i], SEATS[j]]);
+    for (const [a, b] of pairs) {
+      const steps = 70;
+      const seedA = (a.x + a.z) * 0.011;
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const bend = Math.sin(t * 5.4 + seedA) * 34 + Math.sin(t * 11.1 + 1.3) * 12;
+        const x = lerp(a.x, b.x, t) + Math.cos(t * 3.1 + seedA) * bend * 0.55;
+        const z = lerp(a.z, b.z, t) + Math.sin(t * 2.4) * bend * 0.4;
+        if (hfSample(hf, x, z) < -0.3) continue;
+        roadPts.push([x, z]);
+      }
     }
     for (const [x, z] of roadPts) stampRoad(splat, hf, x, z, 1);
   }
@@ -385,7 +404,7 @@ export function generateWorld(seed = 20261, opts = {}) {
      been walked, carted over and cleared. A soft, noisy apron of trodden earth
      around each base does more for the scene than any amount of extra grass
      detail -- it tells the eye where the settlement ends. */
-  for (const base of [playerBase, enemyBase]) {
+  for (const base of SEATS) {
     for (let i = 0; i < 130; i++) {
       const a = rng() * TAU;
       const d = Math.sqrt(rng()) * 17;
@@ -429,7 +448,7 @@ export function generateWorld(seed = 20261, opts = {}) {
     }
     return false;
   };
-  for (const base of [playerBase, enemyBase]) {
+  for (const base of SEATS) {
     const face = Math.atan2(-base.x, -base.z);
     const put = (type, ang, rad, rot, scale = 1) => {
       const x = base.x + Math.sin(ang) * rad;
@@ -500,6 +519,7 @@ export function generateWorld(seed = 20261, opts = {}) {
     splat, water, walk, props, biome,
     resources, decor, roads: roadPts, poi, fords,
     playerBase, enemyBase,
+    bases: SEATS,
     nav: null,
     fow: null
   };
@@ -646,7 +666,7 @@ function flattenPlateau(hf, wx, wz, radius, targetH) {
   }
 }
 
-function findBaseSite(hf, walk, hx, hz, rng) {
+function findBaseSite(hf, walk, hx, hz, rng, avoid) {
   let best = { x: hx, z: hz, h: 0, score: -1e9 };
   for (let i = 0; i < 90; i++) {
     const a = rng() * TAU, d = rng() * 42;
@@ -655,6 +675,9 @@ function findBaseSite(hf, walk, hx, hz, rng) {
     const h = hf.sample(x, z);
     const slope = hf.slope(x, z);
     if (h < 0.6) continue;
+    /* two kingdoms must not be able to see each other's town centre from
+       their own: a site closer than 90 m to an existing seat is rejected */
+    if (avoid && avoid.some((b) => (b.x - x) ** 2 + (b.z - z) ** 2 < 90 * 90)) continue;
     // prefer flat, high, central-ish ground away from the rim
     const score = h * 0.6 - slope * 22 - Math.max(0, 190 - Math.hypot(x, z)) * 0.02 - d * 0.02;
     if (score > best.score) best = { x, z, h, score };

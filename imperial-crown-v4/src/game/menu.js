@@ -3,7 +3,7 @@
    The menu paints its own "campaign preview" with canvas 2D, so the
    game still has no external assets at all.
    ============================================================ */
-import { CIVS, DIFFICULTY, GAME_MODES } from '../sim/data.js';
+import { CIVS, DIFFICULTY, GAME_MODES, VICTORIES } from '../sim/data.js';
 import { mulberry32, clamp } from '../core/math.js';
 
 const AREAS = {
@@ -18,6 +18,10 @@ const AREAS = {
 };
 
 export class Menu {
+  /* The save format is the one handshake between a running match and the
+     menu. Bump it whenever a saved field changes meaning; the menu refuses
+     anything else rather than half-loading a war it does not understand. */
+  static SAVE_VERSION = 4;
   constructor(opts) {
     this.onStart = opts.onStart || (() => {});
     this.onSettingsChanged = opts.onSettingsChanged || (() => {});
@@ -26,6 +30,8 @@ export class Menu {
       mode: 'campaign',
       civ: 'franks',
       difficulty: 'hard',
+      victory: 'conquest',
+      kingdoms: 3,
       seed: 20261,
       quality: opts.quality || 'medium',
       music: true,
@@ -45,6 +51,9 @@ export class Menu {
       civGrid: document.getElementById('civGrid'),
       civBrief: document.getElementById('civBrief'),
       diffRow: document.getElementById('diffRow'),
+      victoryRow: document.getElementById('victoryRow'),
+      victoryBrief: document.getElementById('victoryBrief'),
+      kingdomRow: document.getElementById('kingdomRow'),
       seed: document.getElementById('seedInput'),
       reroll: document.getElementById('btnRerollSeed'),
       start: document.getElementById('btnStart'),
@@ -81,6 +90,23 @@ export class Menu {
       for (const c of el.modeGrid.querySelectorAll('.modeCard')) c.classList.toggle('active', c === card);
       if (this.state.mode === 'sandbox') this.state.difficulty = 'sandbox';
       this._syncDiff();
+      this._syncVictory();
+      this._syncSummary();
+      this.audio?.play('click');
+    });
+    el.victoryRow?.addEventListener('click', (e) => {
+      const b = e.target.closest('.seg');
+      if (!b) return;
+      this.state.victory = b.dataset.victory;
+      this._syncVictory();
+      this._syncSummary();
+      this.audio?.play('click');
+    });
+    el.kingdomRow?.addEventListener('click', (e) => {
+      const b = e.target.closest('.seg');
+      if (!b) return;
+      this.state.kingdoms = parseInt(b.dataset.kingdoms, 10) || 3;
+      this._syncVictory();
       this._syncSummary();
       this.audio?.play('click');
     });
@@ -121,6 +147,7 @@ export class Menu {
     el.modal?.addEventListener('click', (e) => { if (e.target.dataset.close) this.closeModal(); });
     this._buildCivGrid();
     this._syncDiff();
+    this._syncVictory();
     this._syncSummary();
     this._paintArt();
     this._tips = [
@@ -162,6 +189,42 @@ export class Menu {
     for (const b of row.children) b.classList.toggle('active', b.dataset.diff === this.state.difficulty);
   }
 
+  /* The terms of war. The row is always visible; the crown count only
+     matters in a War of Crowns, so it is hidden in a duel and the brief
+     line explains what the chosen condition actually asks of the player. */
+  _syncVictory() {
+    const el = this.el;
+    /* A mode that is already defined by its terms locks them: there is no
+       such thing as a wonder race won by conquest, or a regicide match with
+       no king. Campaign and War of Crowns leave the choice to the player. */
+    const forced = this.state.mode === 'regicide' ? 'regicide'
+      : this.state.mode === 'wonder' ? 'wonder'
+        : this.state.mode === 'sandbox' || this.state.mode === 'mods' ? null
+          : VICTORIES[this.state.victory] ? this.state.victory : 'conquest';
+    if (forced) this.state.victory = forced;
+    const v = VICTORIES[this.state.victory] || VICTORIES.conquest;
+    document.body.classList.toggle('mode-kingdoms', this.state.mode === 'kingdoms');
+    const locked = forced === 'regicide' || forced === 'wonder';
+    if (el.victoryRow) {
+      el.victoryRow.classList.toggle('locked', locked);
+      el.victoryRow.classList.toggle('hidden', this.state.mode === 'sandbox' || this.state.mode === 'mods');
+    }
+    for (const b of el.victoryRow ? el.victoryRow.querySelectorAll('.seg') : []) {
+      b.classList.toggle('active', b.dataset.victory === this.state.victory);
+    }
+    for (const b of el.kingdomRow ? el.kingdomRow.querySelectorAll('.seg') : []) {
+      b.classList.toggle('active', parseInt(b.dataset.kingdoms, 10) === this.state.kingdoms);
+    }
+    if (el.victoryBrief) {
+      const crowns = this.state.mode === 'kingdoms' ? this.state.kingdoms : 2;
+      const lines = [`<b>${v.name}</b> — ${v.desc}`];
+      if (this.state.mode === 'kingdoms') {
+        lines.push(`${crowns} crowns. A fallen kingdom's treasury, learning, standing decrees and surviving soldiers pass to the crown that broke it.`);
+      }
+      el.victoryBrief.innerHTML = lines.join(' ');
+    }
+  }
+
   _syncSummary() {
     const el = this.el;
     const civ = CIVS[this.state.civ];
@@ -171,7 +234,11 @@ export class Menu {
       el.civBrief.innerHTML = `<b>${civ.uniqueName}</b> · ${civ.bonus}<br><span class="dim">${civ.story}</span>`;
     }
     const modCount = this.enabledMods().length;
-    if (el.startSub) el.startSub.textContent = `${civ.name} · ${diff.name} · ${modCount ? `${modCount} mod${modCount === 1 ? '' : 's'}` : mode.name}`;
+    if (el.startSub) {
+      const terms = VICTORIES[this.state.victory] || VICTORIES.conquest;
+      const crowns = this.state.mode === 'kingdoms' ? ` · ${this.state.kingdoms} crowns` : '';
+      el.startSub.textContent = `${civ.name} · ${diff.name} · ${modCount ? `${modCount} mod${modCount === 1 ? '' : 's'}` : mode.name}${crowns} · ${terms.name}`;
+    }
     if (el.modCount) {
       el.modCount.textContent = String(modCount);
       el.modCount.classList.toggle('hidden', modCount === 0);
@@ -489,7 +556,7 @@ export class Menu {
       const raw = localStorage.getItem('imperial-crown-save');
       if (!raw) return null;
       const d = JSON.parse(raw);
-      return d && d.version === 3 ? d : null;
+      return d && d.version === Menu.SAVE_VERSION ? d : null;
     } catch (e) { return null; }
   }
   static clearSave() {

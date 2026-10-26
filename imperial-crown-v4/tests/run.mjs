@@ -34,6 +34,7 @@ const SUITES = [
   ['wallsite', 'tests/wallsite.mjs'],
   ['modsite', 'tests/modsite.mjs', true],
   ['realm', 'tests/realm.mjs'],
+  ['kingdoms', 'tests/kingdoms.mjs'],
   ['climate', 'tests/climate.mjs'],
   ['courtsite', 'tests/courtsite.mjs', true],
   ['magesite', 'tests/magesite.mjs', true],

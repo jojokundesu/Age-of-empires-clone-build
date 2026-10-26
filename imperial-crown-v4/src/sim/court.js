@@ -146,12 +146,24 @@ export class Court {
   constructor(game) {
     this.game = game;
     this.teams = new Map();
-    for (const team of [1, 2]) {
-      const rec = { offices: {} };
-      for (const o of OFFICES) rec.offices[o.id] = emptyOffice();
-      this.teams.set(team, rec);
-    }
+    /* One court per possible crown. The roster is not known yet when this
+       runs (crowns are decided by the match options), and a court for a
+       crown that never takes the field costs a handful of nulls -- far
+       cheaper than an order dependency. */
+    const roster = (game && game.teamIds && game.teamIds.length) ? game.teamIds.slice() : [1, 2, 3, 4];
+    for (const team of roster) this.ensure(team);
+    for (const team of [1, 2, 3, 4]) this.ensure(team);
     this._acc = 0;
+  }
+
+  /** Allocate a court for a crown that does not have one yet. */
+  ensure(team) {
+    let rec = this.teams.get(team);
+    if (rec) return rec;
+    rec = { offices: {} };
+    for (const o of OFFICES) rec.offices[o.id] = emptyOffice();
+    this.teams.set(team, rec);
+    return rec;
   }
 
   rec(team) { return this.teams.get(team) || null; }
@@ -160,7 +172,7 @@ export class Court {
   /** Walk every filled office without allocating: the renderer calls this
       once a frame to hang a sigil over each officer. */
   eachHolder(fn) {
-    for (const t of [1, 2]) {
+    for (const t of this.teams.keys()) {
       const r = this.teams.get(t);
       if (!r) continue;
       for (const o of OFFICES) {
@@ -442,7 +454,7 @@ export class Court {
     /* a tower's arrow is a valid killer, and a building's def has no classes */
     const classes = (killer.def && killer.def.classes) || [];
     const team = killer.team;
-    if (team !== 1 && team !== 2) return;
+    if (!this.teams.has(team)) return;
     for (const o of OFFICES) {
       const rec = this.teams.get(team).offices[o.id];
       if (!rec.holder || rec.holder.dead) continue;
@@ -457,7 +469,7 @@ export class Court {
   }
 
   onGather(unit, amount, kind) {
-    if (!unit || (unit.team !== 1 && unit.team !== 2)) return;
+    if (!unit || !this.teams.has(unit.team)) return;
     const rec = this.teams.get(unit.team).offices.chancellor;
     if (!rec.holder || rec.holder.dead) return;
     rec.gathered += amount;
@@ -470,7 +482,7 @@ export class Court {
   }
 
   onDecree(team, favorSpent) {
-    if (team !== 1 && team !== 2) return;
+    if (!this.teams.has(team)) return;
     this.deed(team, 'hierophant', Math.max(1, Math.round(favorSpent / 4)));
   }
 
@@ -484,7 +496,7 @@ export class Court {
     this._acc = 0;
     this.game.courtGold = this.game.courtGold || { 1: 0, 2: 0 };
     const now = this.game.time;
-    for (const team of [1, 2]) {
+    for (const team of this.teams.keys()) {
       const st = this.game.teams.get(team);
       if (!st) continue;
       const rec = this.teams.get(team);
@@ -544,11 +556,12 @@ export class Court {
   /** The unit the AI should appoint, or null. */
   candidate(team) {
     const g = this.game;
-    const base = team === 1 ? g.world.playerBase : g.world.enemyBase;
+    if (!this.ensure(team)) return {};
+    const base = g.baseOf ? g.baseOf(team) : (team === 1 ? g.world.playerBase : g.world.enemyBase);
     const out = {};
     for (const o of OFFICES) {
       const rec = this.office(team, o.id);
-      if (rec.holder || rec.vacantUntil > g.time) continue;
+      if (!rec || rec.holder || rec.vacantUntil > g.time) continue;
       let best = null, bestD = 1e9;
       for (const u of g.units) {
         if (u.dead || u.team !== team) continue;
@@ -579,7 +592,7 @@ export class Court {
 
   toJSON() {
     const out = {};
-    for (const team of [1, 2]) {
+    for (const team of this.teams.keys()) {
       out[team] = {};
       for (const o of OFFICES) {
         const rec = this.office(team, o.id);
@@ -597,7 +610,7 @@ export class Court {
   fromJSON(data) {
     if (!data) return;
     const g = this.game;
-    for (const team of [1, 2]) {
+    for (const team of this.teams.keys()) {
       const src = data[team];
       if (!src) continue;
       for (const o of OFFICES) {
