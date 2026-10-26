@@ -332,7 +332,16 @@ export class PathFinder {
   }
 
   /** Turn a `from` chain into a smoothed waypoint list (shared by both paths). */
-  _reconstruct(fromArr, start, goal, sx, sz, gx, gz, goalBlocked, cacheKey) {
+  /**
+   * `exactGoal` says the chain really ends on the cell the caller asked for.
+   * It must be false for a *partial* path -- the search hit maxNodes, the goal
+   * was snapped to another component, or the goal cell is solid. Snapping the
+   * last waypoint to the requested goal anyway handed the unit a straight line
+   * to a place it cannot reach, straight through whatever is in the way: the
+   * one remaining way an army could walk through a wall. A partial path now
+   * ends on the last cell the search actually proved.
+   */
+  _reconstruct(fromArr, start, goal, sx, sz, gx, gz, exactGoal, cacheKey) {
     const cells = this.cells;
     const raw = [];
     let n = goal;
@@ -346,7 +355,7 @@ export class PathFinder {
     if (!raw.length) return null;
     const smooth = this._smooth(raw);
     smooth[0] = [sx, sz];
-    if (!goalBlocked) smooth[smooth.length - 1] = [gx, gz];
+    if (exactGoal) smooth[smooth.length - 1] = [gx, gz];
     if (this.cache.size > 320) this.cache.clear();
     this.cache.set(cacheKey, { path: smooth, version: this.version });
     return smooth;
@@ -561,8 +570,10 @@ export class PathFinder {
     }
 
     // reconstruct + smooth (bounded: a partial path can be very long)
-    const out = this._reconstruct(fromArr, start, goal, sx, sz, gx, gz, goalBlocked, cacheKey);
-    return out || [[gx, gz]];
+    const out = this._reconstruct(fromArr, start, goal, sx, sz, gx, gz, found && !goalBlocked, cacheKey);
+    /* never hand back "walk straight at the goal" as a consolation prize: that
+       is the pathfinder teaching a unit to walk through a wall */
+    return out;
   }
 
   /** Straight-line walk check for a unit radius. */

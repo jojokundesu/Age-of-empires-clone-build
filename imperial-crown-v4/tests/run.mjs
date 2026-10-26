@@ -25,6 +25,7 @@ const SUITES = [
   ['peak', 'tests/peak.mjs'],
   ['logistics', 'tests/logistics.mjs'],
   ['wallgate', 'tests/wallgate.mjs'],
+  ['siege', 'tests/siege.mjs'],
   ['formation', 'tests/formation.mjs'],
   ['mods', 'tests/mods.mjs'],
   ['court', 'tests/court.mjs'],
@@ -73,10 +74,17 @@ function run(name, file, arg) {
     p.stderr.on('data', (d) => { out += d; });
     p.on('close', (code) => {
       const ms = Date.now() - t0;
-      results.push({ name, code, ms, out });
+      /* A suite that prints a failed check must not be able to exit zero. One
+         of them did -- its verdict line sat above a later block -- so the
+         whole run reported 40/40 with a red check inside it. The output is
+         part of the contract now: a `FAIL` line fails the suite whatever the
+         exit code says. */
+      const printed = /^\s*FAIL\b/m.test(out) || /\bFAILED\b/.test(out);
+      const failed = code !== 0 || printed;
+      results.push({ name, code: failed ? (code || 1) : 0, ms, out });
       const tail = out.trim().split('\n').slice(-3).join('\n      ');
-      console.log(`${code === 0 ? 'PASS' : 'FAIL'}  ${name.padEnd(12)} ${String(ms).padStart(6)} ms`);
-      if (code !== 0) console.log('      ' + tail);
+      console.log(`${failed ? 'FAIL' : 'PASS'}  ${name.padEnd(12)} ${String(ms).padStart(6)} ms`);
+      if (failed) console.log('      ' + tail);
       resolve();
     });
   });

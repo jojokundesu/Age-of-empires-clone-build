@@ -110,8 +110,6 @@ expect(dmgArcher > dmgKnight, 'armour reduces melee damage');
 expect(dmgArcherPierce >= dmgArcherPierce, 'pierce armour applies to arrows');
 
 console.log('');
-if (fails.length) { console.log(`FAILURES (${fails.length})`); process.exit(1); }
-console.log('COMBAT BALANCE PASSED');
 
 
 /* ---- victory rules ------------------------------------------------------- */
@@ -160,3 +158,9 @@ console.log('COMBAT BALANCE PASSED');
     assert(!g4.gameOver, 'sandbox ended the match');
   });
 }
+
+/* The verdict is the last thing in the file. It used to sit above the victory
+   block, so a failed victory check printed FAIL and the process still exited
+   zero -- a green suite with a red check in it. */
+if (fails.length) { console.log(`FAILURES (${fails.length})`); process.exit(1); }
+console.log('COMBAT CHECKS PASSED');

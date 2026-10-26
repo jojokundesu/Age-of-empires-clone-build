@@ -589,6 +589,23 @@ export class Game {
    * it re-plan. Called rarely, so the cost of the spiral search is irrelevant.
    */
   /**
+   * The half-width of the square the *pathfinder* refuses around a building.
+   *
+   * markBuildingFootprint() stamps cells by centre containment with a pad, so
+   * the blocked square rounds outward to whole 2 m cells: a 5.8 m hall refuses
+   * an 8 m square, a metre beyond its walls on every side. That metre is
+   * deliberately walkable -- isPassable() is exact, the grid is only a
+   * conservative planner -- but a *path* to it can never be produced, so a
+   * melee unit sent at a wall used to stop a metre short and stand there. The
+   * last stride into this square is Unit.strideIn()'s job; this is the square.
+   */
+  navHullHalf(b) {
+    const cell = this.world.nav.cell;
+    const pad = b.def.wall ? 0.05 : 0.15;
+    return Math.ceil(((b.def.size || 3) * 0.5 + pad) / cell) * cell;
+  }
+
+  /**
    * The nearest point to (x,z) a unit can actually stand on.
    *
    * Both tests matter. `isPassable` knows about water, cliffs and buildings;
@@ -2204,6 +2221,15 @@ export class Game {
            crown that broke it inherits what is left -- see collapse() */
         this.collapse(team, this._rooflessKiller(team));
       }
+    }
+    /* A crown that falls to dominance may have been the last thing between the
+       player and the throne. The conquest test above ran before the fall, so
+       without this the war ended on the *next* checkVictory -- a third of a
+       second later -- and the end screen reported 'conquest' for a war that
+       was actually won by taking the last roof. Resolve it here, with the
+       honest reason, the moment the last rival's crown falls. */
+    if (!this.gameOver && !this.teamIds.some((t) => t !== TEAM_PLAYER && this.aliveTeam(t))) {
+      this.endGame(true, 'dominance');
     }
   }
 

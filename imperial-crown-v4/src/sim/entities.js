@@ -36,6 +36,9 @@ function edgePoint(e, b, pad, out) {
   return out;
 }
 const _edge = [0, 0];
+/* scratch for Unit.strideIn(): the walls near the stride, copied out of the
+   shared spatial-query buffer before isPassable() can overwrite it */
+const _strideWalls = [];
 
 export const STATE = {
   IDLE: 'idle', MOVE: 'move', ATTACK: 'attack', ATTACK_MOVE: 'attackmove',
@@ -721,7 +724,12 @@ export class Unit extends Entity {
         const angle = Math.atan2(this.z - target.z, this.x - target.x);
         const tx = target.x + Math.cos(angle) * Math.max(0.1, stopAt - 0.35);
         const tz = target.z + Math.sin(angle) * Math.max(0.1, stopAt - 0.35);
-        this.moveTo(tx, tz);
+        /* At the wall, the nav grid's conservative square is the only thing
+           between this man and his target, so take the last stride directly.
+           Further out, plan properly. */
+        if (Math.hypot(tx - this.x, tz - this.z) > 4 || !this.strideIn(target, tx, tz)) {
+          this.moveTo(tx, tz);
+        }
       }
       if (this.targetPos) this.stepMovement(dt, stats);
       if (d > chaseRange + 10) { this.target = null; this.state = STATE.IDLE; }
@@ -730,15 +738,96 @@ export class Unit extends Entity {
     // in range: stop and attack
     this.moving = false;
     this.path = null;
+    /* Standing still to swing is not being stuck. The stall watchdog keys off
+       "has somewhere to be", so a man in range must drop the destination he
+       was walking to -- otherwise every melee in the game was classified as a
+       wedged unit and teleported to open ground every couple of seconds. */
+    this.targetPos = null;
+    this.destX = this.destZ = null;
+    this.stallT = 0;
+    this.stuckScore = 0;
     if (this.attackCooldown <= 0) {
       this.performAttack(target, stats);
     }
   }
 
+  /**
+   * The last stride to a building.
+   *
+   * The pathfinder will not plan into the square markBuildingFootprint() stamps
+   * around a building, and that square is rounded outward to whole 2 m cells --
+   * up to a metre beyond the walls. Physically the ground is free (isPassable
+   * is exact and radius-aware), so a melee unit sent at a hall walks to the
+   * edge of the square, is told by the grid that the wall is there, and stops
+   * out of range for ever: the "army frozen at the enemy town centre" bug,
+   * from three of the four sides. This walks the remainder, and only the
+   * remainder: both ends and every sample in between must lie inside the
+   * target's own hull, so the stride can never cut a wall or a neighbour.
+   */
+  strideIn(target, tx, tz) {
+    const g = this.game;
+    if (!target || target.kind !== 'building' || !g.navHullHalf) return false;
+    const hull = g.navHullHalf(target) + 0.9;
+    const inside = (x, z) => Math.abs(x - target.x) <= hull && Math.abs(z - target.z) <= hull;
+    if (!inside(this.x, this.z) || !inside(tx, tz)) return false;
+    if (!g.isPassable(tx, tz, this)) return false;
+    const d = Math.hypot(tx - this.x, tz - this.z);
+    const steps = Math.min(8, Math.max(1, Math.ceil(d / 0.35)));
+    const pf = g.pfFor ? g.pfFor(this) : g.pathFinder;
+    /* walls are not physical (isPassable ignores them on purpose) but they must
+       still never be vaulted, so collect the ones near the stride and test the
+       samples against their boxes. The shared query buffer is copied now: any
+       isPassable() call below would overwrite it. */
+    let wallN = 0;
+    if (g.buildingSpatial) {
+      const near = g.buildingSpatial.query((this.x + tx) * 0.5, (this.z + tz) * 0.5, d * 0.5 + 4);
+      for (let i = 0; i < near.length; i++) if (near[i].wall && !near[i].dead) _strideWalls[wallN++] = near[i];
+    }
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const px = this.x + (tx - this.x) * t, pz = this.z + (tz - this.z) * t;
+      if (!g.isPassable(px, pz, this)) { _strideWalls.length = 0; return false; }
+      for (let k = 0; k < wallN; k++) {
+        const w = _strideWalls[k];
+        if (Math.abs(px - w.x) < 1.1 && Math.abs(pz - w.z) < 1.1) { _strideWalls.length = 0; return false; }
+      }
+      if (!pf) continue;
+      const [cx, cz] = pf.worldToCell(px, pz);
+      if (!pf.isBlocked(cx, cz)) continue;
+      /* a blocked cell may only be crossed while it is the target's own hull */
+      if (Math.abs(px - target.x) > hull || Math.abs(pz - target.z) > hull) { _strideWalls.length = 0; return false; }
+    }
+    _strideWalls.length = 0;
+    this.path = [[tx, tz]];
+    this.pathIdx = 0;
+    this.targetPos = [tx, tz];
+    this.destX = tx; this.destZ = tz;
+    this.arrived = false;
+    return true;
+  }
+
+  /**
+   * The distance from the target's *centre* at which this unit is in range,
+   * measured along the line the unit actually stands on.
+   *
+   * Buildings are square: `isPassable` refuses a box of half-width `size/2`,
+   * so a soldier coming in along a face can stand 2.9 m from the centre of a
+   * hall, but one coming in on the diagonal can only get to 4.1 m -- the
+   * corner of the box. Measuring reach against the inscribed circle (as this
+   * used to) told every diagonal attacker it was 0.9 m short, so it hovered at
+   * the corner of the town centre for ever and never swung: "my army is frozen
+   * at the enemy hall", reproducible every time from three of the four sides.
+   * The answer is the box's support distance along that ray, not its radius.
+   */
   attackRangeTo(target, stats) {
-    const tRadius = target.kind === 'building' ? (target.def.size || 3) * 0.5 : (target.radius || 0.4);
-    if (this.def.range > 1.2) return stats.range;
-    return this.radius + tRadius + 0.55;
+    const reach = this.def.range > 1.2 ? stats.range : this.radius + 0.55;
+    if (target.kind !== 'building') return reach + (target.radius || 0.4);
+    const dx = target.x - this.x, dz = target.z - this.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 1e-4) return reach + (target.def.size || 3) * 0.5;
+    const half = (target.def.size || 3) * 0.5;
+    const support = half / Math.max(Math.abs(dx / len), Math.abs(dz / len));
+    return support + reach;
   }
 
   performAttack(target, stats) {
@@ -1519,7 +1608,9 @@ export class Building extends Entity {
         if (target) {
           const dmg = def.attack * (g.hasTech(this.team, 'fletching') ? 1.15 : 1);
           g.fireProjectile(this, target, dmg, 'arrow');
-          this.attackCooldown = def.type === 'castle' ? 1.0 : 1.5;
+          /* a castle looses faster: `def.type` does not exist (defs are keyed,
+             not stamped), so this line silently used the tower rate for years */
+          this.attackCooldown = this.type === 'castle' ? 1.0 : 1.5;
         }
       }
     }
