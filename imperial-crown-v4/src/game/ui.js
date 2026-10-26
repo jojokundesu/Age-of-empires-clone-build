@@ -48,7 +48,7 @@ export class UI {
     this.el = {};
     const ids = ['resFood', 'resWood', 'resGold', 'resStone', 'resFavor', 'resPop',
       'dotFood', 'dotWood', 'dotGold', 'dotStone',
-      'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer', 'seasonChip', 'realmChip',
+      'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer', 'seasonChip', 'realmChip', 'climateChip',
       'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnDecrees', 'decreeBadge', 'btnCourt', 'courtBadge',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
       'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
@@ -88,6 +88,7 @@ export class UI {
     click(el.btnDecrees, () => this.openDecrees());
     click(el.btnCourt, () => this.openCourt());
     click(el.realmChip, () => this.openCourt());
+    click(el.climateChip, () => this.openClimate());
     click(el.btnMenu, () => this.app.openPause?.());
     click(el.btnPause, () => this.togglePause());
     click(el.btnSound, () => this.toggleSound());
@@ -686,6 +687,38 @@ export class UI {
      an appointment or a writ: the next tap on the battlefield chooses the
      subject, which keeps the whole system inside the grammar the player
      already knows (pick a card, tap a target). */
+  /* ---------------- the slow sky ----------------
+     The climate panel is deliberately small: what the era is, what it is
+     doing to every number, how much strain has built, and *when* the next
+     turn lands. Those four things are everything a player needs to plan. */
+  openClimate() {
+    const g = this.game;
+    if (!g || !g.climate) return;
+    const c = g.climate;
+    const era = c.era;
+    const pct = (v) => `${Math.round(v * 100)}%`;
+    const nextTxt = c.isFinal
+      ? '<em class="dim">There is no next sky. This one has to be survived.</em>'
+      : `<em class="dim">${c.next.name} in ${Math.floor(c.remaining / 60)}:${String(Math.ceil(c.remaining % 60)).padStart(2, '0')} — or at strain ${c.next.strainAt}</em>`;
+    const effects = [
+      ['Wheat and meat', pct(era.food)],
+      ['Timber', pct(era.wood)],
+      ['Marching', pct(era.speed)],
+      ['Healing', pct(era.heal)],
+      ['Nerve', pct(era.morale)]
+    ].map(([k, v]) => `<div class="row"><b>${k}</b><span class="dim">${v}</span></div>`).join('');
+    this.menu?.openModal('THE SLOW SKY', era.name,
+      `<div class="realmBlock">
+        <p class="dim tiny">${era.blurb}</p>
+        <div class="realmBar"><i style="width:${Math.round(c.strain)}%;background:linear-gradient(90deg,#8fd48a,#ffc861,#ff8f75)"></i></div>
+        <em class="dim tiny">Strain ${Math.round(c.strain)} of 100 · ${c._forests} trees left on the island · ${c._buildings} buildings, ${c._farms} farms feeding it</em>
+        <div style="margin:5px 0">${effects}</div>
+        ${nextTxt}
+        <p class="dim tiny" style="margin-top:5px">Every farm, every roof and every log on the fire adds strain; standing forest takes it back. Cut the island bare and the sky changes early — for both crowns.</p>
+      </div>`,
+      '<span class="dim tiny">The Wheel of the Year is the weather. This is the climate: a slower clock that decides which weather is even possible.</span>');
+  }
+
   /* ---------------- The Crown's Standing ----------------
      The realm is the one system in the game whose numbers a player *must*
      be able to argue with, so the panel prints the whole ledger: every line
@@ -1142,6 +1175,32 @@ export class UI {
         ].filter(Boolean).join('\n');
         el.realmChip.title = text;
         el.realmChip.setAttribute('aria-label', text.replace(/\n/g, ', '));
+      }
+    }
+    /* ---- the slow sky ----
+       Names the era and carries a strain bar under it. The tooltip is the
+       whole rules table plus when the next turn is coming, because a climate
+       a player cannot forecast is just a random tax. */
+    if (el.climateChip && g.climate) {
+      const c = g.climate.chip();
+      const key = `${c.id}|${Math.round(c.strain)}|${Math.round(c.progress * 12)}`;
+      if (this._lastClimateKey !== key) {
+        this._lastClimateKey = key;
+        el.climateChip.dataset.era = c.id;
+        const b = el.climateChip.querySelector('b');
+        if (b) b.textContent = c.id === 'temperate' ? 'Temperate' : g.climate.era.name.replace(/^The /, '');
+        const use = el.climateChip.querySelector('use');
+        if (use) use.setAttribute('href', `#i-${iconFor(g.climate.era.icon)}`);
+        let bar = el.climateChip.querySelector('.strain');
+        if (!bar) {
+          bar = document.createElement('span');
+          bar.className = 'strain';
+          bar.innerHTML = '<i></i>';
+          el.climateChip.appendChild(bar);
+        }
+        const fill = bar.querySelector('i');
+        if (fill) fill.style.width = `${Math.round(g.climate.strain)}%`;
+        el.climateChip.title = g.climate.describe();
       }
     }
     if (el.worldTime) {

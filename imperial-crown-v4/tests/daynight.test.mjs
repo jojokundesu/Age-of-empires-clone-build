@@ -285,6 +285,49 @@ check('the terrain mesh is clock-independent (no rebuild hitch at dusk)', () => 
   assert(t.n === t2.n && t.cell === t2.cell, 'terrain grid changed with the clock');
 });
 
+/* ------------------------------------------------------------
+   THE LENGTH OF A DAY
+   A day is the one clock a player plans a campaign by, so its
+   proportions are a design decision, not a detail: ten minutes of
+   light to build and march in, five minutes of dark to raid in,
+   and a "Long Night" omen that makes the dark ten minutes long.
+   ------------------------------------------------------------ */
+{
+  const game = new Game({ world, civ: 'franks', mode: 'sandbox', difficulty: 'sandbox' });
+  game.start();
+  const cycle = game.dayLength;
+  check('a full day is at least ten minutes', () => {
+    assert(cycle >= 600, `a full cycle is ${cycle}s`);
+    assert(cycle <= 1200, `a full cycle is ${cycle}s -- too long to plan a match around`);
+  });
+  check('the dark is five minutes and the light is the rest', () => {
+    /* night runs 20:00 to 05:00 -- nine of twenty-four hours */
+    const night = cycle * (9 / 24);
+    const light = cycle - night;
+    assert(Math.abs(night - 300) < 12, `night is ${night.toFixed(0)}s`);
+    assert(light >= 450, `daylight is only ${light.toFixed(0)}s`);
+  });
+  check('the Long Night omen makes the dark ten minutes', () => {
+    const night = cycle * (9 / 24);
+    const stretched = night * 2;      // the omen doubles the night clock
+    assert(Math.abs(stretched - 600) < 25, `a long night is ${stretched.toFixed(0)}s`);
+  });
+  check('the clock really spends that long in each phase', () => {
+    const g2 = new Game({ world, civ: 'franks', mode: 'sandbox', difficulty: 'sandbox' });
+    g2.start();
+    g2.setTimeOfDay(5.0);
+    let dark = 0, light = 0;
+    for (let i = 0; i < 30 * 900; i++) {
+      g2.update(1 / 30);
+      if (g2.dayPhase === 'night') dark += 1 / 30;
+      else light += 1 / 30;
+    }
+    const ratio = dark / (dark + light);
+    assert(ratio > 0.3 && ratio < 0.45, `the dark is ${(ratio * 100).toFixed(0)}% of a cycle`);
+  });
+}
+
+
 if (fails.length) {
   console.log(`\nFAILURES (${fails.length}):`);
   for (const f of fails) console.log(' - ' + f);

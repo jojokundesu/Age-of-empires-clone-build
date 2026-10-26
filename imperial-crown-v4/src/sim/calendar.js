@@ -69,8 +69,8 @@ export const OMENS = [
   },
   {
     id: 'long_night', name: 'The Long Night', icon: 'eye', bad: true,
-    text: 'Darkness lasts half again as long. Night raids pay double.',
-    nightStretch: 1.5
+    text: 'Darkness lasts twice as long: ten minutes of night. Night raids pay double.',
+    nightStretch: 2
   },
   {
     id: 'plague_winds', name: 'Plague Winds', icon: 'skull', bad: true,
@@ -149,17 +149,36 @@ export class Calendar {
     return this._rng();
   }
 
-  /** Draw the next omen, never repeating a card until the deck is empty. */
+  /** Draw the next omen, never repeating a card until the deck is empty.
+   *
+   *  The deck is weighted by the *climate era*: a drought makes The Wolf
+   *  Moon and Plague Winds likelier, the Storm Years push The Iron Sky and
+   *  The Great Frost, and the Killing Winter nearly guarantees frost. The
+   *  card itself is still a real card -- the sky only loads the dice.
+   */
   drawOmen() {
     if (!this.deck.length) {
       this.deck = OMENS.map((o) => o.id);
-      /* shuffle without touching the sim rng */
       for (let i = this.deck.length - 1; i > 0; i--) {
         const j = Math.floor(this.rng() * (i + 1));
         const tmp = this.deck[i]; this.deck[i] = this.deck[j]; this.deck[j] = tmp;
       }
     }
-    const id = this.deck.pop();
+    const climate = this.game && this.game.climate;
+    let pick = this.deck.length - 1;
+    if (climate && this.deck.length > 1) {
+      /* weight every remaining card, then draw one */
+      const weights = this.deck.map((id) => Math.max(0.05, climate.omenWeight(id)));
+      let total = 0;
+      for (const w of weights) total += w;
+      let roll = this.rng() * total;
+      for (let i = 0; i < weights.length; i++) {
+        roll -= weights[i];
+        if (roll <= 0) { pick = i; break; }
+      }
+      pick = Math.min(pick, this.deck.length - 1);
+    }
+    const id = this.deck.splice(pick, 1)[0];
     return OMEN_BY_ID.get(id) || null;
   }
 
@@ -170,8 +189,15 @@ export class Calendar {
   get omenMul() { return this.omen || {}; }
 
   /** 0..1 through the current season, for the HUD. */
-  get progress() { return Math.min(1, this.t / this.seasonLength); }
-  get remaining() { return Math.max(0, this.seasonLength - this.t); }
+  /** The season's length *in this climate*: the Killing Winter drags its own
+      winter out and shortens the rest, a drought stretches summer. */
+  get seasonSpan() {
+    const c = this.game && this.game.climate;
+    if (!c) return this.seasonLength;
+    return this.seasonLength * c.seasonStretch(this.season.key);
+  }
+  get progress() { return Math.min(1, this.t / this.seasonSpan); }
+  get remaining() { return Math.max(0, this.seasonSpan - this.t); }
 
   gatherMul(kind) {
     const s = this.season;
@@ -236,8 +262,9 @@ export class Calendar {
 
   update(dt) {
     this.t += dt;
-    if (this.t < this.seasonLength) return;
-    this.t -= this.seasonLength;
+    const span = this.seasonSpan;
+    if (this.t < span) return;
+    this.t -= span;
     this.seasonIndex++;
     if (this.seasonIndex >= SEASONS.length) {
       this.seasonIndex = 0;

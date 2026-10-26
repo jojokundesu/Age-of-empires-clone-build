@@ -592,7 +592,7 @@ class App {
       try { this.modHost.dispose(); } catch (e) { /* a dead mod cannot block the menu */ }
       this.modHost = null;
     }
-    if (this.renderer) this.renderer.modAtmosphere = null;
+    if (this.renderer) { this.renderer.modAtmosphere = null; this.renderer.climateAtmosphere = null; }
     document.body.classList.remove('mods');
     const hud = document.getElementById('modHud');
     if (hud) { hud.classList.add('hidden'); hud.replaceChildren(); }
@@ -626,6 +626,7 @@ class App {
       wonder: [...g.wonderClocks.entries()],
       court: g.court ? g.court.toJSON() : null,
       calendar: g.calendar ? g.calendar.toJSON() : null,
+      climate: g.climate ? g.climate.toJSON() : null,
       realm: g.realm ? g.realm.toJSON() : null,
       units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round(u.xp || 0), Math.round(u.morale ?? 100)]),
       buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
@@ -650,6 +651,7 @@ class App {
       if (t) game.importTeam(team, t);
     }
     if (save.realm && game.realm) game.realm.fromJSON(save.realm);
+    if (save.climate && game.climate) game.climate.fromJSON(save.climate);
     game.wonderClocks = new Map((save.wonder || []).filter(([team]) => team === 1 || team === 2));
 
     for (const [type, team, x, z, hp, prog, facing] of save.buildings || []) {
@@ -746,6 +748,15 @@ class App {
     const gov = this.governor;
     const drawFrame = !gov || gov.shouldRender(this.displayFrame);
     this.displayFrame = (this.displayFrame + 1) % 100000;
+    /* the slow sky: one small read per frame, no allocation when the era is
+       temperate (the common case for the first fifteen minutes) */
+    if (this.renderer && g.climate) {
+      this.climateAtmpT = (this.climateAtmpT || 0) + dt;
+      if (this.climateAtmpT > 0.4) {
+        this.climateAtmpT = 0;
+        this.renderer.climateAtmosphere = g.climate.atmosphere();
+      }
+    }
     if (this.renderer && this.renderer.ready && drawFrame) {
       this.renderer.render(dt, g);
       const t = performance.now();

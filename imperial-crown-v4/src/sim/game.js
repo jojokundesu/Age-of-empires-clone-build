@@ -9,6 +9,7 @@ import { Veterancy } from './veterancy.js';
 import { Morale } from './morale.js';
 import { Calendar } from './calendar.js';
 import { Realm, TEAM_REBEL_P, TEAM_REBEL_E, crownOfRebel } from './realm.js';
+import { Climate } from './climate.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
   RES, POP_CAP, isUniqueUnit
@@ -142,6 +143,9 @@ export class Game {
        realm to break. See src/sim/realm.js -- it owns its own state so a
        normal match pays one update call for the whole system. */
     this.realm = new Realm(this);
+    /* The slow sky: an era clock measured in tens of minutes that changes
+       the rules underneath the seasons. See src/sim/climate.js. */
+    this.climate = new Climate(this);
     /* Rebel warbands answer exactly one crown; everyone else is a stranger
        to them until they are attacked. This map remembers who drew blood. */
     this.rebelGrudge = new Map();
@@ -250,7 +254,11 @@ export class Game {
     this.wonderHold = 200;
     this.elapsed = 0;
     this.worldTime = 8.6;              // hour of the day, advanced by update()
-    this.dayLength = 900;              // real seconds for a full cycle
+    /* 800 s a cycle: night is 9 of the 24 hours, so the dark is 5 minutes
+       and the day is 8.3 -- a day you can plan a campaign in, and a night
+       long enough that a raid has time to mean something. `The Long Night`
+       omen doubles it. */
+    this.dayLength = 800;              // real seconds for a full cycle
     this.alerts = [];
     this.unitLimit = 220;
     this.stats = { tickMs: 0, units: 0, buildings: 0 };
@@ -721,6 +729,8 @@ export class Game {
     if (this.calendar) rate *= this.calendar.gatherMul(kind);
     /* a sullen commons works slowly; a devoted one bends its back */
     if (this.realm) rate *= this.realm.gatherMul(team);
+    /* the slow sky: a drought is a food problem, a thaw a wood one */
+    if (this.climate) rate *= (kind === 'food' ? this.climate.foodMul() : kind === 'wood' ? this.climate.woodMul() : 1);
     return rate;
   }
 
@@ -773,6 +783,7 @@ export class Game {
       else if (node.resKind === 'stone' || node.resKind === 'gold') this.fx.sparks(node.x, node.y + 0.4, node.z, 1, [0.9, 0.85, 0.7]);
       else this.fx.dust(node.x, node.y, node.z, 1, 0.6);
     }
+    if (this.climate) this.climate.noteGather(node.resKind || node.kind, amount);
   }
 
   onResourceDepleted(node) {
@@ -1197,6 +1208,7 @@ export class Game {
     if (this.modHost) base *= this.modHost.speedMul(unit);
     if (this.morale) base *= this.morale.speedMul(unit);
     if (this.calendar) base *= this.calendar.speedMul();
+    if (this.climate) base *= this.climate.speedMul();
     return base;
   }
 
@@ -1684,6 +1696,7 @@ export class Game {
       this.calendar.update(dt);
       this.calendar.tick(dt);
     }
+    if (this.climate) this.climate.update(dt);
     this.worldTime = (this.worldTime + dayRate) % 24;
     const phase = this.dayPhase;
     if (phase !== prevPhase) {

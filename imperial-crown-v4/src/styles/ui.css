@@ -778,3 +778,18 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .realmUnrest { font-size: 8px; color: #ffb27a; }
 .realmBtnRow { display: flex; gap: 3px; margin-top: 3px; }
 .realmBtnRow .ghostBtn { flex: 1; }
+
+/* The slow sky. Same pill, because it is read in the same glance: it names
+   the climate era and carries a strain bar as its underline. */
+.climateChip { color: #cfe0d2; }
+.climateChip .ic { color: #9fd6b4; }
+.climateChip b { font-weight: 600; max-width: 74px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.climateChip[data-era="thaw"] { color: #9fd6e8; }
+.climateChip[data-era="drought"] { color: #f0c07a; }
+.climateChip[data-era="drought"] .ic { color: #ffb45a; }
+.climateChip[data-era="storms"] { color: #b9c6f0; }
+.climateChip[data-era="storms"] .ic { color: #9fb4ff; }
+.climateChip[data-era="killing_winter"] { color: #bcd4ff; border-color: rgba(170, 200, 255, 0.55); }
+.climateChip[data-era="killing_winter"] .ic { color: #a9c9ff; }
+.climateChip .strain { position: absolute; left: 3px; right: 3px; bottom: 1px; height: 1.5px; border-radius: 2px; background: rgba(255, 255, 255, 0.14); overflow: hidden; }
+.climateChip .strain i { display: block; height: 100%; background: linear-gradient(90deg, #8fd48a, #ffc861, #ff8f75); }

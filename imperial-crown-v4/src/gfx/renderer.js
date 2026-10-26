@@ -683,6 +683,23 @@ export class Renderer {
     /* A mod session may lay weather over the sky. The object is rebuilt by the
        mod host at a few hertz, not per frame, so this is three branches and a
        handful of multiplies. Nothing is allocated here. */
+    /* The climate era lays over the sky as well, and it is applied first so a
+       mod session's storm can still sit on top of it. Both objects are rebuilt
+       a few times a second by their owners, never per frame. */
+    const cl = this.climateAtmosphere;
+    if (cl) {
+      if (cl.tint) {
+        this.sunColor[0] *= cl.tint[0]; this.sunColor[1] *= cl.tint[1]; this.sunColor[2] *= cl.tint[2];
+        this.horizon[0] *= cl.tint[0]; this.horizon[1] *= cl.tint[1]; this.horizon[2] *= cl.tint[2];
+        this.fogColor[0] = this.fogColor[0] * 0.6 + cl.tint[0] * 0.4;
+        this.fogColor[1] = this.fogColor[1] * 0.6 + cl.tint[1] * 0.4;
+        this.fogColor[2] = this.fogColor[2] * 0.6 + cl.tint[2] * 0.4;
+      }
+      if (cl.fog) this.fogDensity += cl.fog;
+      if (cl.exposure) this.exposure *= cl.exposure;
+      if (cl.cloud) this.cloudCover = clamp(this.cloudCover + cl.cloud, 0, 1);
+      if (cl.night) this.night = Math.max(this.night, cl.night);
+    }
     const at = this.modAtmosphere;
     if (at) {
       if (at.tint) {
