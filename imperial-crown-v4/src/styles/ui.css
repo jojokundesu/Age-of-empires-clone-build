@@ -722,5 +722,6 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
   padding: 1px 4px; margin-right: 2px; background: rgba(240, 201, 111, 0.1);
 }
 /* morale: a quiet flag until it turns red */
-.inspStats .morale { color: #cdd8e6; }
+.inspStats .morale { color: #cdd8e6; display: inline-flex; align-items: center; gap: 3px; }
+.inspStats .morale .ic { width: 10px; height: 10px; }
 .inspStats .morale.bad { color: #ff9b84; font-weight: 600; }

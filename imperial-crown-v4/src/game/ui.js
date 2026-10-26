@@ -1183,8 +1183,10 @@ export class UI {
         const vet = e.rank
           ? `<span class="rankChip" title="${Math.round(e.xp || 0)} xp">${'▴'.repeat(e.rank)}</span>`
           : '';
+        /* the flag is the game's own sprite, not a text glyph: U+2691 is
+           missing from the device's fallback font and rendered as a box */
         const morale = (e.def && e.def.attack > 0)
-          ? `<span class="morale${(e.morale ?? 100) < 40 ? ' bad' : ''}" title="Morale — kept up by supply buildings${e.fed ? '' : ' (out of supply)'}">⚑ ${Math.round(e.morale ?? 100)}</span>`
+          ? `<span class="morale${(e.morale ?? 100) < 40 ? ' bad' : ''}" title="Morale — kept up by supply buildings${e.fed ? '' : ' (out of supply)'}"><svg class="ic"><use href="#i-flag"/></svg>${Math.round(e.morale ?? 100)}</span>`
           : '';
         el.inspStats.innerHTML = vet + morale + `<span>⚔ ${Math.round(s.attack || 0)}</span><span>🛡 ${s.armor || 0}/${s.pierceArmor || 0}</span>` +
           (s.range > 1.2 ? `<span>🎯 ${s.range.toFixed(1)}</span>` : '') +

@@ -247,6 +247,23 @@ check('selection decals + placing ghost', () => {
   renderer.render(1 / 60, game);
   game.placing = null;
 });
+check('a canopy between the lens and the target is veiled, not opaque', () => {
+  /* put the camera inside a wood and look across it: the trees on the sight
+     line must be drawn in the blended fade pass, or the player sees leaves */
+  const tree = game.resources.find((r) => r.type === 'tree' && !r.dead);
+  assert(tree, 'no trees on the map at all');
+  const cx = tree.x, cz = tree.z;
+  camera.setTarget(cx, cz, true);
+  camera.dist = 26; camera.pitch = 0.42;
+  camera.update(1 / 60);
+  camera.update(1 / 60);
+  renderer.render(1 / 60, game);
+  const faded = renderer._fadeList ? renderer._fadeList.reduce((n, b) => n + b.count, 0) : 0;
+  assert(faded > 0, 'no tree was veiled while looking through a wood');
+  /* and with the camera high above open ground, nothing should be veiled */
+  camera.setEye ? null : null;
+  return `${faded} veiled tree(s)`;
+});
 check('500 frames of a live battle', () => {
   for (let i = 0; i < 500; i++) {
     game.update(1 / 60);

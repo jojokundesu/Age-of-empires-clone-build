@@ -27,6 +27,8 @@ const SUITES = [
   ['formation', 'tests/formation.mjs'],
   ['mods', 'tests/mods.mjs'],
   ['court', 'tests/court.mjs'],
+  ['veterancy', 'tests/veterancy.mjs'],
+  ['morale', 'tests/morale.mjs'],
   ['wallsite', 'tests/wallsite.mjs'],
   ['modsite', 'tests/modsite.mjs', true],
   ['courtsite', 'tests/courtsite.mjs', true],

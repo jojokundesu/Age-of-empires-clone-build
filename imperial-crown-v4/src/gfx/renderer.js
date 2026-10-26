@@ -244,6 +244,7 @@ export class Renderer {
     await frame();
     this.propBatches = new Map();
     this.resBatches = new Map();
+    this.resFadeBatches = new Map();
     const decorNames = ['bush', 'rock', 'stump', 'reed', 'tuft', 'flower', 'pebble', 'log', 'ruin',
       'crate', 'barrel', 'haystack', 'firewood', 'cart', 'well', 'fence', 'drying_rack'];
     for (const name of decorNames) {
@@ -265,10 +266,21 @@ export class Renderer {
     for (const name of resNames) {
       const res = buildProp(name.endsWith('L') ? 'tree_lod' : name);
       if (!res) continue;
-      const batch = new InstanceBatch(gl, res.geo.finish(), name.startsWith('tree') ? 700 : 120);
+      const geo = res.geo.finish();
+      const batch = new InstanceBatch(gl, geo, name.startsWith('tree') ? 700 : 120);
       batch.cull = true;
       this.resBatches.set(name, batch);
+      /* the same tree again, but blended: this is where a canopy that the
+         camera is standing inside goes, so the player can still see the
+         battlefield instead of a wall of leaves. Small capacity on purpose --
+         only a handful of trees are ever near the lens. */
+      if (name.startsWith('tree')) {
+        const fade = new InstanceBatch(gl, geo, 64);
+        fade.cull = true;
+        this.resFadeBatches.set(name, fade);
+      }
     }
+    this._fadeList = [];
 
     onProgress('Fletching arrows…', 0.94);
     await frame();
@@ -1073,6 +1085,28 @@ export class Renderer {
 
     // ---------- resource nodes (trees, mines, herds) ----------
     for (const b of this.resBatches.values()) b.begin();
+    for (const b of this.resFadeBatches.values()) b.begin();
+    const fadeList = this._fadeList;
+    fadeList.length = 0;
+    /* Canopy veiling. Two things put a tree in the way, and both have to be
+       caught or the player finds themselves looking at a green wall:
+
+         1. the lens is *inside* the canopy (the camera can be dragged down
+            among the trees), and
+         2. a canopy sits on the line of sight between the lens and what the
+            camera is pointed at -- the common case, and the one that used to
+            hide a whole battle behind one oak.
+
+       The test is a segment against a fat vertical capsule, which is the
+       cheapest shape that still agrees with the silhouette on screen. */
+    const eyeX = cam.eye[0], eyeY = cam.eye[1], eyeZ = cam.eye[2];
+    /* the sight line: lens -> target, extended slightly past it so a canopy
+       just beyond the target still counts */
+    const tgtX = cam.target[0], tgtY = cam.target[1], tgtZ = cam.target[2];
+    let sightX = tgtX - eyeX, sightY = tgtY - eyeY, sightZ = tgtZ - eyeZ;
+    const sightLen = Math.hypot(sightX, sightY, sightZ) || 1;
+    sightX /= sightLen; sightY /= sightLen; sightZ /= sightLen;
+    const sightEnd = sightLen + 3;
     const rCull = uCull + 30;
     const rCull2 = rCull * rCull;
     const resList = game.resources;
@@ -1093,12 +1127,55 @@ export class Renderer {
       const batch = this.resBatches.get(key);
       if (!batch) continue;
       const s = (r.scale || 1) * (0.72 + 0.28 * clamp(r.amount / Math.max(1, r.maxAmount), 0, 1));
+      /* a tree between the lens and the men: draw it, but see-through. The
+         distance is measured to the canopy, not to the trunk, because the
+         canopy is the part that is in the way. */
+      let alpha = 1;
+      let target = batch;
+      if (r.type === 'tree') {
+        const fb = this.resFadeBatches.get(key);
+        if (fb) {
+          /* canopy: a vertical capsule up the trunk */
+          const cy = (r.y || 0) + 3.1 * s;
+          const halfH = 3.0 * s;
+          const rad = 2.15 * s + 0.9;
+          let veil = 0;
+          /* 1. is the lens inside it? */
+          const edx = r.x - eyeX, edy = cy - eyeY, edz = r.z - eyeZ;
+          const horiz = edx * edx + edz * edz;
+          if (horiz < rad * rad && Math.abs(edy) < halfH + 1.5) veil = 1;
+          /* 2. does it sit on the sight line? */
+          if (!veil) {
+            const t = (r.x - eyeX) * sightX + (r.y + 3.1 * s - eyeY) * sightY + (r.z - eyeZ) * sightZ;
+            if (t > 0.5 && t < sightEnd) {
+              const px = eyeX + sightX * t - r.x;
+              const py = eyeY + sightY * t - cy;
+              const pz = eyeZ + sightZ * t - r.z;
+              /* the sight point has to be both inside the trunk's radius and
+                 inside the canopy's height, or it misses the leaves */
+              const hd = Math.sqrt(px * px + pz * pz);
+              if (hd < rad && Math.abs(py) < halfH) {
+                /* fade harder the closer the canopy is to the middle of the
+                   sight line, so the transition is a fade and not a pop */
+                veil = clamp(1 - (hd / rad) * 0.55, 0.45, 1);
+              }
+            }
+          }
+          /* a canopy on the sight line gets out of the way almost entirely: at
+             the centre of the line the player is looking straight through it */
+          if (veil > 0) { target = fb; alpha = Math.max(0.10, 1 - 0.92 * veil); }
+        }
+      }
       if (!this._inFrustum(r.x, (r.y || 0) + 4 * s, r.z, 5 * s + 2)) { st.culled++; continue; }
-      if (d2 < batch._near) batch._near = d2;
       const rot = r.facing || 0;
       const sway = (r.resKind === 'wood' || r.type === 'berry_bush') ? 1 : 0;
-      batch.push(m4trs(this._mB, r.x, r.y + (r.yOff || 0) - 0.06, r.z, rot, s, s, s),
-        1, 1, 1, 1, 0, 1, (r.variant || 0) * 0.21, 0, 0, 0, 0, 0, 0, 0, sway);
+      if (target === batch && d2 < batch._near) batch._near = d2;
+      target.push(m4trs(this._mB, r.x, r.y + (r.yOff || 0) - 0.06, r.z, rot, s, s, s),
+        1, 1, 1, 1, 0, alpha, (r.variant || 0) * 0.21, 0, 0, 0, 0, 0, 0, 0, sway);
+      if (target !== batch) {
+        if (fadeList.indexOf(target) < 0) fadeList.push(target);
+        st.instances++;
+      }
     }
     for (const b of this.resBatches.values()) {
       if (!b.count) continue;
@@ -1106,6 +1183,12 @@ export class Renderer {
       active.push(b);
       st.tris += b.triCount * b.count;
       st.instances += b.count;
+    }
+    for (let i = 0; i < fadeList.length; i++) {
+      const b = fadeList[i];
+      if (!b.count) continue;
+      b.flush();
+      st.tris += b.triCount * b.count;
     }
 
     // ---------- static decor (streamed from spatial buckets) ----------
@@ -1341,6 +1424,24 @@ export class Renderer {
       this.stats.drawCalls++;
     }
     gl.enable(gl.CULL_FACE);
+
+    /* the veiled canopies: a second, tiny pass with blending on so the camera
+       can stand inside a tree and still show the battlefield. No depth write,
+       so two overlapping canopies do not darken each other into a wall. */
+    const fade = this._fadeList;
+    if (fade && fade.length) {
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.depthMask(false);
+      for (let i = 0; i < fade.length; i++) {
+        const b = fade[i];
+        if (!b.count) continue;
+        b.draw();
+        this.stats.drawCalls++;
+      }
+      gl.depthMask(true);
+      gl.disable(gl.BLEND);
+    }
   }
 
   _drawAmmo(cam, game) {
