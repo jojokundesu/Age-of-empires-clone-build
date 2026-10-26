@@ -288,7 +288,7 @@ await check('SKYFALL: one tap, one pillar, one day spent', async () => {
   assert(hit.shock > 0, 'the camera did not shake');
   /* hold the flash for one captured frame: SwiftShader composites slower than
      it renders, so a decay-on-dt flash is gone before the screenshot lands */
-  await page.evaluate(() => { window.__imperial.renderer.flash = 0.5; });
+  await page.evaluate(() => { window.__imperial.renderer.flash = 0.34; });
   await shot('04-skyfall-impact');
   await page.evaluate(() => { window.__imperial.renderer.flash = 0; });
   await wait(260);

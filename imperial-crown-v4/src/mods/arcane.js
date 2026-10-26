@@ -519,39 +519,76 @@ for (const h of HYBRIDS) PAIRS.push({ id: h.id, pair: h.pair });
    ============================================================ */
 function skyfall(api, unit, x, z) {
   const y = api.height(x, z);
-  /* one bolt is a graphic; four, a beat apart, are weather. The first carries
-     the damage, the rest are thunder chasing it down. */
+  /* SKYFALL is the end of the ladder, so it is staged rather than flashed:
+     the air goes heavy, the thunder rolls in from the edge of the map, and
+     only then does the sky actually come down. Everything below happens in
+     the same frame -- the *staging* is in the FX lifetimes, which is what
+     makes it read as a minute of weather in two seconds of play.
+
+       1. a dark pressure ring spreads 26 m, the sound of it a beat early
+       2. three forked strokes at 40 m, wide and pale, then the core
+       3. a column of light that does not fade for a second
+       4. four aftershocks walking outward, each with its own thunder
+       5. the ground is scarred and the screen is white for an instant     */
   const strokes = [
-    { at: 0, main: true, ox: 0, oz: 0 },
-    { at: 0.24, main: false, ox: 2.2, oz: -1.6 },
-    { at: 0.46, main: false, ox: -2.4, oz: 1.8 },
-    { at: 0.7, main: false, ox: 0.8, oz: 2.6 }
+    { at: 0, main: true, ox: 0, oz: 0, dmg: 1.0 },
+    { at: 0.18, main: false, ox: 3.4, oz: -2.2, dmg: 0.45 },
+    { at: 0.36, main: false, ox: -3.8, oz: 2.6, dmg: 0.45 },
+    { at: 0.54, main: false, ox: 1.4, oz: 4.0, dmg: 0.45 },
+    { at: 0.72, main: false, ox: -1.0, oz: -4.2, dmg: 0.45 },
+    { at: 0.92, main: false, ox: 5.0, oz: 0.4, dmg: 0.5 },
+    { at: 1.12, main: false, ox: -5.2, oz: -0.8, dmg: 0.5 }
   ];
-  for (const st of strokes) api.state.strikes.push({ x: x + st.ox, z: z + st.oz, at: api.time + st.at, by: unit, main: st.main });
-  api.fx.beam(x, z, y, y + 40, { color: [0.95, 0.98, 1], scale: 2.4, life: 0.9, jag: 0.9, width: 0.8, alpha: 0.95 });
-  api.fx.beam(x, z, y, y + 40, { color: [0.62, 0.78, 1], scale: 4.2, life: 1.2, jag: 0.25, width: 1.6, alpha: 0.32, grow: 1.4 });
-  api.fx.explosion(x, y + 1.2, z, 3.4);
-  api.fx.shock(x, y + 0.6, z, 3.6, [0.9, 0.96, 1]);
-  api.fx.fire(x, y + 0.5, z, 18);
-  api.fx.smoke(x, y + 0.9, z, 20, 3.4, 2.6);
-  api.mark(x, z, { kind: 0, r0: 1, g0: 0.95, b0: 0.8, r: 12, life: 1.8 });
-  api.mark(x, z, { kind: 1, r0: 0.9, g0: 0.95, b0: 1, r: 9, life: 2.4 });
-  api.mark(x, z, { kind: 1, r0: 1, g0: 0.8, b0: 0.5, r: 5, life: 3.6 });
-  api.shake(1.1);
-  api.flash(0.62, [1, 0.99, 0.94]);
+  for (const st of strokes) {
+    api.state.strikes.push({ x: x + st.ox, z: z + st.oz, at: api.time + st.at, by: unit, main: st.main, dmg: st.dmg });
+  }
+  /* 1. the pressure front: a wide, dim ring that announces the column */
+  api.mark(x, z, { kind: 1, r0: 0.55, g0: 0.6, b0: 0.85, r: 26, life: 1.5 });
+  api.mark(x, z, { kind: 1, r0: 0.8, g0: 0.85, b0: 1, r: 16, life: 1.1 });
+  /* 2/3. the column: a hard white core inside a wide cold halo */
+  api.fx.beam(x, z, y, y + 70, { color: [1, 1, 1], scale: 3.0, life: 1.1, jag: 0.55, width: 1.1, alpha: 1 });
+  api.fx.beam(x, z, y, y + 70, { color: [0.95, 0.97, 1], scale: 2.0, life: 0.75, jag: 1.1, width: 0.55, alpha: 0.95 });
+  api.fx.beam(x, z, y, y + 55, { color: [0.55, 0.7, 1], scale: 7.5, life: 1.6, jag: 0.18, width: 3.0, alpha: 0.26, grow: 1.7 });
+  api.fx.beam(x, z, y, y + 44, { color: [1, 0.98, 0.9], scale: 5.0, life: 0.4, jag: 0.05, width: 2.2, alpha: 0.5 });
+  /* 4. the ground answers */
+  api.fx.explosion(x, y + 1.4, z, 5.2);
+  for (let i = 0; i < 3; i++) api.fx.shock(x, y + 0.5 + i * 0.25, z, 4.4 + i * 1.6, [0.92, 0.96, 1]);
+  api.fx.fire(x, y + 0.4, z, 26);
+  api.fx.smoke(x, y + 0.8, z, 26, 3.8, 3.4);
+  api.fx.embers(x, y + 1.2, z, 30);
+  api.fx.dust(x, y + 0.3, z, 22, 4.0);
+  api.mark(x, z, { kind: 0, r0: 1, g0: 0.96, b0: 0.85, r: 14, life: 2.2 });
+  api.mark(x, z, { kind: 1, r0: 1, g0: 1, b0: 1, r: 10, life: 2.8 });
+  api.mark(x, z, { kind: 1, r0: 1, g0: 0.82, b0: 0.45, r: 6, life: 4.4 });
+  api.shake(1.2);
+  api.flash(0.55, [0.98, 0.99, 1]);
   api.banner('SKYFALL');
+  /* the men: 320 in the core, tapering to a fifth of that at the rim, and
+     every survivor is slowed for four seconds because the air is still
+     ringing */
   let units = 0, builds = 0;
-  for (const e of enemiesIn(api, unit, x, z, 9)) {
-    api.damage(e, 260, unit);
+  for (const e of enemiesIn(api, unit, x, z, 11)) {
+    const d = Math.hypot(e.x - x, e.z - z);
+    const falloff = Math.max(0.18, 1 - (d / 13) ** 1.6);
+    api.damage(e, 340 * falloff, unit);
     const es = api.unitState(e);
-    es.slow = { mul: 0.35, until: api.time + 3 };
-    api.fx.sparks(e.x, e.y + 1.2, e.z, 6, [1, 1, 1]);
+    es.slow = { mul: 0.32, until: api.time + 4 };
+    api.fx.sparks(e.x, e.y + 1.2, e.z, 7, [1, 1, 1]);
     units++;
   }
-  for (const b of buildingsIn(api, unit.team, x, z, 9)) { api.damage(b, 150, unit); builds++; }
-  /* the ground remembers */
-  api.state.scars.push({ x, z, until: api.time + 60 });
-  api.say(`SKYFALL — ${units} slain, ${builds} structures broken`, 'good');
+  /* structures: this is the pillar that breaks a fortress. A castle in the
+     core takes ~700; a farm on the rim still loses 90. */
+  for (const b of buildingsIn(api, unit.team, x, z, 11)) {
+    const d = Math.hypot(b.x - x, b.z - z);
+    const falloff = Math.max(0.15, 1 - (d / 13) ** 1.5);
+    api.damage(b, 780 * falloff, unit);
+    api.fx.sparks(b.x, (b.y || 0) + 2, b.z, 5, [1, 0.95, 0.8]);
+    builds++;
+  }
+  /* the sky is spent and the ground remembers */
+  api.state.scars.push({ x, z, until: api.time + 90 });
+  api.state.skyDark = api.time + 3.2;
+  api.say(`SKYFALL — ${units} in the blast, ${builds} structures broken`, 'good');
 }
 
 /* the trailing strokes of a skyfall: light, a little damage, no bookkeeping */
@@ -563,11 +600,17 @@ function resolveStrikes(api) {
     st.strikes.splice(i, 1);
     if (s.main) continue;                 /* the first stroke already landed */
     const y = api.height(s.x, s.z);
-    api.fx.beam(s.x, s.z, y, y + 26, { color: [0.92, 0.96, 1], scale: 1.4, life: 0.5, jag: 1.2, width: 0.4 });
-    api.fx.explosion(s.x, y + 0.6, s.z, 1.1);
-    api.fx.shock(s.x, y + 0.3, s.z, 1.2, [0.9, 0.95, 1]);
-    for (const e of enemiesIn(api, s.by || { team: 0 }, s.x, s.z, 3.2)) api.damage(e, 55, s.by);
-    for (const b of buildingsIn(api, s.by ? s.by.team : 0, s.x, s.z, 3.2)) api.damage(b, 26, s.by);
+    const k = s.dmg || 0.45;
+    api.fx.beam(s.x, s.z, y, y + 44, { color: [0.95, 0.98, 1], scale: 2.0, life: 0.55, jag: 1.3, width: 0.7, alpha: 0.95 });
+    api.fx.beam(s.x, s.z, y, y + 30, { color: [0.6, 0.75, 1], scale: 3.4, life: 0.8, jag: 0.3, width: 1.4, alpha: 0.3, grow: 1.5 });
+    api.fx.explosion(s.x, y + 0.6, s.z, 1.8);
+    api.fx.shock(s.x, y + 0.3, s.z, 2.2, [0.9, 0.95, 1]);
+    api.fx.fire(s.x, y + 0.3, s.z, 5);
+    api.fx.embers(s.x, y + 0.8, s.z, 8);
+    api.shake(0.45 * k);
+    api.flash(0.12 * k, [0.98, 0.98, 0.96]);
+    for (const e of enemiesIn(api, s.by || { team: 0 }, s.x, s.z, 4.2)) api.damage(e, 150 * k, s.by);
+    for (const b of buildingsIn(api, s.by ? s.by.team : 0, s.x, s.z, 4.2)) api.damage(b, 200 * k, s.by);
   }
 }
 
@@ -1054,14 +1097,23 @@ export const arcane = {
     const mages = api.teamUnits(TEAM_PLAYER).filter(isMagician);
     let best = 0;
     for (const m of mages) best = Math.max(best, (m.modState.arcane.rank || 1));
-    if (best < 4) return null;
-    /* a high-rank magician bends the light around the battlefield */
-    const t = Math.min(1, (best - 3) / 3);
+    /* SKYFALL takes the sky first: for three seconds after the pillar lands
+       the world is unnaturally dark and the horizon is blue-white, which is
+       the difference between "a bright line appeared" and "the sky fell". */
+    const dark = api.state.skyDark ? api.state.skyDark - api.time : 0;
+    const t = best < 4 ? 0 : Math.min(1, (best - 3) / 3);
+    if (dark <= 0 && t <= 0) return null;
+    const k = Math.min(1, dark / 3.2);
     return {
-      tint: [1 - 0.04 * t, 1 - 0.02 * t, 1 + 0.03 * t],
-      fog: 0.0004 * t,
-      exposure: 1 + 0.03 * t,
-      cloud: 0.06 * t
+      tint: [
+        (1 - 0.04 * t) * (1 - 0.55 * k),
+        (1 - 0.02 * t) * (1 - 0.42 * k),
+        (1 + 0.03 * t) * (1 - 0.18 * k) + 0.16 * k
+      ],
+      fog: 0.0004 * t + 0.0016 * k,
+      exposure: (1 + 0.03 * t) * (1 - 0.42 * k),
+      cloud: Math.min(1, 0.06 * t + k),
+      night: k > 0.5 ? 0.35 * k : 0
     };
   }
 };

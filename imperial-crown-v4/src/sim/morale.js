@@ -119,6 +119,23 @@ export class Morale {
     return unit.state === STATE_ROUT ? 1.5 : 1;
   }
 
+  /**
+   * Where a broken man can find his nerve: inside the supply net, or at any
+   * friendly building at all. The second clause is what keeps a rout from
+   * becoming a death sentence -- men run home, the town steadies them, and
+   * the army comes back. A rout should cost ground, not the army.
+   */
+  rallyable(unit) {
+    if (this.inSupply(unit)) return true;
+    const list = this.game.buildings;
+    for (let i = 0; i < list.length; i++) {
+      const b = list[i];
+      if (b.dead || b.team !== unit.team) continue;
+      if ((b.x - unit.x) ** 2 + (b.z - unit.z) ** 2 <= 18 * 18) return true;
+    }
+    return false;
+  }
+
   /** A rout is a state change with consequences; keep it in one place. */
   break_(unit) {
     if (unit.state === STATE_ROUT) return;
@@ -187,9 +204,18 @@ export class Morale {
       if (u.morale === undefined) u.morale = MORALE_MAX;
       const fed = this.inSupply(u);
       u.fed = fed;
+      /* Morale is about *support and losses*, not a timer. A man with a spear
+         in his hands and an enemy in front of him is not counting the miles
+         home: while he is actually fighting, morale barely moves. It is the
+         march, the waiting, the night and the casualties that break an army.
+         Without this, any fight far from a town centre turned into a race to
+         see whose damage decayed first. */
+      const engaged = u.state === 'attack' || u.state === 'attackmove';
       let rate;
-      if (fed) rate = u.state === STATE_ROUT ? 5.5 : 2.2;
-      else rate = u.state === STATE_ROUT ? 0.8 : -1.1;
+      const safe = u.state === STATE_ROUT ? this.rallyable(u) : fed;
+      if (safe) rate = u.state === STATE_ROUT ? 5.5 : 2.2;
+      else if (engaged) rate = -0.18;
+      else rate = u.state === STATE_ROUT ? 1.6 : -1.05;
       /* the Wheel of the Year: winter is a second enemy, spring a nurse.
          The season multiplies the *gain* and sharpens the *loss*, so a fed
          army still holds in winter but a starving one dies faster there. */

@@ -177,6 +177,105 @@ check('a raid keeps a goal and ignores walls it cannot reach', () => {
 
 /* ============================================================ */
 console.log('\nBUDGET');
+/* ============================================================
+   THE CENTREPIECE
+   The magician is the mod's centrepiece and the user's explicit
+   request: the AI must come for it with everything it has, and its
+   price must rise with its rank. These are the checks that make the
+   promise testable instead of decorative.
+   ============================================================ */
+check('an Ascendant is priced far above a fresh apprentice', () => {
+  const g = makeGame(4242);
+  const host = createModHost(g, { enabled: ['arcane'] });
+  g.modHost = host;
+  const b = g.playerBase;
+  const mage = g.spawnUnitRaw('magician', 1, b.x + 10, b.z + 10);
+  assert(mage, 'no magician spawned');
+  const arc = mage.modState.arcane;
+  assert(arc, 'the magician has no arcane state');
+  const t1 = unitThreat(mage);
+  arc.rank = 6;
+  const t6 = unitThreat(mage);
+  assert(t6 > t1 + 8, `rank 6 must be worth far more than rank 1 (${t1} → ${t6})`);
+  host.dispose();
+  return `threat ${t1.toFixed(1)} → ${t6.toFixed(1)}`;
+});
+
+check('a rank-6 magician pulls a bigger squad than a rank-1 one', () => {
+  const g = makeGame(777);
+  const host = createModHost(g, { enabled: ['arcane'] });
+  g.modHost = host;
+  const b = g.playerBase;
+  const mage = g.spawnUnitRaw('magician', 1, b.x + 20, b.z + 20);
+  const ai = new AIController(g, 2, {});
+  /* give the AI an army to spend */
+  const army = [];
+  for (let i = 0; i < 16; i++) {
+    const u = g.spawnUnitRaw(i % 3 === 0 ? 'knight' : 'spearman', 2, g.enemyBase.x + (i % 4) * 3, g.enemyBase.z + 6);
+    if (u) army.push(u);
+  }
+  assert(army.length >= 10, 'the AI has no army to hunt with');
+  mage.modState.arcane.rank = 1;
+  for (let i = 0; i < 30; i++) ai.update(0.1);
+  const small = ai.hunt.length;
+  ai.hunt.length = 0; ai.huntCooldown = 0; ai.huntTarget = null;
+  for (const u of army) if (u.aiRole === 'hunt') u.aiRole = null;
+  mage.modState.arcane.rank = 6;
+  for (let i = 0; i < 30; i++) ai.update(0.1);
+  const big = ai.hunt.length;
+  assert(big > small, `an Ascendant must draw a larger hunt (rank1 ${small} vs rank6 ${big})`);
+  host.dispose();
+  return `${small} riders → ${big} riders`;
+});
+
+check('a magician standing in the open is eventually attacked by the AI', () => {
+  const g = makeGame(31337, 'hard');
+  const host = createModHost(g, { enabled: ['arcane'] });
+  g.modHost = host;
+  const ai = new AIController(g, 2, {});
+  const b = g.playerBase;
+  const mage = g.spawnUnitRaw('magician', 1, b.x + 14, b.z + 14);
+  assert(mage, 'no magician');
+  mage.modState.arcane.rank = 4;
+  /* An AI raiding party already in the field, 45 m out -- the hunt is about
+     the decision to come for the caster, not about a 400 m march across the
+     map, which is a different system (and is exercised by the soak). */
+  for (let i = 0; i < 12; i++) {
+    const u = g.spawnUnitRaw(i % 2 ? 'knight' : 'swordsman', 2,
+      b.x + 45 + (i % 4) * 2.5, b.z + 40 + Math.floor(i / 4) * 2.5);
+    if (u) u.aiRole = 'wave';
+  }
+  let targeted = false;
+  for (let i = 0; i < 1400 && !targeted; i++) {
+    ai.update(1 / 10);
+    g.update(1 / 10);
+    if (!mage.dead && mage.lastAttacker && mage.lastAttacker.team === 2) targeted = true;
+    if (mage.dead) targeted = true;
+  }
+  assert(targeted, 'the AI never touched the magician in 90 s');
+  host.dispose();
+  return mage.dead ? 'the magician was killed' : 'the magician was struck';
+});
+
+check('killing the magician ends the hunt', () => {
+  const g = makeGame(555);
+  const host = createModHost(g, { enabled: ['arcane'] });
+  g.modHost = host;
+  const ai = new AIController(g, 2, {});
+  const b = g.playerBase;
+  const mage = g.spawnUnitRaw('magician', 1, b.x + 16, b.z + 16);
+  for (let i = 0; i < 12; i++) g.spawnUnitRaw('knight', 2, g.enemyBase.x, g.enemyBase.z + i * 2);
+  for (let i = 0; i < 30; i++) ai.update(0.1);
+  const hadSquad = ai.hunt.length > 0;
+  mage.hp = 0;
+  mage.dead = true;
+  for (let i = 0; i < 6; i++) ai.update(0.1);
+  assert(!ai.huntTarget || ai.huntTarget.dead, 'the hunt kept a dead target');
+  assert(ai.hunt.length === 0 || ai.hunt.every((u) => u.aiRole !== 'hunt'), 'the squad never disbanded');
+  host.dispose();
+  return hadSquad ? 'squad disbanded' : 'nothing to disband';
+});
+
 check('the controller stays far below a frame', () => {
   const g = makeGame(5, 'extreme');
   const host = createModHost(g, { enabled: ['arcane'] });

@@ -793,10 +793,14 @@ export class AIController {
     const threat = unitThreat(best);
     const want = Math.min(9, 2 + Math.floor(threat / 2) + Math.floor(g.time / 240));
 
-    /* a squad needs a chance: count the target's bodyguards, not the map */
+    /* A squad needs a chance: count the target's *bodyguards*, not the map.
+       Only men who can fight are a shield -- counting villagers would make a
+       mage standing in his own town permanently unattackable, which is the
+       one place a player is most likely to park it. */
     let guards = 0;
     for (const f of g.units) {
       if (f === best || f.dead || f.team !== best.team) continue;
+      if (!f.def || !(f.def.attack > 0)) continue;
       if (dist2(f.x, f.z, best.x, best.z) < 144) guards++;
     }
     const free = army.filter((u) => (!u.aiRole || u.aiRole === 'wave') && this.hunt.indexOf(u) < 0);
@@ -814,13 +818,26 @@ export class AIController {
       this.hunt.push(u);
     }
 
-    /* the squad is not strong enough to take the guards yet: wait, but keep
-       the target — a mage that levels up must not become invisible */
+    /* The squad is not strong enough to take the guards yet. It does not sit
+       at home waiting: it *stages* -- walks to a ring 18-24 m out from the
+       target and holds there, so the moment the odds improve it is already
+       on top of the mage instead of forty seconds of walking away. */
     const assault = this.hunt.length >= Math.min(want, 2) && this.hunt.length * 2.2 >= guards;
     if (!assault) {
       for (const u of this.hunt) {
         u.aiRole = 'hunt';
-        if (u.state === STATE.IDLE) u.moveTo(best.x + (this.rng() - 0.5) * 10, best.z + (this.rng() - 0.5) * 10, true);
+        if (u.target) { u.target = null; }
+        if (u.state !== STATE.IDLE && u.state !== STATE.MOVE) continue;
+        const d = Math.hypot(u.x - best.x, u.z - best.z);
+        if (d > 26 || u.state === STATE.IDLE) {
+          /* moveTo sets the path; the state is what makes updateMove run it.
+             Without this line the squad stood on the spot forever -- a real
+             bug, and the reason the hunt had to be tested end to end. */
+          const a = Math.atan2(u.z - best.z, u.x - best.x) + (this.rng() - 0.5) * 0.6;
+          const r = 20 + this.rng() * 4;
+          u.state = STATE.MOVE;
+          u.moveTo(best.x + Math.cos(a) * r, best.z + Math.sin(a) * r, true);
+        }
       }
       return;
     }
@@ -1077,6 +1094,17 @@ export function unitThreat(u) {
   if (u.courtOffice) t += 3;
   /* a chevron is worth more than a body: veterans are the enemy's future */
   t += (u.rank || 0) * 1.6;
+  /* a caster is not a unit, it is a *threat curve*. A rank 6 magician can
+     delete a town centre once a day, so the bounty on its head has to grow
+     faster than its rank: threat is the AI's whole vocabulary for "kill this
+     now", and a linear scale would leave the Ascendant priced like a knight. */
+  if (u.def.threat) {
+    const caster = !!(u.def.classes && (u.def.classes.includes('caster') || u.def.classes.includes('magic')));
+    if (caster) {
+      const tier = u.modState && u.modState.arcane ? (u.modState.arcane.rank || 1) : 1;
+      t += Math.max(0, tier - 1) * 2.2;
+    }
+  }
   return t;
 }
 

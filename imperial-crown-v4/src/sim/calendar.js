@@ -116,7 +116,7 @@ export const OMENS = [
 export const OMEN_BY_ID = new Map(OMENS.map((o) => [o.id, o]));
 
 /** One in-game day per season. */
-const DEFAULT_SEASON_SECONDS = 480;
+const DEFAULT_SEASON_SECONDS = 300;   // five minutes a season: a 15-minute match is most of a year
 
 export class Calendar {
   constructor(game, opts = {}) {

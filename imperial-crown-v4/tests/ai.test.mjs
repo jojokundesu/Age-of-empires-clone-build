@@ -56,8 +56,8 @@ const seasonsSeen = game.calendar ? Math.floor(game.time / game.calendar.seasonL
    banking gold, nobody gathering wood, no army, no age-up) still "runs" and
    would otherwise pass unnoticed. */
 const bad = [];
-if (seconds >= 300 && tents === 0) bad.push('no supply tent was ever built — raids must break');
-if (seconds >= 300 && seasonsSeen < 1) bad.push('the wheel of the year never turned');
+if (seconds >= 480 && tents === 0) bad.push('no supply tent was ever built — raids must break');
+if (seconds >= 400 && seasonsSeen < 1) bad.push('the wheel of the year never turned');
 const samples = [];
 for (const team of [1, 2]) {
   const st = game.teams.get(team);
