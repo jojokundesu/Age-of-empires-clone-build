@@ -456,7 +456,7 @@ export class UI {
   openBuildMenu(villagers) {
     const g = this.game;
     const age = g.teams.get(1).age;
-    const types = ['house', 'farm', 'mill', 'lumber_camp', 'mining_camp', 'barracks', 'archery_range',
+    const types = ['house', 'farm', 'supply_tent', 'mill', 'lumber_camp', 'mining_camp', 'barracks', 'archery_range',
       'stable', 'blacksmith', 'market', 'watch_tower', 'palissade_wall', 'stone_wall', 'stone_gate',
       'monastery', 'siege_workshop', 'university', 'castle', 'dock', 'wonder'];
     /* a mod session adds its own tools to the same menu, in the same idiom */
@@ -1169,8 +1169,10 @@ export class UI {
           : st === STATE.RETURN ? 'Returning' : st === STATE.BUILD ? 'Building'
             : st === STATE.ATTACK ? 'Fighting' : st === STATE.MOVE ? 'Moving'
               : st === STATE.ATTACK_MOVE ? 'Advancing' : st === STATE.IDLE ? 'Idle'
-                : st === STATE.REPAIR ? 'Repairing' : st === STATE.HEAL ? 'Healing' : 'Ready';
+                : st === STATE.REPAIR ? 'Repairing' : st === STATE.HEAL ? 'Healing'
+                  : st === 'rout' ? 'Falling back' : 'Ready';
         sub = `${teamName} · ${stateName}`;
+        if (e.rank && g.veterancy) sub += ` · ${g.veterancy.name(e)}`;
       }
       el.inspSub.textContent = sub;
     }
@@ -1178,7 +1180,13 @@ export class UI {
     if (el.inspStats) {
       if (e.kind === 'unit') {
         const s = e.stats ? e.stats() : e.def;
-        el.inspStats.innerHTML = `<span>⚔ ${Math.round(s.attack || 0)}</span><span>🛡 ${s.armor || 0}/${s.pierceArmor || 0}</span>` +
+        const vet = e.rank
+          ? `<span class="rankChip" title="${Math.round(e.xp || 0)} xp">${'▴'.repeat(e.rank)}</span>`
+          : '';
+        const morale = (e.def && e.def.attack > 0)
+          ? `<span class="morale${(e.morale ?? 100) < 40 ? ' bad' : ''}" title="Morale — kept up by supply buildings${e.fed ? '' : ' (out of supply)'}">⚑ ${Math.round(e.morale ?? 100)}</span>`
+          : '';
+        el.inspStats.innerHTML = vet + morale + `<span>⚔ ${Math.round(s.attack || 0)}</span><span>🛡 ${s.armor || 0}/${s.pierceArmor || 0}</span>` +
           (s.range > 1.2 ? `<span>🎯 ${s.range.toFixed(1)}</span>` : '') +
           `<span>👟 ${(s.speed || 0).toFixed(1)}</span>` +
           (e.carry && e.carry.amount ? `<span>🎒 ${Math.round(e.carry.amount)} ${e.carry.kind}</span>` : '');

@@ -5,6 +5,8 @@
    friendly: one call to update(dt) advances everything by dt.
    ============================================================ */
 import { Court } from './court.js';
+import { Veterancy } from './veterancy.js';
+import { Morale } from './morale.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
   RES, POP_CAP, isUniqueUnit
@@ -130,6 +132,8 @@ export class Game {
     this.modHost = null;
     /* the campaign's long game: four offices, each held by a body on the map */
     this.court = new Court(this);
+    this.veterancy = new Veterancy(this);
+    this.morale = new Morale(this);
     this.courtArmed = null;
     this.courtWrit = null;
 
@@ -1050,6 +1054,7 @@ export class Game {
     let base = this.buffMul(unit.team, 'speed');
     if (this.court) base *= this.court.speedMul(unit);
     if (this.modHost) base *= this.modHost.speedMul(unit);
+    if (this.morale) base *= this.morale.speedMul(unit);
     return base;
   }
 
@@ -1302,6 +1307,11 @@ export class Game {
       killer.favor = Math.min(400, killer.favor + 0.6);
     }
     if (this.court) this.court.onKill(attacker, unit);
+    if (this.veterancy) this.veterancy.onKill(attacker, unit);
+    if (this.morale) {
+      this.morale.onAllyDeath(unit, attacker);
+      this.morale.onKill(attacker);
+    }
     unit.deadT = 0;
     this.deadUnits.push(unit);
     this.popDirty = true;
@@ -1602,6 +1612,7 @@ export class Game {
     /* mods get a slice of every tick, strictly after the core simulation, in
        their own try/catch (inside the host): a broken mod cannot take the
        match down with it */
+    this.morale.update(dt);
     if (this.modHost) this.modHost.update(dt);
 
     this.stats.tickMs = this.stats.tickMs * 0.9 + (performance.now() - t0) * 0.1;
@@ -1792,7 +1803,32 @@ export class Game {
     if (this.onNotify) this.onNotify(text, kind);
   }
 
+  /**
+   * Units that can still take an order. A man who has broken cannot be
+   * commanded back into the line by tapping the ground -- that is the point of
+   * the morale system, and it has to hold for every order, not just a move.
+   * Callers get the men who will listen, and the player is told once per
+   * frame why the rest stayed where they were.
+   */
+  freeUnits(units) {
+    const list = units || [];
+    const out = [];
+    let broken = 0;
+    for (let i = 0; i < list.length; i++) {
+      const u = list[i];
+      if (!u || u.dead || u.garrisoned || u.kind !== 'unit') continue;
+      if (u.state === 'rout') { broken++; continue; }
+      out.push(u);
+    }
+    if (broken && this._routNoticeAt !== this.time) {
+      this._routNoticeAt = this.time;
+      this.notify(`${broken} broken ${broken === 1 ? 'man refuses' : 'men refuse'} orders — they are falling back`, 'bad');
+    }
+    return out;
+  }
+
   orderMove(units, x, z, formation = true) {
+    units = this.freeUnits(units);
     const movable = units.filter((u) => !u.dead && !u.garrisoned && u.kind === 'unit');
     if (!movable.length) return;
     if (!formation || movable.length === 1) {
@@ -1832,6 +1868,7 @@ export class Game {
   }
 
   orderAttack(units, target) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || u.garrisoned || u.kind !== 'unit' || !u.def.attack) continue;
       u.target = target;
@@ -1842,6 +1879,7 @@ export class Game {
   }
 
   orderAttackMove(units, x, z) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || u.garrisoned || u.kind !== 'unit') continue;
       u.state = STATE.ATTACK_MOVE;
@@ -1851,10 +1889,12 @@ export class Game {
   }
 
   orderStop(units) {
+    units = this.freeUnits(units);
     for (const u of units) if (!u.dead && u.kind === 'unit') u.stop();
   }
 
   orderGather(units, node) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || u.type !== 'villager') continue;
       if (u.carry.kind && u.carry.kind !== node.resKind) {
@@ -1871,6 +1911,7 @@ export class Game {
   }
 
   orderBuild(units, building) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || u.type !== 'villager') continue;
       u.buildTarget = building;
@@ -1888,12 +1929,14 @@ export class Game {
    * makes a wall take five times as long as it has to.
    */
   orderBuildMany(units, buildings) {
+    units = this.freeUnits(units);
     const crew = units.filter((u) => u && !u.dead && u.type === 'villager');
     if (!crew.length || !buildings.length) return;
     for (let i = 0; i < crew.length; i++) this.orderBuild([crew[i]], buildings[i % buildings.length]);
   }
 
   orderRepair(units, building) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || u.type !== 'villager') continue;
       u.repairTarget = building;
@@ -1903,6 +1946,7 @@ export class Game {
   }
 
   orderHeal(units, target) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || !u.def.classes.includes('monk')) continue;
       u.target = target;
@@ -1912,6 +1956,7 @@ export class Game {
   }
 
   orderConvert(units, target) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || !u.def.classes.includes('monk')) continue;
       u.convertTarget = target;
@@ -1922,6 +1967,7 @@ export class Game {
   }
 
   orderGarrison(units, building) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || u.garrisoned) continue;
       u.garrisonTarget = building;
@@ -1931,6 +1977,7 @@ export class Game {
   }
 
   orderPatrol(units, x, z) {
+    units = this.freeUnits(units);
     for (const u of units) {
       if (u.dead || u.kind !== 'unit') continue;
       u.patrolPoints = [[u.x, u.z], [x, z]];

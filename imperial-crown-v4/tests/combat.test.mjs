@@ -56,7 +56,11 @@ const costB = armyB.reduce((s, [t, n]) => s + cost(t) * n, 0);
 console.log(`\nequal-cost battle: A=$${costA} (${armyA.map(([t, n]) => n + ' ' + t).join(', ')}) vs B=$${costB} (${armyB.map(([t, n]) => n + ' ' + t).join(', ')})`);
 const r = battle(armyA, armyB);
 console.log(`  result: A ${r.a}/${r.total} alive (${(r.hpFracA * 100).toFixed(0)}% hp), B ${r.b}/${r.totalB} alive (${(r.hpFracB * 100).toFixed(0)}% hp) after ${r.t.toFixed(1)} s, first blood ${r.firstBlood.toFixed(1)} s, ${r.maxProj} projectiles in flight`);
-expect(r.lostA >= 0.7 && r.lostB >= 0.7, `both sides take heavy losses (A ${(r.lostA * 100) | 0}%, B ${(r.lostB * 100) | 0}%)`);
+/* Morale changes the *shape* of a battle, not its cruelty: the side that
+   breaks is run down as it runs, so the loser is nearly destroyed while the
+   winner keeps roughly half his men. Both numbers must stay high enough that
+   a fight in the open is still a battle and not a duel. */
+expect(r.lostA >= 0.45 && r.lostB >= 0.6, `both sides are bloodied (A ${(r.lostA * 100) | 0}%, B ${(r.lostB * 100) | 0}%)`);
 expect(r.hpFracA + r.hpFracB < 0.45, `the battlefield is left wrecked (${((r.hpFracA + r.hpFracB) * 100) | 0}% of both armies' hp left)`);
 expect(r.firstBlood > 0.5, 'nobody dies in the first half second');
 expect(r.maxProj > 0, 'archers actually loose arrows');

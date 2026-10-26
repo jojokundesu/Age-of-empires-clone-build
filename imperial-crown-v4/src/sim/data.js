@@ -207,7 +207,7 @@ const B = (o) => ({ hp: 1000, armor: 2, pierceArmor: 6, size: 3, sight: 9, time:
 export const BUILDING_DEFS = {
   town_center: B({
     name: 'Town Centre', icon: 'castle', hp: 2400, armor: 5, pierceArmor: 9, size: 5.8, pop: 5, sight: 16,
-    attack: 7, range: 8.5, cost: { wood: 275, stone: 100 }, time: 40,
+    attack: 7, range: 8.5, cost: { wood: 275, stone: 100 }, time: 40, supply: 34,
     trains: ['villager'], dropoff: ['food', 'wood', 'gold', 'stone'], ageAdvance: true, garrison: 12,
     research: ['loom', 'wheelbarrow', 'hand_cart'],
     desc: 'Heart of the empire. Trains villagers, accepts resources and advances your age.'
@@ -292,8 +292,13 @@ export const BUILDING_DEFS = {
     cost: { stone: 30 }, time: 20, walkable: false, gate: true,
     desc: 'A gate your own troops pass through freely — the enemy cannot.'
   }),
+  supply_tent: B({
+    name: 'Supply Tent', icon: 'tent', hp: 240, armor: 0, pierceArmor: 2, size: 2.4, sight: 6,
+    cost: { wood: 55 }, time: 14, supply: 26,
+    desc: 'Extends your supply line 26 m. Armies far from one lose heart and eventually break.'
+  }),
   castle: B({
-    name: 'Castle', icon: 'castle', hp: 4800, armor: 9, pierceArmor: 14, size: 6.8, pop: 10, sight: 15,
+    name: 'Castle', icon: 'castle', hp: 4800, armor: 9, pierceArmor: 14, size: 6.8, pop: 10, supply: 40, sight: 15,
     attack: 18, range: 11, cost: { stone: 500, wood: 150 }, time: 70, garrison: 15,
     trains: ['hero_general', 'axeman', 'longbowman', 'cataphract', 'huskarl', 'war_elephant', 'samurai', 'mangudai', 'berserk'],
     research: ['conscription', 'sappers', 'hoardings', 'chivalry', 'yeomen', 'greek_fire', 'anarchy', 'mahouts', 'bushido', 'drill', 'berserkergang'],
@@ -453,7 +458,7 @@ export const BUILDING_AGE = {
   town_center: 0, house: 0, farm: 0, lumber_camp: 0, mining_camp: 0, mill: 0,
   palissade_wall: 0, outpost_shrine: 0,
   barracks: 1, archery_range: 1, stable: 1, blacksmith: 1, market: 1, watch_tower: 1,
-  stone_wall: 1, stone_gate: 1, monastery: 2, siege_workshop: 2, university: 2, castle: 2,
+  stone_wall: 1, stone_gate: 1, supply_tent: 0, monastery: 2, siege_workshop: 2, university: 2, castle: 2,
   wonder: 3, dock: 1
 };
 

@@ -357,6 +357,10 @@ export class AIController {
       if (this.tryBuild('barracks', st)) return;
     }
     if (age >= 1 && army < 6) return;
+    /* supply: a raid that walks past its tents breaks. The AI keeps a forward
+       tent on the road to the enemy and a second behind it, so its armies can
+       hold ground a whole map from the town centre. */
+    if (this.manageSupply(st, age)) return;
     // a town centre if we somehow lost ours
     if (this.count('town_center') === 0) {
       if (this.tryBuild('town_center', st)) return;
@@ -384,6 +388,30 @@ export class AIController {
     if (age >= 1 && this.count('lumber_camp') < 2 && st.res.wood < 200 && this.tryBuild('lumber_camp', st)) return;
     // late game: more farms and towers
     if (age >= 2 && st.res.wood > 400 && this.count('farm') < 12) this.tryBuild('farm', st);
+  }
+
+  /** One forward tent at ~42 % of the road, a second at ~72 %. */
+  manageSupply(st, age) {
+    const g = this.game;
+    if (age < 1) return false;
+    if ((this.supplyAt || 0) > g.time) return false;
+    if (this.militaryUnits().length < 8) return false;
+    const tents = this.myBuildings().filter((b) => b.type === 'supply_tent');
+    if (tents.length >= 2) return false;
+    const cost = g.buildingCost('supply_tent', this.team);
+    if (!g.canAfford(this.team, cost)) return false;
+    const eb = this.enemyBase || { x: -this.base.x, z: -this.base.z };
+    const frac = tents.length === 0 ? 0.42 : 0.72;
+    const tx = this.base.x + (eb.x - this.base.x) * frac;
+    const tz = this.base.z + (eb.z - this.base.z) * frac;
+    const spot = g.freeSpotNear(tx, tz, { radius: 1.2, def: { size: 2.4 } }, 16);
+    if (!spot) { this.supplyAt = g.time + 30; return false; }
+    const b = g.placeBuilding('supply_tent', this.team, spot[0], spot[1], {});
+    if (!b) { this.supplyAt = g.time + 30; return false; }
+    const builders = this.pickBuilders(1);
+    if (builders.length) g.orderBuild(builders, b);
+    this.supplyAt = g.time + 25;
+    return true;
   }
 
   tryBuild(type, st) {
@@ -636,6 +664,33 @@ export class AIController {
      form while it is outnumbered, and disbands the moment the mage dies.
      If the target is a human player's mage, the player is told: a threat
      you never see is not a strategy, it is a dice roll. */
+  /** A veteran at death's door is walked home, not spent. */
+  manageWounded(army) {
+    const g = this.game;
+    if ((this.retreatAt || 0) > g.time) {
+      /* still clear the men who have recovered */
+    }
+    let sent = 0;
+    if ((this.retreatAt || 0) <= g.time) {
+      for (const u of army) {
+        if (u.dead || (u.rank || 0) < 2) continue;
+        if (u.hp > u.maxHp * 0.34) continue;
+        if (u.aiRole === 'retreat') continue;
+        if (sent >= 2) break;
+        u.aiRole = 'retreat';
+        u.target = null;
+        u.state = STATE.MOVE;
+        u.moveTo(this.base.x + (this.rng() - 0.5) * 6, this.base.z + (this.rng() - 0.5) * 6, true);
+        sent++;
+      }
+      if (sent) this.retreatAt = g.time + 5;
+    }
+    for (const u of army) {
+      if (u.aiRole !== 'retreat') continue;
+      if (u.dead || u.hp > u.maxHp * 0.75 || Math.hypot(u.x - this.base.x, u.z - this.base.z) < 9) u.aiRole = null;
+    }
+  }
+
   manageHunt(army) {
     const g = this.game;
     if (this.aggression < 0.45) return;
@@ -688,14 +743,15 @@ export class AIController {
     }
     const free = army.filter((u) => (!u.aiRole || u.aiRole === 'wave') && this.hunt.indexOf(u) < 0);
     while (this.hunt.length < want && free.length) {
-      /* cavalry first: a hunt is a chase */
+      /* cavalry first (a hunt is a chase), then the men who have done this
+         before -- but never a crippled elite, whose death would cost more
+         than the kill would win */
+      const sscore = (u) => (u.def.classes.includes('cavalry') ? 0 : 2)
+        + Math.sqrt(dist2(u.x, u.z, best.x, best.z)) * 0.01
+        - (u.rank || 0) * 0.35
+        + ((u.rank || 0) >= 2 && u.hp < u.maxHp * 0.5 ? 1.6 : 0);
       let pick = 0;
-      for (let i = 1; i < free.length; i++) {
-        const a = free[i], b = free[pick];
-        const ka = (a.def.classes.includes('cavalry') ? 0 : 2) + Math.sqrt(dist2(a.x, a.z, best.x, best.z)) * 0.01;
-        const kb = (b.def.classes.includes('cavalry') ? 0 : 2) + Math.sqrt(dist2(b.x, b.z, best.x, best.z)) * 0.01;
-        if (ka < kb) pick = i;
-      }
+      for (let i = 1; i < free.length; i++) if (sscore(free[i]) < sscore(free[pick])) pick = i;
       const u = free.splice(pick, 1)[0];
       this.hunt.push(u);
     }
@@ -850,6 +906,7 @@ export class AIController {
     /* 2. the standing bounty, then 3. the raid clock */
     this.manageHunt(army);
     this.manageRaids(army);
+    this.manageWounded(army);
 
     /* the line: everything that is not already hunting or raiding */
     const waveUnits = army.filter((u) => !u.aiRole || u.aiRole === 'wave');
@@ -960,6 +1017,8 @@ export function unitThreat(u) {
   /* an officer of the enemy court is worth more than the unit carrying the
      office: killing the Marshal is how you break an army's spine */
   if (u.courtOffice) t += 3;
+  /* a chevron is worth more than a body: veterans are the enemy's future */
+  t += (u.rank || 0) * 1.6;
   return t;
 }
 

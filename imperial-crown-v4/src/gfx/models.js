@@ -173,6 +173,53 @@ B('house', () => {
   return { geo: g, height: 4.2 };
 });
 
+/* ============================================================
+   supply tent
+   ------------------------------------------------------------
+   The morale system's tool, and the only building a player drags
+   with an army. It has to read as *cloth* from a distance, so the
+   canvas is a big light gable with a dark seam down the ridge and a
+   team-coloured fly sheet over the door -- the tint is the one place
+   the team colour belongs, because everything else is white canvas.
+   ============================================================ */
+B('supply_tent', () => {
+  const g = new Geo();
+  /* groundsheet */
+  g.material(M.DIRT).color(0.44, 0.38, 0.28);
+  g.cyl(0, 0.04, 0, 2.5, 2.6, 0.08, 12);
+  /* canvas: a big gable, seam on top */
+  g.material(M.CLOTH).color(0.9, 0.87, 0.78);
+  g.gable(0, 0.08, 0, 3.4, 1.62, 4.4);
+  g.material(M.CLOTH).color(0.72, 0.68, 0.6);
+  g.box(0, 1.72, 0, 3.52, 0.1, 4.5);
+  /* door: the dark inside, with the flap folded back on both sides */
+  g.material(M.WOOD_DARK).color(0.12, 0.1, 0.08);
+  g.panel(0, 0.86, 2.2, 1.3, 1.7);
+  g.material(M.CLOTH).color(0.94, 0.91, 0.84);
+  g.panel(-0.78, 1.0, 2.24, 0.4, 1.85, 0.5);
+  g.panel(0.78, 1.0, 2.24, 0.4, 1.85, -0.5);
+  /* team-coloured fly sheet over the ridge */
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.taperBox(0, 1.9, 0, 3.0, 0.5, 4.0, 2.2, 3.2);
+  /* ridge pole and two uprights */
+  g.material(M.WOOD).color(0.36, 0.26, 0.18);
+  g.cyl(0, 1.86, 0, 0.07, 0.07, 4.7, 6, { axis: 'z' });
+  for (const sz of [-1, 1]) g.cyl(0, 0.9, sz * 2.0, 0.06, 0.08, 1.8, 5);
+  /* crates and a barrel of rations by the door */
+  crate(g, 1.9, 1.3, 0, 0.5);
+  crate(g, 2.2, 0.2, 0, 0.36);
+  barrel(g, -1.95, 1.2);
+  /* a pennant on a pole: whose tent this is */
+  g.material(M.WOOD).color(0.3, 0.22, 0.16);
+  g.cyl(-2.3, 1.5, -2.2, 0.045, 0.06, 3.0, 5);
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.panel(-2.0, 2.7, -2.2, 0.62, 0.9);
+  g.material(M.GOLD).color(0.86, 0.72, 0.34);
+  g.sphere(-2.3, 3.02, -2.2, 0.07, 6, 4);
+  g.color(1, 1, 1);
+  return { geo: g, height: 3.1 };
+});
+
 B('town_center', () => {
   const g = new Geo();
   const w = 5.6, d = 5.2, wallH = 3.5;

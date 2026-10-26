@@ -528,5 +528,5 @@ const ICONS = new Set([
   'pause', 'play', 'sound', 'mute', 'menu', 'close', 'up', 'down', 'plus', 'heart',
   'hourglass', 'map', 'target', 'boot', 'people', 'cart', 'fish', 'deer', 'relic', 'wall',
   'gate', 'scroll', 'helmet', 'bolt', 'skull', 'home', 'mountain', 'leaf', 'save', 'load',
-  'check', 'warning', 'villager'
+  'check', 'warning', 'villager', 'tent'
 ]);

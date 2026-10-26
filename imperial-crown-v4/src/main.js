@@ -15,6 +15,7 @@ import { Input } from './game/input.js';
 import { UI } from './game/ui.js';
 import { AGES, CIVS, DIFFICULTY, GAME_MODES, BUILDING_DEFS, UNIT_DEFS } from './sim/data.js';
 import { clamp } from './core/math.js';
+import { RANKS, MAX_RANK } from './sim/veterancy.js';
 import { Governor, pickInitialTier, TIER_ORDER } from './gfx/quality.js';
 
 /* 30 Hz simulation, 60+ Hz rendering. An RTS does not need 60 sim ticks a
@@ -624,7 +625,7 @@ class App {
       teams: { 1: g.exportTeam(1), 2: g.exportTeam(2) },
       wonder: [...g.wonderClocks.entries()],
       court: g.court ? g.court.toJSON() : null,
-      units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp)]),
+      units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round(u.xp || 0), Math.round(u.morale ?? 100)]),
       buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
     };
@@ -657,10 +658,20 @@ class App {
         if (b.buildProgress >= 1) game.onBuildingComplete(b);
       }
     }
-    for (const [type, team, x, z, hp] of save.units || []) {
+    for (const [type, team, x, z, hp, rank, xp, morale] of save.units || []) {
       if (team !== 1 && team !== 2) continue;
       const u = game.spawnUnit(type, team, x, z);
-      if (u) { u.maxHp = Math.max(u.maxHp, hp); u.hp = Math.min(u.maxHp, hp); }
+      if (!u) continue;
+      if (rank) {
+        /* restore the rank before the hit points: the pool the save was taken
+           with is the pool the rank had already bought */
+        u.rank = Math.min(MAX_RANK, rank | 0);
+        u.xp = xp || 0;
+        u.maxHp = Math.round(u.baseMaxHp * RANKS[u.rank].hp);
+      }
+      u.maxHp = Math.max(u.maxHp, hp);
+      u.hp = Math.min(u.maxHp, hp);
+      u.morale = morale === undefined ? 100 : clamp(morale, 0, 100);
     }
     if (save.resources) {
       const map = new Map();

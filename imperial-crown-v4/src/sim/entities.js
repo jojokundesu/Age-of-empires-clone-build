@@ -92,6 +92,8 @@ export class Entity {
       armor = kind === 'pierce' ? (this.def.pierceArmor || 0) : (this.def.armor || 0);
     }
     if (kind === 'siege') armor *= 0.35;
+    /* a man who has turned his back is the easiest kill on the field */
+    if (this.game && this.game.morale) amount *= this.game.morale.damageTakenMul(this);
     if (this.game && this.game.buffMul) {
       const blessed = this.game.buffMul(this.team, 'armor');
       if (blessed > 1) armor += blessed;
@@ -105,6 +107,10 @@ export class Entity {
     }
     this.hp = Math.max(0, this.hp - amount);
     this.hitFlash = Math.min(1, this.hitFlash + 0.55);
+    /* the man who swung learns from the blow, whether or not it kills */
+    if (attacker && this.game && this.game.veterancy && before > this.hp) {
+      this.game.veterancy.onDamage(attacker, before - this.hp, this);
+    }
     if (attacker) {
       this.lastAttacker = attacker;
       this.lastAttackTime = this.game.time;
@@ -139,6 +145,12 @@ export class Unit extends Entity {
     this.name = def.name;
     this.classes = def.classes;      // used by the damage bonus table
     this.maxHp = def.hp * (game.civBonus(team, 'unitHp', type) || 1);
+    /* the pool before any rank was earned: a promotion is applied on top of
+       this, so a demotion (a reload, a mod) can always be recomputed exactly */
+    this.baseMaxHp = this.maxHp;
+    this.rank = 0;
+    this.xp = 0;
+    this.morale = 100;
     // civ bonuses
     if (type === 'villager') this.maxHp *= 1 + (team === game.playerTeam ? (game.civOf(team) === 'japanese' ? 0.05 : 0) : 0);
     this.hp = this.maxHp;
@@ -239,6 +251,14 @@ export class Unit extends Entity {
     if (g.court) {
       s.sight += g.court.sightBonus(team);
       s.healMul = g.court.healMul(team);
+    }
+    /* rank: the multipliers the chevrons stand for. Inside stats() so the
+       inspector, the projectile maths and the damage all agree. */
+    if (this.rank && g.veterancy) {
+      const m = g.veterancy.mul(this);
+      s.armor += m.arm;
+      s.pierceArmor += m.arm;
+      s.attack *= m.atk;
     }
     if (this.def.auraRange) s.auraRange = this.def.auraRange;
     s.maxHpScale = s.maxHpScale || 1;
@@ -478,6 +498,7 @@ export class Unit extends Entity {
       case STATE.PATROL: this.updatePatrol(dt, stats); break;
       case STATE.TRADE: this.updateTrade(dt, stats); break;
       case STATE.GARRISON: this.updateGarrisonMove(dt, stats); break;
+      case 'rout': this.updateRout(dt, stats); break;
       default: this.updateIdle(dt, stats); break;
     }
 
@@ -548,6 +569,33 @@ export class Unit extends Entity {
     if (!b || b.dead) { g.removeFromGarrison(this); return; }
     if (this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 1.5 * dt);
     this.x = b.x; this.z = b.z;
+  }
+
+  /**
+   * Broken men run for the nearest supply and keep running until they find
+   * their nerve. They cannot be ordered, and they will not stop to fight.
+   */
+  updateRout(dt, stats) {
+    const g = this.game;
+    const m = g.morale;
+    if (!m) { this.state = STATE.IDLE; return; }
+    this.target = null;
+    let gx, gz;
+    const src = m.nearestSupply(this);
+    if (src) { gx = src.x; gz = src.z; }
+    else { const home = m.homeOf(this.team); gx = home.x; gz = home.z; }
+    if (Math.hypot(gx - this.x, gz - this.z) < 3) { this.moving = false; this.path = null; return; }
+    this.repathTimer -= dt;
+    if (!this.path || !this.targetPos || this.repathTimer <= 0) {
+      this.repathTimer = 1.2;
+      /* fan out around the tent instead of forming a queue at its door */
+      const a = ((this.id * 37) % 100) / 100 * Math.PI * 2;
+      this.destX = gx + Math.cos(a) * 2.4;
+      this.destZ = gz + Math.sin(a) * 2.4;
+      this.setPath(this.destX, this.destZ, true);
+    }
+    if (this.path) this.stepMovement(dt, stats);
+    else this.moving = false;
   }
 
   updateIdle(dt, stats) {
@@ -679,6 +727,7 @@ export class Unit extends Entity {
     const aura = g.auraBonusFor(this);
     dmg *= 1 + aura;
     dmg *= g.buffMul(this.team, 'attack');
+    if (g.morale) dmg *= g.morale.attackMul(this);
     const isRanged = this.def.range > 1.2 && def.attack > 0;
     // Night raids: melee strikes land harder after dark.
     if (!isRanged) dmg *= g.nightRaidMul;
@@ -975,7 +1024,9 @@ export class Unit extends Entity {
     this.path = null;
     const courtHeal = g.court ? g.court.healMul(this.team) : 1;
     const heal = (this.def.heal || 10) * dt * (g.civBonuses(this.team).monkHeal || 1) * courtHeal;
+    const beforeHeal = target.hp;
     target.heal(heal);
+    if (g.veterancy) g.veterancy.onHeal(this, target.hp - beforeHeal);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 3) * 0.35 + 0.3);
     if (g.rng() < dt * 3) g.fx.heal(target.x, target.y, target.z, 1);
   }
