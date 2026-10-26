@@ -21,7 +21,7 @@
    node tests/playtest.mjs [--out ci/v4-playtest]
 */
 import { createServer } from 'node:http';
-import { readFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { extname, join, resolve, sep } from 'node:path';
 import puppeteer from 'puppeteer-core';
@@ -65,15 +65,39 @@ page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text(
 page.on('pageerror', (e) => pageErrors.push(String(e && e.stack ? e.stack.split('\n')[0] : e)));
 
 let pass = 0, failures = 0;
+/* Every check is also written to ci/playtest-report.md: the APK workflow reads
+   that file to decide whether the build may ship, so a pass that only reaches
+   stdout is a pass nobody sees. */
+const REPORT = 'ci/playtest-report.md';
+const rows = [];
+await mkdir('ci', { recursive: true }).catch(() => {});
+const writeReport = () => writeFile(REPORT, [
+  '## Play test — a whole session in a real browser',
+  '',
+  `- checks: **${pass}** passed, **${failures}** failed`,
+  `- screenshots: \`${OUT}\``,
+  `- mode: ${process.env.PLAYTEST_MODE || 'desktop + phone'}`,
+  '',
+  '| | check | result |',
+  '| - | ----- | ------ |',
+  ...rows.map((r) => `| ${r.ok ? '✅' : '❌'} | ${r.name} | ${r.detail || ''} |`),
+  '',
+  failures === 0 ? `**PLAYTEST PASSED (${pass})**` : `**PLAYTEST FAILURES (${failures})**`,
+  ''
+].join('\n')).catch(() => {});
+
 const check = async (name, fn) => {
   try {
     const d = await fn();
     pass++;
+    rows.push({ ok: true, name, detail: d ? String(d) : '' });
     console.log(`  ok   ${name}${d ? '  — ' + d : ''}`);
   } catch (e) {
     failures++;
+    rows.push({ ok: false, name, detail: (e && e.message) || 'failed' });
     console.log(`  FAIL ${name} — ${e && e.message}`);
   }
+  await writeReport();
 };
 const assert = (c, m) => { if (!c) throw new Error(m || 'assert'); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -110,6 +134,17 @@ const state = () => page.evaluate(() => {
 /* Speed the simulation up while the harness waits: a villager walking to a
    tree takes half a minute of real time otherwise. */
 const speed = (v) => page.evaluate((v) => { window.__imperial.game.speed = v; }, v);
+
+/* Wait for the *game* clock, not the wall clock.
+   A shared CI runner (or a machine running three soaks at once) can hand the
+   page far fewer frames than it asked for; a check that says "wait 1.2 s and
+   expect a march" then fails for a reason that has nothing to do with the
+   game. Every timed check waits on simulated seconds instead. */
+const gameSeconds = async (n, capMs = 30000) => {
+  const now = await page.evaluate(() => window.__imperial.game.time);
+  await page.waitForFunction((target) => window.__imperial.game.time >= target,
+    { timeout: capMs, polling: 100 }, now + n);
+};
 
 await page.goto(BASE, { waitUntil: 'load', timeout: 120000 });
 await page.waitForFunction('window.__imperial && window.__imperial.renderer && window.__imperial.renderer.ready', { timeout: 300000 });
@@ -318,7 +353,7 @@ await check('the army card selects soldiers and a tap marches them', async () =>
   const before = await page.evaluate(() => window.__imperial.game.selection.map((u) => ({ id: u.id, x: u.x, z: u.z })));
   await page.mouse.click(p.x, p.y);
   await speed(4);
-  await wait(1200);
+  await gameSeconds(4.5);
   await speed(1);
   const after = await page.evaluate((ids) => ids.map((id) => {
     const u = window.__imperial.game.units.find((x) => x.id === id);
@@ -508,6 +543,7 @@ await check('nothing errored in the browser', async () => {
 });
 
 console.log('');
+await writeReport();
 console.log(failures === 0
   ? `PLAY-TEST PASSED (${pass}) — shots in ${OUT}`
   : `PLAY-TEST FAILURES (${failures}) — shots in ${OUT}`);
