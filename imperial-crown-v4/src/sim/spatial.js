@@ -50,10 +50,19 @@ export class SpatialHash {
       this.insert(e);
     }
   }
-  /** Fill the shared output array with entities within `radius`. */
+  /**
+   * Fill the shared output array with entities within `radius`.
+   *
+   * `out.length = 0` looks free and is not: V8 trims the array's backing
+   * store when the length shrinks, so the next three pushes allocate a fresh
+   * store. This is called a few thousand times a second -- once for every
+   * man's separation step, once for every passability test near a wall -- and
+   * the old version handed the collector an allocation per call. Writing by
+   * index and setting the length once at the end keeps the capacity.
+   */
   query(x, z, radius) {
     const out = this._out;
-    out.length = 0;
+    let n = 0;
     const cs = this.cellSize;
     const x0 = Math.max(0, Math.floor((x - radius + this.half) / cs));
     const x1 = Math.min(this.cells - 1, Math.floor((x + radius + this.half) / cs));
@@ -67,10 +76,11 @@ export class SpatialHash {
         for (let i = 0; i < bucket.length; i++) {
           const e = bucket[i];
           const dx = e.x - x, dz = e.z - z;
-          if (dx * dx + dz * dz <= r2) out.push(e);
+          if (dx * dx + dz * dz <= r2) out[n++] = e;
         }
       }
     }
+    if (out.length !== n) out.length = n;
     return out;
   }
 }

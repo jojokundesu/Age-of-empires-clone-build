@@ -2002,20 +2002,52 @@ export class Game {
     this.stats.buildings = this.buildings.length;
   }
 
+  /**
+   * Sweep the corpses out. Runs every second and a half, all match long, so
+   * it does its work in place: the old version built a throwaway array (which
+   * was then ignored) and replaced three arrays with three fresh filters.
+   * At a full four-crown field that was three or four hundred slots copied
+   * and three arrays allocated every 1.5 s, forever, for a list that usually
+   * has nothing to remove at all.
+   */
   compact() {
-    const aliveUnits = [];
-    for (const u of this.units) {
-      if (u.dead) {
-        if (u.deadT > 2.4) continue;      // give the death animation time
-        aliveUnits.push(u);
-      } else aliveUnits.push(u);
+    const units = this.units;
+    let w = 0;
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      if (u.dead && u.deadT > 2.4) continue;      // give the death animation time
+      units[w++] = u;
     }
-    // remove fully faded corpses
-    this.units = this.units.filter((u) => !u.dead || u.deadT <= 2.4);
-    this.buildings = this.buildings.filter((b) => !b.dead || b.deadT < 6);
-    this.resources = this.resources.filter((r) => !r.dead || r.deadT < 3);
-    // selection cleanup
-    if (this.selection.length) this.selection = this.selection.filter((e) => !e.dead);
+    if (w !== units.length) units.length = w;
+
+    const blds = this.buildings;
+    w = 0;
+    for (let i = 0; i < blds.length; i++) {
+      const b = blds[i];
+      if (b.dead && !(b.deadT < 6)) continue;
+      blds[w++] = b;
+    }
+    if (w !== blds.length) blds.length = w;
+
+    const res = this.resources;
+    w = 0;
+    for (let i = 0; i < res.length; i++) {
+      const r = res[i];
+      if (r.dead && !(r.deadT < 3)) continue;
+      res[w++] = r;
+    }
+    if (w !== res.length) res.length = w;
+
+    if (this.selection.length) {
+      const sel = this.selection;
+      w = 0;
+      for (let i = 0; i < sel.length; i++) {
+        const e = sel[i];
+        if (e.dead) { this.selectionSet.delete(e); continue; }
+        sel[w++] = e;
+      }
+      if (w !== sel.length) sel.length = w;
+    }
   }
 
   /* The starting valley is known ground, not a circle of torchlight. v2

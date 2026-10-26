@@ -44,7 +44,9 @@ const SUITES = [
   ['hud', 'tests/ui.test.mjs'],
   ['application', 'tests/app.test.mjs'],
   ['bundle', 'tests/dist.test.mjs', true],
-  ['shots', 'tests/shots.mjs', true]
+  ['shots', 'tests/shots.mjs', true],
+  ['playtest', 'tests/playtest.mjs', true],
+  ['fuzzcrowns', 'tests/fuzzcrowns.mjs', ['--seconds', '180', '--seeds', '2']]
 ];
 
 /* Chromium needs NSS, and a slim container may not have it. If a local copy
