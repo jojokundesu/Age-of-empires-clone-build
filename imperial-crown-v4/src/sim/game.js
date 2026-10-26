@@ -123,6 +123,10 @@ export class Game {
     this.gameOver = false;
     this.paused = false;
     this.speed = 1;
+    /* Mod sessions attach a host here. Every hook below is a single null check
+       when the field is empty, so a normal campaign pays nothing for the mod
+       system existing. See src/mods/. */
+    this.modHost = null;
 
     this.units = [];
     this.buildings = [];
@@ -387,7 +391,9 @@ export class Game {
     const near = this.buildingSpatial.query(x, z, 5);
     for (let i = 0; i < near.length; i++) {
       const b = near[i];
-      if (b.dead || b.wall) continue;
+      /* farms -- and mod traps, which declare themselves walkable for the same
+         reason -- are floors, not obstacles */
+      if (b.dead || b.wall || (b.def && b.def.walkable)) continue;
       /* a gate opens for its owner's troops, and for nobody else */
       if (b.def.gate && unit && b.team === unit.team) continue;
       const half = (b.def.size || 3) * 0.5 - 0.05 + (unit ? unit.radius * 0.4 : 0.2);
@@ -712,6 +718,7 @@ export class Game {
     const u = new Unit(this, type, team, fx, fz);
     u.statsCache = null;
     this.units.push(u);
+    if (this.modHost) this.modHost.onSpawn(u);
     if (team === TEAM_PLAYER) this.popDirty = true;
     return u;
   }
@@ -841,6 +848,9 @@ export class Game {
   markBuildingFootprint(b, blocked) {
     this.buildingSpatialDirty = true;
     if (b.def.neutral && !b.def.wall) return;
+    /* a walkable building never blocks the nav grid: a farm used to stamp four
+       cells of solid obstacle into the middle of a field */
+    if (b.def.walkable) return;
     const N = this.world.nav.cells;
     const cell = this.world.nav.cell;
     const half = WORLD.half;
@@ -1000,7 +1010,9 @@ export class Game {
 
   unitSpeedMul(unit) {
     // packed formation cohesion: slight slowdown when very close to allies
-    return this.buffMul(unit.team, 'speed');
+    const base = this.buffMul(unit.team, 'speed');
+    if (!this.modHost) return base;
+    return base * this.modHost.speedMul(unit);
   }
 
   /* ==========================================================
@@ -1273,6 +1285,7 @@ export class Game {
 
   onBuildingComplete(building) {
     this.popDirty = true;
+    if (this.modHost) this.modHost.onBuildingComplete(building);
     if (building.team === TEAM_PLAYER) {
       this.notify(`${building.name} complete`, 'good');
       this.sound.play('complete', building.x, building.z);
@@ -1536,6 +1549,11 @@ export class Game {
 
     // victory check
     if (this.frame % 22 === 0) this.checkVictory();
+
+    /* mods get a slice of every tick, strictly after the core simulation, in
+       their own try/catch (inside the host): a broken mod cannot take the
+       match down with it */
+    if (this.modHost) this.modHost.update(dt);
 
     this.stats.tickMs = this.stats.tickMs * 0.9 + (performance.now() - t0) * 0.1;
     this.stats.units = this.units.length;

@@ -244,7 +244,18 @@ export class UI {
     }
   }
 
+  /**
+   * The command card. In a mod session the host appends whatever the active
+   * mods want to offer for the current selection (spells, taming, upgrades);
+   * in a normal match this is exactly the list it always was.
+   */
   commandsForSelection() {
+    const list = this._baseCommands();
+    if (this.game && this.game.modHost) return this.game.modHost.decorateCommands(list, this);
+    return list;
+  }
+
+  _baseCommands() {
     const g = this.game;
     const sel = g.selection.filter((e) => !e.dead);
     const team = g.teams.get(1);
@@ -398,6 +409,13 @@ export class UI {
       if (out.includes(type)) continue;
       out.push(type);
     }
+    /* capped or conditional units come from the running mod */
+    if (g.modHost) {
+      for (const t of g.modHost.trainableAt(b, 1)) {
+        if (!UNIT_DEFS[t] || out.includes(t)) continue;
+        out.push(t);
+      }
+    }
     return out;
   }
 
@@ -436,6 +454,10 @@ export class UI {
     const types = ['house', 'farm', 'mill', 'lumber_camp', 'mining_camp', 'barracks', 'archery_range',
       'stable', 'blacksmith', 'market', 'watch_tower', 'palissade_wall', 'stone_wall', 'stone_gate',
       'monastery', 'siege_workshop', 'university', 'castle', 'dock', 'wonder'];
+    /* a mod session adds its own tools to the same menu, in the same idiom */
+    if (g.modHost) {
+      for (const t of g.modHost.buildTypes(1)) if (BUILDING_DEFS[t] && !types.includes(t)) types.push(t);
+    }
     const out = [];
     for (const type of types) {
       const def = BUILDING_DEFS[type];
@@ -454,8 +476,8 @@ export class UI {
             type, x: this.camera.target[0], z: this.camera.target[2],
             y: g.heightAt(this.camera.target[0], this.camera.target[2]),
             footprint: def.size || 3, valid: true,
-            /* walls are drawn, not tapped: a drag lays the whole run */
-            line: !!def.wall, cells: null,
+            /* walls (and mod traps) are drawn, not tapped: a drag lays the run */
+            line: !!def.wall || !!def.dragLine, cells: null,
             builders: villagers.slice()   // the crew that opened the menu
           };
           this.toast(def.wall ? `Drag to draw a wall, tap for one ${def.name}` : `Tap the ground to place the ${def.name}`, 'gold');
@@ -792,6 +814,7 @@ export class UI {
       this.tAcc = 0;
       this.updateText();
       this.updateInspector();
+      this.updateModHud();
       /* An open build menu is modal. This used to overwrite it with the
          selection's own commands on the very next tick -- a quarter of a second
          on a phone -- which made the Build button look broken: the panel
@@ -824,6 +847,75 @@ export class UI {
       this.updateAlerts();
       if (this.perfVisible) this.updatePerf();
     }
+  }
+
+  /**
+   * The mod strip under the top bar. Built once per refresh, only in a mod
+   * session, and torn down completely outside one so the normal HUD is
+   * pixel-for-pixel what it always was.
+   */
+  updateModHud() {
+    const el = this.el.modHud || (this.el.modHud = document.getElementById('modHud'));
+    if (!el) return;
+    const host = this.game && this.game.modHost;
+    if (!host) {
+      if (!el.classList.contains('hidden')) { el.classList.add('hidden'); el.replaceChildren(); }
+      return;
+    }
+    el.classList.remove('hidden');
+    const data = host.hud();
+    const gauges = data.gauges || [];
+    /* a mod may publish a chip and a gauge for the same thing (mana reads as
+       both); the chip already carries its bar, so the gauge is dropped */
+    const chipIds = new Set((data.chips || []).map((c) => c.id));
+    const chips = (data.chips || []).filter((c) => c.id);
+    const extraGauges = gauges.filter((gg) => !chipIds.has(gg.id));
+    /* a stable signature: rebuild only when something actually changed */
+    let sig = '';
+    for (const c of chips) sig += `${c.id}|${c.icon}|${c.label}|${c.value}|${c.tone}|${c.pct || ''}~`;
+    for (const g of extraGauges) sig += `g${g.id}|${Math.round(g.value * 40)}~`;
+    if (sig === this._modSig) return;
+    this._modSig = sig;
+    const frag = document.createDocumentFragment();
+    for (const c of chips) {
+      const div = document.createElement('div');
+      div.className = 'modChip' + (c.tone === 'good' ? ' good' : c.tone === 'bad' ? ' bad' : '');
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'ic');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', `#i-${iconFor(c.icon)}`);
+      svg.appendChild(use);
+      const b = document.createElement('b');
+      b.textContent = c.label;
+      const span = document.createElement('span');
+      span.textContent = c.value;
+      div.append(svg, b, span);
+      if (c.pct !== undefined) {
+        const bar = document.createElement('div');
+        bar.className = 'modBar';
+        const fill = document.createElement('i');
+        fill.style.width = `${Math.max(0, Math.min(1, c.pct)) * 100}%`;
+        bar.appendChild(fill);
+        div.appendChild(bar);
+      }
+      frag.appendChild(div);
+    }
+    for (const g of extraGauges) {
+      const div = document.createElement('div');
+      div.className = 'modChip';
+      const b = document.createElement('b');
+      b.textContent = g.label;
+      const span = document.createElement('span');
+      span.textContent = g.text || '';
+      const bar = document.createElement('div');
+      bar.className = 'modBar';
+      const fill = document.createElement('i');
+      fill.style.width = `${Math.max(0, Math.min(1, g.value)) * 100}%`;
+      bar.appendChild(fill);
+      div.append(b, span, bar);
+      frag.appendChild(div);
+    }
+    el.replaceChildren(frag);
   }
 
   updateText() {

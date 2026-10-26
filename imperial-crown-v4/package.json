@@ -28,6 +28,8 @@
     "balance": "node tests/balance.test.mjs --full",
     "apk": "bash scripts/build-apk.sh",
     "browser:deps": "node scripts/browser-libs.mjs --export",
+    "test:mods": "node tests/mods.mjs",
+    "test:modsite": "node tests/modsite.mjs",
     "test:browser": "eval \"$(node scripts/browser-libs.mjs --export)\" && node tests/browser.mjs --seconds 8 --dpr 1.5",
     "test:play": "eval \"$(node scripts/browser-libs.mjs --export)\" && node tests/playtest.mjs",
     "test:soak": "eval \"$(node scripts/browser-libs.mjs --export)\" && node tests/soak.mjs --seconds 40 --units 260",

@@ -97,6 +97,12 @@ export class Entity {
       if (blessed > 1) armor += blessed;
     }
     amount = Math.max(1, amount - armor);
+    /* a mod may scale the hit (a ward, a shield, a cursed target). Guarded:
+       with no mod session this costs one null check. */
+    if (this.game && this.game.modHost) {
+      const modded = this.game.modHost.onDamage(this, amount, attacker, kind);
+      if (typeof modded === 'number' && modded >= 0) amount = modded;
+    }
     this.hp = Math.max(0, this.hp - amount);
     this.hitFlash = Math.min(1, this.hitFlash + 0.55);
     if (attacker) {
@@ -114,6 +120,7 @@ export class Entity {
     this.dead = true;
     this.deadT = 0;
     this.onDeath(attacker);
+    if (this.game && this.game.modHost) this.game.modHost.onDeath(this, attacker);
   }
   onDeath() {}
   distanceTo(e) { return Math.hypot(this.x - e.x, this.z - e.z); }

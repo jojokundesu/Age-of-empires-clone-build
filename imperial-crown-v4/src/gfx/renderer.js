@@ -660,6 +660,66 @@ export class Renderer {
     this.cloudOffset[0] += dt * 0.0018;
     this.cloudOffset[1] += dt * 0.0009;
     this.fogDensity = 0.00105 + lowSun * 0.0007;
+
+    /* A mod session may lay weather over the sky. The object is rebuilt by the
+       mod host at a few hertz, not per frame, so this is three branches and a
+       handful of multiplies. Nothing is allocated here. */
+    const at = this.modAtmosphere;
+    if (at) {
+      if (at.tint) {
+        this.sunColor[0] *= at.tint[0]; this.sunColor[1] *= at.tint[1]; this.sunColor[2] *= at.tint[2];
+        this.horizon[0] *= at.tint[0]; this.horizon[1] *= at.tint[1]; this.horizon[2] *= at.tint[2];
+        this.fogColor[0] = this.fogColor[0] * 0.55 + at.tint[0] * 0.45;
+        this.fogColor[1] = this.fogColor[1] * 0.55 + at.tint[1] * 0.45;
+        this.fogColor[2] = this.fogColor[2] * 0.55 + at.tint[2] * 0.45;
+      }
+      if (at.fog) this.fogDensity += at.fog;
+      if (at.exposure) this.exposure *= at.exposure;
+      if (at.cloud !== undefined) this.cloudCover = clamp(this.cloudCover + at.cloud, 0, 1);
+      if (at.night) this.night = Math.max(this.night, at.night);
+    }
+  }
+
+  /**
+   * Build GPU batches for types that appeared after buildWorld() -- the mod
+   * unit and building registries. It is the same loop buildWorld runs, done
+   * lazily and only once per type, so a mod session pays a few milliseconds
+   * when a mod adds content and a normal match never calls it.
+   */
+  registerTypes(unitTypes = [], buildingTypes = []) {
+    if (!this.gl) return { units: 0, buildings: 0 };
+    let units = 0, buildings = 0;
+    for (const type of buildingTypes) {
+      if (this.buildingBatches.has(type)) continue;
+      const res = buildBuilding(type);
+      const geo = res.geo.finish();
+      const def = BUILDING_DEFS[type] || {};
+      const max = (type === 'spike_trap') ? 260 : 16;
+      const batch = new InstanceBatch(this.gl, geo, max);
+      batch.cull = true;
+      this.buildingBatches.set(type, batch);
+      this.buildingMeta.set(type, {
+        height: res.height || 4,
+        footprint: def.size || 3,
+        radius: (def.size || 3) * 0.72
+      });
+      buildings++;
+    }
+    for (const type of unitTypes) {
+      if (this.unitBatches.has(type)) continue;
+      const res = buildUnit(type);
+      if (!res) continue;
+      const geo = res.geo.finish();
+      const batch = new InstanceBatch(this.gl, geo, 90);
+      batch.cull = true;
+      this.unitBatches.set(type, batch);
+      this.unitMeta.set(type, {
+        height: res.height, stride: res.stride,
+        mounted: !!res.mounted, siege: !!res.siege, naval: !!res.naval
+      });
+      units++;
+    }
+    return { units, buildings };
   }
 
   /**
@@ -1335,6 +1395,16 @@ export class Renderer {
       const tc = e.team === 1 ? [0.35, 0.95, 0.5] : e.team === 2 ? [1, 0.36, 0.3] : [1, 0.86, 0.4];
       d.push(e.x, e.y + 0.07, e.z, r, tc[0], tc[1], tc[2], 0.9, 0, 1, 0, 0);
     }
+    /* an armed mod spell shows its footprint under the finger: the same ring
+       the game uses for everything else, in the spell's own colour */
+    const cast = game.modCast;
+    if (cast && game.castReticle) {
+      const c = game.castReticle;
+      const y = game.heightAt(c.x, c.z);
+      const col = cast.color || [0.55, 0.8, 1];
+      d.push(c.x, y + 0.085, c.z, (cast.radius || 1.5) * 0.9, col[0], col[1], col[2], 0.3, 0, 0, 0, 0);
+      d.push(c.x, y + 0.1, c.z, (cast.radius || 1.5) * 1.04, col[0], col[1], col[2], 0.9, 0, 1, 0, 0);
+    }
     if (game.placing) {
       const p = game.placing;
       if (p.line && p.cells && p.cells.length) {
@@ -1350,7 +1420,7 @@ export class Renderer {
           const g2 = good ? 1 : 0.5;
           const b2 = good ? 0.5 : 0.24;
           const a = good ? 0.6 : 0.55;
-          d.push(c.x, y + 0.09, c.z, (p.footprint || 2) * 0.46, r, g2, b2, a, c.facing || 0, 2, 0, 0);
+          d.push(c.x, y + 0.09, c.z, (p.footprint || 2) * 0.9, r, g2, b2, a, c.facing || 0, 2, 0, 0);
         }
       } else {
         const col = p.valid ? [0.4, 1, 0.55] : [1, 0.3, 0.26];

@@ -1692,6 +1692,270 @@ P('ruin', () => {
 });
 
 /* ============================================================
+   MOD CONTENT
+   ------------------------------------------------------------
+   Everything below only exists inside a mod session. The builders
+   live in their own tables so that a normal campaign never even
+   looks at them, and installModModels() copies them into the same
+   registries the renderer already knows how to batch. Kept in this
+   file on purpose: they reuse humanBase, the rig parts and the
+   masonry helpers above, so a mod unit animates with the same
+   articulated rig as a knight.
+   ============================================================ */
+const MOD_UNITS = {};
+const MOD_BUILDINGS = {};
+const MU = (type, fn) => { MOD_UNITS[type] = fn; };
+const MB = (type, fn) => { MOD_BUILDINGS[type] = fn; };
+
+/* ---- plague zombie: hunched, grey-green, arms out ----
+   Flesh is SKIN, not CLOTH: the cloth layer is dyed almost entirely in team
+   colour, which turned a shambler into a red (or blue) soldier. A rotting
+   green body with one team-coloured rag reads as undead and still says whose
+   side it is on. */
+MU('plague_zombie', () => {
+  const g = humanoid({
+    torsoCol: [0.36, 0.42, 0.28], torsoMat: M.SKIN, legCol: [0.28, 0.30, 0.22],
+    skin: [0.58, 0.68, 0.46], sleeveCol: [0.34, 0.40, 0.27], sleeveMat: M.SKIN,
+    legMat: M.SKIN, helmet: false
+  });
+  /* the hunch: a bent back plate, shoulders tipped forward */
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.material(M.SKIN).color(0.44, 0.52, 0.34);
+  g.taperBox(0, 0.92, 0.06, 0.44, 0.62, 0.34, 0.5, 0.4);
+  /* a torn tunic hanging off one shoulder: the team colour, and only that */
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.panel(-0.08, 1.42, 0.02, 0.34, 0.5, 0.12);
+  /* both arms reach forward, the way a shambler walks */
+  g.part_(PART.ARM_R, 0.29, 1.42, 0);
+  g.material(M.SKIN).color(0.56, 0.66, 0.44);
+  g.beam(0.03, -0.12, 0.02, 0.06, -0.30, 0.52, 0.11);
+  g.part_(PART.ARM_L, -0.29, 1.42, 0);
+  g.material(M.SKIN).color(0.56, 0.66, 0.44);
+  g.beam(-0.03, -0.12, 0.02, -0.06, -0.30, 0.52, 0.11);
+  /* sunken eye sockets with a little glow inside */
+  g.material(M.GLOW).color(0.62, 1.0, 0.55);
+  g.sphere(0.055, 1.62, 0.115, 0.038, 5, 3);
+  g.sphere(-0.055, 1.62, 0.115, 0.038, 5, 3);
+  g.color(1, 1, 1);
+  return { geo: g, height: 1.7, stride: 2.4 };
+});
+
+/* ---- magician: long robe, wide hat, staff with a live orb ----
+   The robe is a skirt from the ankles to the waist, not a cone from the
+   chest to the sky: the previous version read as a blue traffic cone. */
+MU('magician', () => {
+  const g = humanoid({
+    torsoCol: [0.18, 0.22, 0.50], legCol: [0.14, 0.16, 0.34],
+    sleeveCol: [0.20, 0.24, 0.54], sleeveMat: M.CLOTH, skin: [0.84, 0.70, 0.58],
+    helmet: false
+  });
+  /* robe skirt: wide at the hem, cinched at the waist */
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.cyl(0, 0.04, 0, 0.30, 0.46, 1.18, 10, { capTop: false });
+  g.material(M.GOLD).color(0.85, 0.70, 0.30);
+  g.cyl(0, 1.18, 0, 0.31, 0.31, 0.07, 10);
+  /* shoulders/collar in gold, so the silhouette is not one flat colour */
+  g.material(M.GOLD).color(0.82, 0.68, 0.28);
+  g.box(0, 1.52, 0, 0.4, 0.06, 0.26);
+  /* wide-brimmed hat and a short crown */
+  g.material(M.CLOTH).color(0.9, 0.9, 0.95);
+  g.cyl(0, 1.80, 0, 0.36, 0.34, 0.05, 10);
+  g.material(M.CLOTH).color(0.14, 0.16, 0.40);
+  g.cone(0, 1.84, 0, 0.19, 0.36, 9);
+  /* beard */
+  g.material(M.MARBLE).color(0.9, 0.88, 0.84);
+  g.cyl(0, 1.30, 0.12, 0.10, 0.02, 0.24, 7, { capTop: true });
+  /* staff in the right hand, orb at the top */
+  g.part_(PART.ARM_R, 0.30, 1.44, 0);
+  g.material(M.WOOD).color(0.36, 0.25, 0.17);
+  g.beam(0.05, -0.62, 0.10, 0.05, 0.62, 0.10, 0.045);
+  g.material(M.GLOW).color(0.55, 0.78, 1.0);
+  g.sphere(0.05, 0.74, 0.10, 0.115, 7, 5);
+  g.material(M.GOLD).color(0.8, 0.68, 0.3);
+  g.box(0.05, 0.64, 0.10, 0.09, 0.05, 0.09);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.2, stride: 3.0 };
+});
+
+/* ---- golem: a walking cairn ---- */
+MU('stone_golem', () => {
+  const g = new Geo();
+  g.material(M.STONE).color(0.62, 0.62, 0.58);
+  g.part_(PART.LEG_L, -0.22, 0.9, 0);
+  g.box(-0.24, 0.44, 0, 0.34, 0.9, 0.38);
+  g.part_(PART.LEG_R, 0.22, 0.9, 0);
+  g.box(0.24, 0.44, 0, 0.34, 0.9, 0.38);
+  g.part_(PART.BODY, 0, 1.55, 0);
+  g.material(M.STONE).color(0.68, 0.68, 0.63);
+  g.taperBox(0, 1.55, 0, 1.05, 1.15, 0.7, 1.2, 0.8);
+  g.material(M.GRAVEL).color(0.5, 0.5, 0.46);
+  g.box(0, 1.1, 0, 1.12, 0.16, 0.76);
+  /* neck + head, so the block has a top that reads at a glance */
+  g.material(M.STONE).color(0.72, 0.72, 0.67);
+  g.box(0, 2.18, 0, 0.34, 0.22, 0.34);
+  g.box(0, 2.42, 0.02, 0.5, 0.34, 0.44);
+  g.material(M.GRAVEL).color(0.44, 0.44, 0.41);
+  g.box(0, 2.52, 0.22, 0.44, 0.09, 0.06);
+  g.part_(PART.ARM_L, -0.72, 1.8, 0);
+  g.material(M.STONE).color(0.6, 0.6, 0.55);
+  g.box(-0.06, -0.5, 0, 0.36, 1.0, 0.4);
+  g.box(-0.06, -1.06, 0, 0.44, 0.26, 0.46);
+  g.part_(PART.ARM_R, 0.72, 1.8, 0);
+  g.box(0.06, -0.5, 0, 0.36, 1.0, 0.4);
+  g.box(0.06, -1.06, 0, 0.44, 0.26, 0.46);
+  g.material(M.GLOW).color(1.0, 0.72, 0.25);
+  g.box(-0.12, 2.44, 0.235, 0.11, 0.07, 0.05);
+  g.box(0.12, 2.44, 0.235, 0.11, 0.07, 0.05);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.6, stride: 2.2 };
+});
+
+/* ---- wolf and bear: low quadruped rigs, no humanoid parts ---- */
+function quadruped(g, o) {
+  const c = o.col;
+  g.material(M.SKIN).color(c[0], c[1], c[2]);
+  g.box(0, o.bodyY, 0, o.w, o.h, o.len);
+  g.sphere(0, o.bodyY + o.h * 0.18, o.len * 0.52, o.headR, 7, 5);
+  g.beam(0, o.bodyY + o.h * 0.3, o.len * 0.5, 0, o.bodyY + o.h * 0.55, o.len * 0.85, o.snout);
+  for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]]) {
+    g.beam(sx * o.w * 0.36, o.bodyY - o.h * 0.4, sz * o.len * 0.34, sx * o.w * 0.4, 0.05, sz * o.len * 0.38, o.leg);
+  }
+  g.material(M.BARK).color(0.28, 0.22, 0.16);
+  g.beam(0, o.bodyY, -o.len * 0.5, 0, o.bodyY + 0.32, -o.len * 0.86, 0.08);
+  g.color(1, 1, 1);
+}
+MU('dire_wolf', () => {
+  const g = new Geo();
+  quadruped(g, { col: [0.66, 0.58, 0.48], bodyY: 0.78, w: 0.44, h: 0.5, len: 1.35, headR: 0.22, snout: 0.13, leg: 0.1 });
+  /* a darker saddle along the back, so the silhouette is not one grey blob */
+  g.material(M.BARK).color(0.40, 0.33, 0.26);
+  g.box(0, 1.02, -0.02, 0.40, 0.07, 1.05);
+  g.material(M.GLOW).color(0.95, 0.72, 0.2);
+  g.sphere(-0.09, 0.95, 0.66, 0.035, 4, 3);
+  g.sphere(0.09, 0.95, 0.66, 0.035, 4, 3);
+  g.color(1, 1, 1);
+  return { geo: g, height: 1.25, stride: 3.4 };
+});
+MU('bear', () => {
+  const g = new Geo();
+  quadruped(g, { col: [0.58, 0.44, 0.30], bodyY: 0.95, w: 0.72, h: 0.8, len: 1.75, headR: 0.3, snout: 0.2, leg: 0.18 });
+  g.material(M.BARK).color(0.38, 0.27, 0.18);
+  g.box(0, 1.34, -0.05, 0.6, 0.1, 1.1);
+  g.color(1, 1, 1);
+  return { geo: g, height: 1.9, stride: 2.8 };
+});
+MU('beastmaster', () => {
+  const g = humanoid({ torsoCol: [0.34, 0.32, 0.22], torsoMat: M.LEATHER, helmet: false, sleeveCol: [0.3, 0.28, 0.2] });
+  g.part_(PART.ARM_R, 0.29, 1.45, 0);
+  g.material(M.WOOD).color(0.4, 0.3, 0.2);
+  g.beam(0.03, -0.7, 0.08, 0.03, 0.9, 0.08, 0.05);
+  g.material(M.METAL).color(0.75, 0.75, 0.78);
+  g.cone(0.03, 1.02, 0.08, 0.07, 0.24, 5);
+  g.material(M.CLOTH).color(0.5, 0.42, 0.2);
+  g.panel(0, 1.3, -0.16, 0.36, 0.6, 0);
+  g.color(1, 1, 1);
+  return { geo: g, height: 1.9, stride: 2.9 };
+});
+
+/* ---- necropolis: a crypt that breathes green light ---- */
+MB('necropolis', () => {
+  const g = new Geo();
+  plinth(g, 4.4, 4.4, 0.4);
+  g.material(M.STONE).color(0.34, 0.35, 0.32);
+  g.box(0, 1.5, 0, 3.8, 2.4, 3.8);
+  g.material(M.STONE).color(0.28, 0.29, 0.27);
+  g.box(0, 2.85, 0, 4.1, 0.3, 4.1);
+  g.battlements(0, 3.0, 0, 4.1, 4.1, 0.5, 0.34, 0.3);
+  /* skull-topped pillars either side of the door */
+  for (const sx of [-1, 1]) {
+    g.material(M.MARBLE).color(0.72, 0.72, 0.66);
+    g.cyl(sx * 1.45, 1.4, 1.92, 0.22, 0.26, 2.6, 8, { capTop: false });
+    g.material(M.STONE).color(0.82, 0.8, 0.74);
+    g.sphere(sx * 1.45, 2.85, 1.92, 0.26, 7, 5);
+  }
+  g.material(M.WOOD_DARK).color(0.2, 0.16, 0.14);
+  g.box(0, 1.0, 1.92, 1.5, 2.0, 0.14);
+  g.material(M.GLOW).color(0.4, 1.0, 0.45);
+  g.box(0, 2.3, 1.94, 1.6, 0.1, 0.06);
+  g.sphere(0, 3.35, 0, 0.34, 8, 5);
+  g.color(1, 1, 1);
+  return { geo: g, height: 5.4 };
+});
+
+/* ---- ballista tower: a squat tower with a war engine on the roof ---- */
+MB('ballista_tower', () => {
+  const g = new Geo();
+  plinth(g, 3.2, 3.2, 0.35);
+  g.material(M.STONE).color(0.7, 0.68, 0.63);
+  g.taperBox(0, 2.4, 0, 3.0, 4.1, 3.0, 2.4, 2.4);
+  g.material(M.STONE).color(0.8, 0.78, 0.74);
+  g.box(0, 4.5, 0, 3.0, 0.3, 3.0);
+  g.battlements(0, 4.65, 0, 3.0, 3.0, 0.5, 0.36, 0.3);
+  /* engine */
+  g.material(M.WOOD).color(0.44, 0.32, 0.2);
+  g.box(0, 4.78, 0, 1.6, 0.24, 1.2);
+  g.beam(-0.55, 4.9, -0.9, 0.55, 4.9, -0.9, 0.12);
+  g.material(M.METAL).color(0.62, 0.62, 0.66);
+  g.beam(0, 5.05, -0.9, 0, 5.05, 1.15, 0.1);
+  g.material(M.CLOTH).color(0.6, 0.2, 0.18);
+  g.panel(0, 5.2, 0.5, 0.5, 0.3, 0);
+  g.window(0, 2.2, 1.52, 0.5, 0.7);
+  g.color(1, 1, 1);
+  return { geo: g, height: 5.6 };
+});
+
+/* ---- spike trap: a low ring of iron spikes and timber ---- */
+MB('spike_trap', () => {
+  const g = new Geo();
+  g.material(M.DIRT).color(0.34, 0.3, 0.24);
+  g.cyl(0, 0.05, 0, 1.0, 1.05, 0.14, 10);
+  g.material(M.WOOD_DARK).color(0.3, 0.22, 0.16);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * TAU + 0.2;
+    g.beam(Math.cos(a) * 0.72, 0.1, Math.sin(a) * 0.72, Math.cos(a) * 0.2, 0.12, Math.sin(a) * 0.2, 0.07);
+  }
+  g.material(M.METAL).color(0.66, 0.66, 0.7);
+  for (let i = 0; i < 5; i++) {
+    const a = (i / 5) * TAU;
+    g.cone(Math.cos(a) * 0.34, 0.12, Math.sin(a) * 0.34, 0.09, 0.62, 5);
+  }
+  g.cone(0, 0.12, 0, 0.12, 0.8, 6);
+  g.color(1, 1, 1);
+  return { geo: g, height: 0.9 };
+});
+
+/* ---- relic shrine: a small altar under a floating stone ---- */
+MB('relic_shrine', () => {
+  const g = new Geo();
+  g.material(M.MARBLE).color(0.8, 0.78, 0.72);
+  g.cyl(0, 0.18, 0, 1.1, 1.25, 0.36, 8);
+  g.cyl(0, 0.5, 0, 0.72, 0.86, 0.4, 8);
+  g.box(0, 0.78, 0, 0.86, 0.16, 0.86);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    g.cyl(sx * 0.62, 0.95, sz * 0.62, 0.1, 0.12, 1.5, 6, { capTop: false });
+  }
+  g.material(M.MARBLE).color(0.86, 0.84, 0.78);
+  g.box(0, 1.78, 0, 1.5, 0.16, 1.5);
+  g.material(M.GOLD).color(0.9, 0.74, 0.3);
+  g.sphere(0, 2.1, 0, 0.3, 8, 5);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.6 };
+});
+
+/** Types that installModModels() can add. */
+export function modModelTypes() {
+  return { units: Object.keys(MOD_UNITS), buildings: Object.keys(MOD_BUILDINGS) };
+}
+
+/** Copy the mod builders into the live registries (idempotent). */
+export function installModModels() {
+  for (const [k, fn] of Object.entries(MOD_UNITS)) UNITS[k] = fn;
+  for (const [k, fn] of Object.entries(MOD_BUILDINGS)) BUILDERS[k] = fn;
+  return modModelTypes();
+}
+
+/* ============================================================
    public API
    ============================================================ */
 export function buildBuilding(type) {

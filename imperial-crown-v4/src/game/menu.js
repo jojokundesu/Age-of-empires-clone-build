@@ -32,7 +32,8 @@ export class Menu {
       sound: true,
       fog: true,
       shake: true,
-      showBars: true
+      showBars: true,
+      mods: Menu.readMods()
     };
     this.el = {
       boot: document.getElementById('bootScreen'),
@@ -52,6 +53,8 @@ export class Menu {
       artTitle: document.getElementById('artTitle'),
       artDesc: document.getElementById('artDesc'),
       btnLoad: document.getElementById('btnLoad'),
+      btnMods: document.getElementById('btnMods'),
+      modCount: document.getElementById('modCount'),
       btnSettings: document.getElementById('btnSettings'),
       btnHelp: document.getElementById('btnHelp'),
       menuPerf: document.getElementById('menuPerf'),
@@ -106,6 +109,7 @@ export class Menu {
       this.onStart({ ...this.state });
     });
     el.btnSettings?.addEventListener('click', () => this.openSettings());
+    el.btnMods?.addEventListener('click', () => this.openMods());
     el.btnHelp?.addEventListener('click', () => this.openHelp());
     el.btnLoad?.addEventListener('click', () => {
       const save = Menu.readSave();
@@ -166,7 +170,13 @@ export class Menu {
     if (el.civBrief) {
       el.civBrief.innerHTML = `<b>${civ.uniqueName}</b> · ${civ.bonus}<br><span class="dim">${civ.story}</span>`;
     }
-    if (el.startSub) el.startSub.textContent = `${civ.name} · ${diff.name} · ${mode.name}`;
+    const modCount = this.enabledMods().length;
+    if (el.startSub) el.startSub.textContent = `${civ.name} · ${diff.name} · ${modCount ? `${modCount} mod${modCount === 1 ? '' : 's'}` : mode.name}`;
+    if (el.modCount) {
+      el.modCount.textContent = String(modCount);
+      el.modCount.classList.toggle('hidden', modCount === 0);
+    }
+    if (el.btnMods) el.btnMods.classList.toggle('active', modCount > 0);
     if (el.artTitle) el.artTitle.textContent = AREAS[this.state.civ]?.[0] || 'The Frontier';
     if (el.artDesc) el.artDesc.textContent = AREAS[this.state.civ]?.[1] || '';
     if (el.menuPerf) el.menuPerf.textContent = `WebGL2 · ${this.state.quality}`;
@@ -319,6 +329,106 @@ export class Menu {
   closeModal() { this.el.modal?.classList.add('hidden'); }
   isModalOpen() { return !!this.el.modal && !this.el.modal.classList.contains('hidden'); }
 
+  /* ---------------- Mod Workshop ----------------
+     The catalogue is imported *lazily*: a normal campaign never loads a byte
+     of mod code, and the workshop is one dynamic import away. */
+  enabledMods() {
+    return Object.keys(this.state.mods || {}).filter((id) => this.state.mods[id]);
+  }
+
+  async openMods() {
+    let catalogue;
+    try {
+      const mods = await import('../mods/index.js');
+      catalogue = mods.modCatalogue();
+    } catch (e) {
+      this.openModal('MOD WORKSHOP', 'Mods unavailable',
+        '<p class="dim">The mod catalogue could not be loaded on this device. The normal game is unaffected.</p>');
+      return;
+    }
+    const mods = this.state.mods || {};
+    const cards = catalogue.map((m) => `
+      <div class="modCard ${mods[m.id] ? 'on' : ''}" data-mod="${m.id}">
+        <div class="modHead">
+          <svg class="ic"><use href="#i-${iconFor(m.icon)}"/></svg>
+          <div style="flex:1 1 auto"><b>${m.name}</b><small>${m.tagline}</small></div>
+          <button class="modToggle ${mods[m.id] ? 'on' : ''}" data-toggle="${m.id}">${mods[m.id] ? 'ON' : 'OFF'}</button>
+        </div>
+        <div class="modBody">
+          <div>${m.blurb}</div>
+          <ul>${m.detail.map((d) => `<li>${d}</li>`).join('')}</ul>
+          <div class="modTags">${[...m.units, ...m.buildings].map((n) => `<span class="modTag">${n}</span>`).join('')}</div>
+        </div>
+      </div>`).join('');
+    this.openModal('MOD WORKSHOP', 'Bend the rules', `
+      <div class="modIntro">
+        Mods run in their own <b>mod session</b> and are never part of a normal campaign.
+        Each one is isolated: if a mod ever misbehaves it disables itself and the match goes on.
+        Turn on as many as you like — they are designed to work together.
+      </div>
+      <div class="modList" id="modList">${cards}</div>
+    `, `
+      <div class="modFoot">
+        <span class="modWarn" id="modWarn">${this.enabledMods().length ? `${this.enabledMods().length} mod(s) ready` : 'No mods enabled yet'} · the normal game stays untouched</span>
+        <button class="ghostBtn" id="modAll">Toggle all</button>
+        <button class="startBtn small" id="modStart"><span>START MOD SESSION</span><small id="modStartSub"></small></button>
+      </div>
+    `);
+    const body = this.el.modal;
+    const sync = () => {
+      const n = this.enabledMods().length;
+      const warn = body.querySelector('#modWarn');
+      if (warn) warn.textContent = n ? `${n} mod${n === 1 ? '' : 's'} enabled · the normal game stays untouched` : 'No mods enabled yet · the normal game stays untouched';
+      const sub = body.querySelector('#modStartSub');
+      if (sub) {
+        const civ = CIVS[this.state.civ];
+        sub.textContent = `${civ.name} · ${DIFFICULTY[this.state.difficulty].name} · ${n} mod${n === 1 ? '' : 's'}`;
+      }
+      Menu.writeMods(this.state.mods);
+      this._syncSummary();
+    };
+    body.querySelector('#modList')?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-toggle]');
+      const card = e.target.closest('.modCard');
+      if (!card) return;
+      const id = card.dataset.mod;
+      if (!btn) return;              // clicking the body only reads
+      this.state.mods[id] = !this.state.mods[id];
+      card.classList.toggle('on', !!this.state.mods[id]);
+      btn.classList.toggle('on', !!this.state.mods[id]);
+      btn.textContent = this.state.mods[id] ? 'ON' : 'OFF';
+      this.audio?.play('click');
+      sync();
+    });
+    body.querySelector('#modAll')?.addEventListener('click', () => {
+      const anyOff = catalogue.some((m) => !this.state.mods[m.id]);
+      for (const m of catalogue) this.state.mods[m.id] = anyOff;
+      for (const card of body.querySelectorAll('.modCard')) {
+        const on = !!this.state.mods[card.dataset.mod];
+        card.classList.toggle('on', on);
+        const b = card.querySelector('.modToggle');
+        if (b) { b.classList.toggle('on', on); b.textContent = on ? 'ON' : 'OFF'; }
+      }
+      this.audio?.play('click');
+      sync();
+    });
+    body.querySelector('#modStart')?.addEventListener('click', () => {
+      const ids = this.enabledMods();
+      if (!ids.length) {
+        const warn = body.querySelector('#modWarn');
+        if (warn) warn.textContent = 'Turn on at least one mod first — or close this and play a normal campaign.';
+        this.audio?.play('warn');
+        return;
+      }
+      this.audio?.unlock();
+      this.audio?.play('horn');
+      this.closeModal();
+      this.hideMenu();
+      this.onStart({ ...this.state, mode: 'mods', mods: ids });
+    });
+    sync();
+  }
+
   openSettings() {
     const s = this.state;
     this.openModal('SYSTEM', 'Settings', `
@@ -383,6 +493,21 @@ export class Menu {
   }
   static clearSave() {
     try { localStorage.removeItem('imperial-crown-save'); } catch (e) { /* ignore */ }
+  }
+  static readMods() {
+    try {
+      const raw = localStorage.getItem('imperial-crown-mods');
+      const arr = raw ? JSON.parse(raw) : [];
+      const out = {};
+      for (const id of Array.isArray(arr) ? arr : []) out[id] = true;
+      return out;
+    } catch (e) { return {}; }
+  }
+  static writeMods(mods) {
+    try {
+      const arr = Object.keys(mods || {}).filter((id) => mods[id]);
+      localStorage.setItem('imperial-crown-mods', JSON.stringify(arr));
+    } catch (e) { /* ignore */ }
   }
 }
 

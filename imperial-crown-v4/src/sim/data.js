@@ -510,5 +510,6 @@ export const GAME_MODES = {
   campaign: { name: 'Imperial Conquest', desc: 'Destroy every enemy building to claim the crown.' },
   regicide: { name: 'Regicide', desc: 'Protect your king. Kill theirs.' },
   wonder: { name: 'Wonder Race', desc: 'Raise a wonder and hold it for 200 seconds.' },
-  sandbox: { name: 'Grand Sandbox', desc: 'Ten thousand resources. Build a masterpiece.' }
+  sandbox: { name: 'Grand Sandbox', desc: 'Ten thousand resources. Build a masterpiece.' },
+  mods: { name: 'Mod Workshop', desc: 'The same war, with new rules.' }
 };

@@ -624,3 +624,71 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .worldTime[data-phase="dusk"] { color: #ffb27a; }
 .worldTime[data-phase="night"] { color: #9fc6ff; }
 .worldTime[data-phase="night"]::after { content: ""; }
+
+/* ============================================================
+   MOD WORKSHOP
+   The mod strip only exists during a mod session; the workshop
+   cards reuse the menu's glass/brass language.
+   ============================================================ */
+#modHud {
+  /* right-hand side: the left edge belongs to the camera rail, and the chips
+     used to sit on top of its buttons */
+  position: absolute; top: calc(84px + var(--safe-top)); right: calc(10px + var(--safe-right));
+  display: flex; flex-direction: column; align-items: flex-end; gap: 5px;
+  z-index: 4; pointer-events: none; max-width: min(46vw, 340px);
+}
+#modHud.hidden { display: none; }
+.modChip {
+  display: flex; align-items: center; gap: 7px; padding: 5px 10px 5px 8px;
+  border-radius: 9px; font-size: 11px; letter-spacing: 0.2px;
+  background: linear-gradient(168deg, rgba(48, 38, 28, 0.94), rgba(12, 10, 8, 0.95));
+  border: 1px solid rgba(232, 196, 122, 0.28);
+  color: var(--ink); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.45);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.modChip .ic { width: 14px; height: 14px; flex: 0 0 auto; color: #e8c47a; }
+.modChip b { font-weight: 600; font-size: 10.5px; letter-spacing: 0.6px; text-transform: uppercase; opacity: 0.85; }
+.modChip span { opacity: 0.92; overflow: hidden; text-overflow: ellipsis; }
+.modChip.good { border-color: rgba(150, 210, 120, 0.45); }
+.modChip.bad { border-color: rgba(230, 120, 90, 0.5); color: #ffd9c9; }
+.modChip .modBar { width: 54px; height: 5px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); overflow: hidden; flex: 0 0 auto; }
+.modChip .modBar i { display: block; height: 100%; background: linear-gradient(90deg, #6fa8ff, #b98cff); }
+
+.modsBtn { position: relative; }
+.modsBtn .modCount {
+  margin-left: 4px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px;
+  background: #e8c47a; color: #221a10; font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.modsBtn .modCount.hidden { display: none; }
+
+.modIntro { font-size: 12.5px; color: var(--ink-dim, #b9ae98); line-height: 1.5; margin-bottom: 12px; }
+.modIntro b { color: #e8c47a; }
+.modList { display: flex; flex-direction: column; gap: 9px; }
+.modCard {
+  border: 1px solid rgba(232, 196, 122, 0.22); border-radius: 10px;
+  background: linear-gradient(168deg, rgba(38, 31, 23, 0.9), rgba(12, 10, 8, 0.92));
+  padding: 10px 12px; transition: border-color 0.15s ease, background 0.15s ease;
+}
+.modCard.on { border-color: rgba(232, 196, 122, 0.62); background: linear-gradient(168deg, rgba(58, 45, 28, 0.94), rgba(18, 14, 10, 0.95)); }
+.modHead { display: flex; align-items: center; gap: 9px; }
+.modHead .ic { width: 20px; height: 20px; color: #e8c47a; flex: 0 0 auto; }
+.modHead b { font-family: var(--serif); font-size: 14.5px; letter-spacing: 0.3px; flex: 1 1 auto; }
+.modHead small { display: block; font-size: 10.5px; letter-spacing: 0.4px; opacity: 0.65; font-weight: 400; }
+.modToggle {
+  flex: 0 0 auto; min-width: 56px; padding: 6px 10px; border-radius: 20px; cursor: pointer;
+  border: 1px solid rgba(232, 196, 122, 0.35); background: rgba(0, 0, 0, 0.35);
+  color: #cbbfa4; font-size: 10.5px; letter-spacing: 1px; font-weight: 700;
+}
+.modToggle.on { background: linear-gradient(180deg, #f0cf86, #b8862f); color: #241a0c; border-color: #f0cf86; }
+.modBody { margin-top: 8px; font-size: 11.5px; line-height: 1.5; color: #c9bda6; }
+.modBody ul { margin: 6px 0 0; padding-left: 16px; }
+.modBody li { margin-bottom: 4px; }
+.modTags { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
+.modTag {
+  font-size: 9.5px; letter-spacing: 0.6px; text-transform: uppercase; padding: 2px 7px;
+  border-radius: 10px; background: rgba(232, 196, 122, 0.14); color: #e8c47a;
+  border: 1px solid rgba(232, 196, 122, 0.25);
+}
+.modFoot { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.modWarn { font-size: 11px; color: #d9b48a; flex: 1 1 200px; }

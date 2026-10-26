@@ -956,10 +956,15 @@ void main(){
     // selection ring
     a = smoothstep(1.0, 0.93, r) * smoothstep(0.80, 0.93, r) * vCol.a;
   } else if (kind < 2.5) {
-    // build footprint grid
+    // build footprint: a square tile with a bright rim and a faint inner grid.
+    // A circle here made a wall run read as a row of green dots.
+    vec2 q = abs(d);
+    float m = max(q.x, q.y);
+    float inside = smoothstep(1.0, 0.9, m);
+    float rim = smoothstep(0.70, 0.94, m);
     vec2 g = abs(fract(d * 3.0) - 0.5);
-    float grid = smoothstep(0.46, 0.49, max(g.x, g.y));
-    a = max(grid * 0.55, smoothstep(1.0, 0.9, r) * 0.7) * vCol.a;
+    float grid = smoothstep(0.44, 0.48, max(g.x, g.y));
+    a = (0.26 + rim * 0.6 + grid * 0.18) * inside * vCol.a;
   } else {
     // rally marker (chevrons)
     float band = sin(d.y * 6.0 + 1.2) * 0.5 + 0.5;

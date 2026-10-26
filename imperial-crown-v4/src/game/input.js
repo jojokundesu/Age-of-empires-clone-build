@@ -467,6 +467,15 @@ export class Input {
     const now = performance.now();
     const doubleTap = now - this.lastTapTime < 320 && this.lastTapEntity === hit;
 
+    /* 0. an armed mod spell takes the tap before anything else: the player has
+       already chosen the ability, so the next tap is its target */
+    if (game.modCast) {
+      game.castReticle = null;
+      game.modHost.castAt(g[0], g[2], hit);
+      this.lastTapTime = 0;
+      return;
+    }
+
     // 1. an armed command takes the tap
     if (this.armed) {
       const done = this._applyArmed(hit, g);
@@ -731,6 +740,7 @@ export class Input {
     else if (k === 'g') cam.nudge(0, 0.08);
     else if (k === 'escape') {
       if (this.game.placing) { this.game.placing = null; this.ui?.refreshCommands(true); }
+      if (this.game.modCast) this.game.modHost.cancelCast();
       else if (this.armed) { this.armed = null; this.ui?.refreshCommands(true); }
       else { this.game.clearSelection(); this.ui?.refreshCommands(true); }
     } else if (k === 'a') {

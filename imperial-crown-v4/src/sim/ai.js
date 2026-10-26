@@ -97,6 +97,9 @@ export class AIController {
     const out = [];
     for (const u of this.game.units) {
       if (u.dead || u.team !== this.team || u.garrisoned) continue;
+      /* wildlife spawned by a mod fights for nobody: it must never be drafted
+         into the enemy's army list */
+      if (u.wild) continue;
       if (u.def.attack > 0 && !u.def.classes.includes('villager')) out.push(u);
     }
     return out;

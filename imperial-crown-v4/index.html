@@ -132,6 +132,9 @@
 
     <div id="alertStrip"></div>
 
+    <!-- mod session strip: only ever populated in a Mod Workshop match -->
+    <div id="modHud" class="hidden"></div>
+
     <div id="leftRail">
       <div class="railGroup" id="stanceBar">
         <button class="railBtn" data-stance="aggressive" title="Aggressive stance"><svg class="ic"><use href="#i-sword"/></svg></button>
@@ -297,6 +300,7 @@
         </button>
         <div class="menuFootRow">
           <button class="ghostBtn" id="btnLoad"><svg class="ic"><use href="#i-load"/></svg> Load</button>
+          <button class="ghostBtn modsBtn" id="btnMods"><svg class="ic"><use href="#i-skull"/></svg> Mods<span class="modCount hidden" id="modCount">0</span></button>
           <button class="ghostBtn" id="btnSettings"><svg class="ic"><use href="#i-cog"/></svg> Settings</button>
           <button class="ghostBtn" id="btnHelp"><svg class="ic"><use href="#i-book"/></svg> Field manual</button>
         </div>

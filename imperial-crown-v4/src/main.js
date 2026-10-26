@@ -267,6 +267,11 @@ class App {
        call startMatch without going through boot(). */
     if (!this.governor && this.renderer && this.renderer.ready) this._initGovernor();
     this.matchOpts = opts;
+    /* a previous mod session's chips are not this match's: clear them before
+       the first frame, not at the first HUD tick */
+    const modHud = document.getElementById('modHud');
+    if (modHud) { modHud.replaceChildren(); modHud.classList.add('hidden'); }
+    document.body.classList.remove('mods');
     this.menu.closeModal();
     this.menu.hideMenu();
     this.menu.hideBoot();
@@ -319,6 +324,34 @@ class App {
     await new Promise((r) => requestAnimationFrame(r));
 
     game.start();
+
+    /* A mod session is assembled *after* the renderer has its base batches, so
+       the extra unit and building meshes can be registered lazily. This is the
+       only place in the app that imports src/mods: a normal campaign never
+       downloads or parses a byte of it. */
+    if (opts.mode === 'mods') {
+      this.menu.bootProgress(0.8, 'Opening the workshop…');
+      try {
+        const { createModHost } = await import('./mods/index.js');
+        this.modHost = createModHost(game, {
+          enabled: opts.mods || [],
+          renderer: this.renderer,
+          onError: (e) => {
+            this.ui?.toast(`${e.name || 'A mod'} failed and was disabled: ${e.message}`, 'warn');
+          }
+        });
+        game.modHost = this.modHost;
+        document.body.classList.add('mods');
+      } catch (err) {
+        /* the workshop itself must never be able to stop a match starting */
+        console.error('mod session failed to start', err);
+        document.body.classList.remove('mods');
+        this.modHost = null;
+      }
+    } else {
+      document.body.classList.remove('mods');
+      this.modHost = null;
+    }
     this.menu.bootProgress(0.86, 'Raising banners…');
     await new Promise((r) => requestAnimationFrame(r));
 
@@ -554,6 +587,14 @@ class App {
     this.running = false;
     this.paused = false;
     this.menu.closeModal();
+    if (this.modHost) {
+      try { this.modHost.dispose(); } catch (e) { /* a dead mod cannot block the menu */ }
+      this.modHost = null;
+    }
+    if (this.renderer) this.renderer.modAtmosphere = null;
+    document.body.classList.remove('mods');
+    const hud = document.getElementById('modHud');
+    if (hud) { hud.classList.add('hidden'); hud.replaceChildren(); }
     document.getElementById('hud')?.classList.add('hidden');
     document.getElementById('rotateHint')?.classList.add('hidden');
     document.getElementById('endScreen')?.classList.add('hidden');
@@ -720,8 +761,8 @@ class App {
       this.qualityCooldown = 0;
     }
 
-    // autosave
-    if (!this.paused && !g.gameOver) {
+    // autosave (never in a mod session: a save cannot carry a mod's state)
+    if (!this.paused && !g.gameOver && g.mode !== 'mods') {
       this.saveTimer += dt;
       if (this.saveTimer > 60) this.saveMatch();
     }
