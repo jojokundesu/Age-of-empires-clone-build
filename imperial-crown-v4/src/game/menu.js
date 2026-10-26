@@ -476,6 +476,7 @@ export class Menu {
       <div class="row"><b>Economy</b><span>Food, wood, gold and stone. Drop-off buildings shorten every trip.</span></div>
       <div class="row"><b>Counter triangle</b><span>Spears beat cavalry · cavalry beats archers · archers beat infantry.</span></div>
       <div class="row"><b>Favour</b><span>Earned from battle. Spend it on Decrees that buff your whole empire.</span></div>
+      <div class="row"><b>The Court</b><span>Top bar → Court. Give one of your own people an office: the Marshal rides with your soldiers, the Chancellor walks with your villagers, the Spymaster watches the enemy, the Hierophant holds the faith. Each earns rank from deeds — and if the officer falls, the office stands empty for a while.</span></div>
       <p class="dim tiny">Keyboard (if you play on a desktop): WASD pan · Q/E rotate · +/- zoom · A attack-move · S stop · H town centre · 1–9 groups · Space pause.</p>
     `);
   }

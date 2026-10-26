@@ -692,3 +692,25 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 }
 .modFoot { display: flex; align-items: center; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 .modWarn { font-size: 11px; color: #d9b48a; flex: 1 1 200px; }
+
+/* ---------------- the Court ----------------
+   Four rows in the same modal the decrees and the market use. The only new
+   furniture is the little deed bar: it has to read at a glance on a phone. */
+.courtList { display: flex; flex-direction: column; gap: 8px; }
+.courtRow {
+  display: grid; grid-template-columns: 148px 1fr; gap: 10px;
+  padding: 9px 10px; border-radius: 10px;
+  background: rgba(12, 16, 22, 0.55); border: 1px solid rgba(255, 226, 168, 0.10);
+}
+.courtRow.on { border-color: rgba(255, 226, 168, 0.28); background: rgba(30, 26, 16, 0.5); }
+.courtRow.locked { opacity: 0.45; }
+.courtRow b { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.courtRow .deedBar {
+  display: inline-block; width: 92px; height: 4px; margin: 4px 6px 0 0;
+  border-radius: 2px; background: rgba(255, 255, 255, 0.12); vertical-align: middle;
+}
+.courtRow .deedBar i { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, #d8ae5a, #ffe9a8); }
+.courtRow .ghostBtn { margin: 4px 6px 0 0; }
+@media (max-width: 640px) {
+  .courtRow { grid-template-columns: 1fr; }
+}

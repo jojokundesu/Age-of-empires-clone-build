@@ -352,28 +352,49 @@ export class PathFinder {
     return smooth;
   }
 
-  /** String-pull a cell chain into waypoints. */
+  /** String-pull a cell chain into waypoints.
+   *
+   *  The grid is 2 m wide, and a building is not: a house whose centre-cell
+   *  band ends a few centimetres short of a cell centre is "clear" to
+   *  lineClear while still being solid to a body with a radius. String-pulling
+   *  then replaced a good dog-leg with a straight line through the house's
+   *  inflated box, and the unit walked into the corner for the rest of the
+   *  match. `lineBlocked` is the game's continuous answer (water, cliffs,
+   *  building footprints *plus radius*), so every shortcut has to pass both
+   *  tests. It is bounded per path: if the fine checks run out, the remaining
+   *  waypoints stay as the grid produced them, which is always safe. */
   _smooth(raw) {
     const cells = this.cells, half = this.half, cs = this.cellSize;
     const wx = (i) => (raw[i] % cells) * cs - half + cs * 0.5;
     const wz = (i) => ((raw[i] / cells) | 0) * cs - half + cs * 0.5;
     const nPts = raw.length;
+    const fine = this.lineBlocked;
+    this._fineChecks = 0;
+    const clear = (i, j) => {
+      const x0 = wx(i), z0 = wz(i), x1 = wx(j), z1 = wz(j);
+      if (!this.lineClear(x0, z0, x1, z1)) return false;
+      if (!fine) return true;
+      if (this._fineChecks >= 48) return false;
+      this._fineChecks++;
+      return !fine(x0, z0, x1, z1);
+    };
     const smooth = [[wx(0), wz(0)]];
     let a = 0;
-    while (a < nPts - 1) {
+    let guard = 0;
+    while (a < nPts - 1 && guard++ < 512) {
       let reach = a + 1;
-      if (this.lineClear(wx(a), wz(a), wx(nPts - 1), wz(nPts - 1))) {
+      if (clear(a, nPts - 1)) {
         reach = nPts - 1;
       } else {
         let step = 1;
-        while (a + step < nPts - 1 && this.lineClear(wx(a), wz(a), wx(a + step), wz(a + step))) {
+        while (a + step < nPts - 1 && clear(a, a + step)) {
           reach = a + step;
           step *= 2;
         }
         let lo = reach + 1, hi = Math.min(nPts - 1, a + step);
         while (lo <= hi) {
           const mid = (lo + hi) >> 1;
-          if (this.lineClear(wx(a), wz(a), wx(mid), wz(mid))) { reach = mid; lo = mid + 1; }
+          if (clear(a, mid)) { reach = mid; lo = mid + 1; }
           else hi = mid - 1;
         }
       }

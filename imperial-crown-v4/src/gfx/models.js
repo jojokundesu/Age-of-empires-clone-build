@@ -1778,6 +1778,261 @@ MU('magician', () => {
   return { geo: g, height: 2.2, stride: 3.0 };
 });
 
+
+/* ---- the five higher ranks of the magician ------------------------------
+   Same rig, one family of silhouettes. Three things carry the ladder, in
+   order of how far away they read:
+
+     1. the colour of the robe -- blue, violet, crimson, ivory, white-gold;
+        the rank colours are self-lit materials, NOT team cloth, or every
+        rank would be the same blue;
+     2. the light above the head -- a circlet, a halo, a crown, a crown of
+        three rings, and finally a column of light;
+     3. the clutter that floats where it should not -- one book, four motes,
+        six motes, wings.
+
+   Each builder ends with the part reset: geometry added after the staff
+   belongs to the body, or the halo swings with the arm and reads as a
+   stick lying on the ground. */
+const mageRing = (g, y, r, thick, seg = 10) => {
+  for (let i = 0; i < seg; i++) {
+    const a0 = (i / seg) * TAU, a1 = ((i + 1) / seg) * TAU;
+    g.beam(Math.cos(a0) * r, y, Math.sin(a0) * r, Math.cos(a1) * r, y, Math.sin(a1) * r, thick);
+  }
+};
+
+const mageBody = (o = {}) => {
+  const g = humanoid({
+    torsoCol: o.cloth || [0.18, 0.22, 0.50],
+    legCol: o.leg || [0.14, 0.16, 0.34],
+    sleeveCol: o.sleeve || o.cloth || [0.2, 0.24, 0.54],
+    sleeveMat: M.CLOTH,
+    skin: o.skin || [0.84, 0.72, 0.58],
+    helmet: false
+  });
+  /* robe skirt. A high rank wears a self-coloured robe; only the belt and the
+     sash stay in team cloth, so ownership is still readable */
+  g.part_(PART.BODY, 0, 1.2, 0);
+  const robeCol = o.robeCol || [1, 1, 1];
+  g.material(o.robeMat || M.CLOTH).color(robeCol[0], robeCol[1], robeCol[2]);
+  g.cyl(0, 0.04, 0, 0.30, o.hem || 0.46, 1.18, 12, { capTop: false });
+  if (o.overRobe) {
+    /* a second, shorter layer: heavier cloth at the hem, so the skirt is not
+       one flat triangle from the chest down */
+    g.material(o.robeMat || M.CLOTH).color(
+      Math.min(1, robeCol[0] * 0.82), Math.min(1, robeCol[1] * 0.82), Math.min(1, robeCol[2] * 0.82));
+    g.cyl(0, 0.02, 0, 0.34, 0.54, 0.52, 12, { capTop: false });
+  }
+  g.material(M.GOLD).color(0.88, 0.72, 0.3);
+  g.cyl(0, 1.18, 0, 0.31, 0.31, 0.07, 10);
+  /* the team sash across the chest */
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.panel(0, 1.34, 0.16, 0.4, 0.12, 0.35);
+  g.material(M.GOLD).color(0.85, 0.7, 0.3);
+  g.box(0, 1.52, 0, 0.4, 0.06, 0.26);
+  /* staff, held in the right hand */
+  g.part_(PART.ARM_R, 0.30, 1.44, 0);
+  g.material(M.WOOD).color(0.36, 0.25, 0.17);
+  g.beam(0.05, -0.58, 0.10, 0.05, 0.66, 0.10, 0.045);
+  /* back on the body: everything a rank adds hangs off the chest */
+  g.part_(PART.BODY, 0, 1.2, 0);
+  return g;
+};
+
+/* rank 2 — a circlet instead of a hat, a white mantle, twin orbs */
+MU('magician_adept', () => {
+  const g = mageBody({ hem: 0.46, overRobe: true });
+  g.material(M.GOLD).color(0.9, 0.76, 0.34);
+  mageRing(g, 1.80, 0.16, 0.032, 9);
+  g.material(M.MARBLE).color(0.9, 0.9, 0.86);
+  g.taperBox(0, 1.46, 0, 0.56, 0.2, 0.36, 0.36, 0.28);
+  g.material(M.GLOW).color(0.6, 0.85, 1.0);
+  g.sphere(0, 1.2, 0.18, 0.06, 6, 4);
+  g.part_(PART.ARM_R, 0.30, 1.44, 0);
+  g.material(M.GLOW).color(0.55, 0.8, 1.0);
+  g.sphere(0.05, 0.78, 0.10, 0.11, 7, 5);
+  g.material(M.GLOW).color(0.35, 0.62, 1.0);
+  g.sphere(0.05, 0.54, 0.10, 0.06, 6, 4);
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.3, stride: 3.0 };
+});
+
+/* rank 3 — violet, a cape, a halo, and a book that hangs in the air */
+MU('magician_magus', () => {
+  const g = mageBody({ hem: 0.5, robeMat: M.MARBLE, robeCol: [0.44, 0.33, 0.66], overRobe: true });
+  /* cape behind the shoulders */
+  g.part_(PART.EXTRA, 0, 1.5, -0.18);
+  g.material(M.MARBLE).color(0.3, 0.22, 0.5);
+  g.taperBox(0, 0.0, -0.02, 0.56, 1.4, 0.08, 0.92, 0.1);
+  g.material(M.GOLD).color(0.88, 0.74, 0.32);
+  g.box(0, -0.66, -0.02, 0.94, 0.06, 0.1);
+  /* hood, then a halo of gold above it */
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.material(M.MARBLE).color(0.4, 0.3, 0.62);
+  g.cone(0, 1.86, -0.02, 0.25, 0.34, 9);
+  g.material(M.GOLD).color(0.95, 0.8, 0.36);
+  mageRing(g, 2.1, 0.3, 0.034, 12);
+  g.material(M.GLOW).color(0.72, 0.9, 1.0);
+  g.sphere(0, 2.1, 0, 0.05, 6, 4);
+  /* the grimoire, pages down, orbiting the left hand */
+  g.part_(PART.EXTRA, -0.62, 1.32, 0.24);
+  g.material(M.LEATHER).color(0.42, 0.2, 0.26);
+  g.box(0, 0, 0, 0.28, 0.36, 0.08);
+  g.material(M.MARBLE).color(0.94, 0.92, 0.86);
+  g.box(0, 0, 0.05, 0.23, 0.31, 0.03);
+  g.material(M.GLOW).color(0.75, 0.9, 1.0);
+  g.sphere(0, 0.22, 0, 0.05, 6, 4);
+  /* staff crystal */
+  g.part_(PART.ARM_R, 0.30, 1.44, 0);
+  g.material(M.GLOW).color(0.6, 0.82, 1.0);
+  g.cone(0.05, 0.9, 0.10, 0.12, 0.24, 6);
+  g.sphere(0.05, 0.84, 0.10, 0.09, 6, 4);
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.45, stride: 3.0 };
+});
+
+/* rank 4 — crimson, gold pauldrons, a crown of three points, four motes */
+MU('magician_archmage', () => {
+  const g = mageBody({ hem: 0.54, robeMat: M.MARBLE, robeCol: [0.62, 0.21, 0.24], overRobe: true });
+  g.part_(PART.EXTRA, 0, 1.5, -0.2);
+  g.material(M.MARBLE).color(0.4, 0.13, 0.16);
+  g.taperBox(0, 0.0, -0.02, 0.6, 1.5, 0.08, 0.98, 0.1);
+  g.part_(PART.BODY, 0, 1.2, 0);
+  /* crown */
+  g.material(M.GOLD).color(0.98, 0.84, 0.4);
+  mageRing(g, 1.84, 0.18, 0.042, 9);
+  g.cone(0, 1.9, 0.15, 0.055, 0.22, 5);
+  g.cone(-0.15, 1.9, 0.03, 0.055, 0.18, 5);
+  g.cone(0.15, 1.9, 0.03, 0.055, 0.18, 5);
+  /* two halos, one gold and one of light */
+  mageRing(g, 2.2, 0.34, 0.032, 12);
+  g.material(M.GLOW).color(0.62, 0.8, 1.0);
+  mageRing(g, 2.32, 0.25, 0.024, 12);
+  /* pauldrons */
+  g.material(M.GOLD).color(0.9, 0.76, 0.34);
+  g.box(-0.31, 1.52, 0, 0.22, 0.14, 0.3);
+  g.box(0.31, 1.52, 0, 0.22, 0.14, 0.3);
+  /* four motes */
+  g.part_(PART.EXTRA, 0, 0, 0);
+  g.material(M.GLOW).color(0.66, 0.86, 1.0);
+  for (const [mx, my, mz] of [[-0.54, 1.62, 0.08], [0.54, 1.62, 0.08], [-0.48, 1.04, 0.14], [0.48, 1.04, 0.14]]) {
+    g.sphere(mx, my, mz, 0.055, 6, 4);
+  }
+  g.part_(PART.ARM_R, 0.30, 1.44, 0);
+  g.material(M.WOOD).color(0.3, 0.22, 0.16);
+  g.beam(0.05, 0.66, 0.10, 0.05, 0.96, 0.10, 0.035);
+  g.material(M.GLOW).color(0.75, 0.92, 1.0);
+  g.cone(0.05, 1.08, 0.10, 0.13, 0.28, 6);
+  g.sphere(0.05, 1.0, 0.10, 0.1, 6, 4);
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.6, stride: 3.0 };
+});
+
+/* rank 5 — ivory, a white beard, an open book, four motes and a halo */
+MU('magician_sage', () => {
+  const g = mageBody({ hem: 0.52, robeMat: M.MARBLE, robeCol: [0.95, 0.93, 0.86], overRobe: true, skin: [0.9, 0.82, 0.72] });
+  g.part_(PART.BODY, 0, 1.2, 0);
+  /* mantle and beard */
+  g.material(M.MARBLE).color(0.99, 0.98, 0.94);
+  g.taperBox(0, 1.34, 0, 0.64, 0.62, 0.42, 0.44, 0.32);
+  g.cyl(0, 1.18, 0.22, 0.14, 0.02, 0.56, 7);
+  g.material(M.GOLD).color(0.95, 0.8, 0.36);
+  mageRing(g, 1.86, 0.18, 0.04, 9);
+  mageRing(g, 2.18, 0.32, 0.028, 12);
+  g.material(M.GLOW).color(0.8, 0.94, 1.0);
+  g.sphere(0, 2.18, 0, 0.06, 6, 4);
+  /* the open book, and a second one circling it */
+  g.part_(PART.EXTRA, -0.68, 1.46, 0.26);
+  g.material(M.MARBLE).color(0.97, 0.96, 0.9);
+  g.box(0, 0, 0, 0.36, 0.05, 0.28);
+  g.box(0, -0.07, 0, 0.32, 0.045, 0.24);
+  g.material(M.GLOW).color(0.8, 0.95, 1.0);
+  g.box(0, 0.04, 0, 0.32, 0.03, 0.24);
+  g.part_(PART.EXTRA, 0.68, 1.22, 0.14);
+  g.material(M.LEATHER).color(0.38, 0.26, 0.42);
+  g.box(0, 0, 0, 0.22, 0.3, 0.11);
+  /* motes */
+  g.part_(PART.EXTRA, 0, 0, 0);
+  g.material(M.GLOW).color(0.85, 0.95, 1.0);
+  for (const [mx, my, mz] of [[-0.5, 1.7, 0.1], [0.5, 1.7, 0.1], [-0.44, 0.9, 0.16], [0.44, 0.9, 0.16]]) {
+    g.sphere(mx, my, mz, 0.05, 6, 4);
+  }
+  g.part_(PART.ARM_R, 0.30, 1.44, 0);
+  g.material(M.GLOW).color(0.9, 0.97, 1.0);
+  g.sphere(0.05, 0.86, 0.10, 0.13, 7, 5);
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.72, stride: 3.0 };
+});
+
+/* rank 6 — the robe does not reach the ground, and the air is crowded */
+MU('magician_ascendant', () => {
+  const g = humanoid({
+    torsoCol: [0.94, 0.95, 1.0], legCol: [0.9, 0.93, 1.0],
+    sleeveCol: [0.95, 0.96, 1.0], sleeveMat: M.MARBLE,
+    skin: [0.92, 0.9, 0.86], helmet: false
+  });
+  g.part_(PART.BODY, 0, 1.2, 0);
+  /* the skirt hovers a hand's width off the grass, and the gap glows */
+  g.material(M.MARBLE).color(0.98, 0.97, 0.94);
+  g.cyl(0, 0.3, 0, 0.28, 0.46, 1.0, 14, { capTop: false, capBottom: true });
+  g.material(M.GLOW).color(0.72, 0.88, 1.0);
+  g.cyl(0, 0.27, 0, 0.44, 0.5, 0.05, 14);
+  mageRing(g, 0.2, 0.56, 0.03, 16);
+  /* gold trim + team sash */
+  g.material(M.GOLD).color(1.0, 0.88, 0.5);
+  mageRing(g, 1.26, 0.31, 0.04, 12);
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.panel(0, 1.38, 0.19, 0.44, 0.13, 0.35);
+  /* crown: a ring and three points */
+  g.material(M.GOLD).color(1.0, 0.9, 0.52);
+  mageRing(g, 1.86, 0.19, 0.042, 9);
+  g.cone(0, 1.94, 0.17, 0.06, 0.26, 5);
+  g.cone(-0.17, 1.94, 0.02, 0.06, 0.2, 5);
+  g.cone(0.17, 1.94, 0.02, 0.06, 0.2, 5);
+  /* three rings of light */
+  g.material(M.GLOW).color(0.75, 0.92, 1.0);
+  mageRing(g, 2.18, 0.38, 0.03, 14);
+  mageRing(g, 2.34, 0.28, 0.026, 14);
+  mageRing(g, 2.48, 0.17, 0.022, 10);
+  /* a shard of sky hanging above the crown: the silhouette's top third */
+  g.material(M.GLOW).color(0.9, 0.98, 1.0);
+  g.sphere(0, 2.86, 0, 0.13, 8, 6);
+  g.cone(0, 2.98, 0, 0.1, 0.26, 6);
+  g.material(M.GOLD).color(1.0, 0.9, 0.5);
+  mageRing(g, 2.76, 0.42, 0.022, 16);
+  /* wings: three tapered panels a side, wide enough to read from above */
+  g.part_(PART.EXTRA, 0, 1.6, -0.22);
+  for (const sx of [-1, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const y = 0.16 - i * 0.36;
+      const w = 1.35 - i * 0.26;
+      g.material(M.GLOW).color(0.5 + i * 0.08, 0.74 + i * 0.07, 1.0);
+      g.taperBox(sx * (0.22 + w * 0.42), y, -0.06, w * 0.86, 0.06, 0.16, w * 0.3, 0.08);
+    }
+  }
+  /* six motes in two rings */
+  g.part_(PART.EXTRA, 0, 0, 0);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * TAU;
+    const r = i % 2 ? 0.46 : 0.66;
+    g.material(M.GLOW).color(i % 2 ? 0.9 : 0.7, i % 2 ? 0.97 : 0.86, 1.0);
+    g.sphere(Math.cos(a) * r, 1.5 + Math.sin(a * 2) * 0.24, Math.sin(a) * r, 0.06, 6, 4);
+  }
+  /* the staff is a rod of light with a shard in it */
+  g.part_(PART.ARM_R, 0.30, 1.44, 0);
+  g.material(M.GLOW).color(0.85, 0.96, 1.0);
+  g.beam(0.05, 0.4, 0.10, 0.05, 1.02, 0.10, 0.055);
+  g.sphere(0.05, 1.14, 0.10, 0.15, 8, 6);
+  g.cone(0.05, 1.4, 0.10, 0.1, 0.34, 6);
+  g.part_(PART.BODY, 0, 1.2, 0);
+  g.color(1, 1, 1);
+  return { geo: g, height: 3.25, stride: 3.0 };
+});
+
 /* ---- golem: a walking cairn ---- */
 MU('stone_golem', () => {
   const g = new Geo();

@@ -218,6 +218,16 @@ export class ModHost {
       damage: (ent, amount, source) => ent.takeDamage(amount, source || null, 'pierce'),
       heal: (ent, amount) => ent.heal(amount),
       say: (text, kind) => game.notify(text, kind || 'info'),
+      /* presentation trimmings a spell needs to land: the camera can be kicked
+         and the frame can bloom white for an instant. Both are *requests* --
+         the host clamps them, and the renderer owns what they mean. */
+      shake: (amount = 0.3) => { if (game.camera) game.camera.addShake(Math.min(1.2, amount)); },
+      flash: (amount = 0.25, color) => {
+        if (host.renderer && host.renderer.flash !== undefined) {
+          host.renderer.flash = Math.max(host.renderer.flash, Math.min(0.85, amount));
+          if (color && host.renderer.flashTint) host.renderer.flashTint = color.slice(0, 3);
+        }
+      },
       mark: (x, z, o) => game.marker(x, z, o),
       fx: game.fx,
       height: (x, z) => game.heightAt(x, z),
@@ -419,6 +429,7 @@ export class ModHost {
     };
     /* the shared flag the input layer and the renderer read */
     this.game.modCast = this.modCast;
+    this.game.castReticle = null;
     if (this.game.ui) {
       this.game.ui.toast(`${this.modCast.label} — tap the ${this.modCast.target === 'entity' ? 'target' : 'ground'}`, 'gold');
       this.game.ui.refreshCommands(true);

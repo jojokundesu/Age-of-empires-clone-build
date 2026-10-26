@@ -623,6 +623,7 @@ class App {
          a free win that also made the enemy look broken. */
       teams: { 1: g.exportTeam(1), 2: g.exportTeam(2) },
       wonder: [...g.wonderClocks.entries()],
+      court: g.court ? g.court.toJSON() : null,
       units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp)]),
       buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
@@ -669,6 +670,7 @@ class App {
         if (map.has(k)) { r.amount = map.get(k); if (r.amount <= 0) { r.dead = true; r.deadT = 9; } }
       }
     }
+    if (game.court && save.court) game.court.fromJSON(save.court);
     game.syncIdCounter();
     game.spawnUnit && game.recomputePop();
     game.buildingSpatialDirty = true;

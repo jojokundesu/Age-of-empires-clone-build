@@ -4,6 +4,7 @@
    production, combat, vision and victory. Written to be stepping
    friendly: one call to update(dt) advances everything by dt.
    ============================================================ */
+import { Court } from './court.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
   RES, POP_CAP, isUniqueUnit
@@ -127,6 +128,10 @@ export class Game {
        when the field is empty, so a normal campaign pays nothing for the mod
        system existing. See src/mods/. */
     this.modHost = null;
+    /* the campaign's long game: four offices, each held by a body on the map */
+    this.court = new Court(this);
+    this.courtArmed = null;
+    this.courtWrit = null;
 
     this.units = [];
     this.buildings = [];
@@ -160,6 +165,10 @@ export class Game {
     this.navTimer = 0;
     this.pathFinder.setGrid(this.navFinal, WORLD.half);
     this.pathFinderEnemy = new PathFinder(this.world.nav.cells, this.world.nav.cell, WORLD.half);
+    /* both grids string-pull against the *continuous* world, not just cells */
+    const fine = (a, b, c, d) => this.segmentBlocked(a, b, c, d);
+    this.pathFinder.lineBlocked = fine;
+    this.pathFinderEnemy.lineBlocked = fine;
     this.pathFinderEnemy.setGrid(this.navFinalEnemy, WORLD.half);
 
     this.teams = new Map();
@@ -445,14 +454,19 @@ export class Game {
   unstick(unit) {
     const px = unit.x, pz = unit.z;
     const best = this.freeSpotNear(px, pz, unit, 7);
-    if (best) { unit.x = best[0]; unit.z = best[1]; }
+    /* "the spot you are standing on" is trivially free; accepting it as a
+       rescue meant a unit sealed into a pocket by a wall run was "freed" onto
+       its own position every few seconds, forever. A rescue has to move him. */
+    const moved = !!(best && Math.hypot(best[0] - px, best[1] - pz) > 0.7);
+    if (moved) { unit.x = best[0]; unit.z = best[1]; }
     unit.path = null;
     unit.pathIdx = 0;
     unit.targetPos = null;
     unit.wedgeT = 0;
     unit.stallT = 0;
     unit.repathTimer = 0;
-    return !!best;
+    unit._wpBlock = 0;
+    return moved;
   }
 
   /**
@@ -632,6 +646,7 @@ export class Game {
     if (this.difficultyKey === 'sandbox') rate *= 1.25;
     rate *= this.buffMul(team, 'gather');
     rate *= this.gatherDayMul;
+    if (this.court) rate *= this.court.gatherMul(unit, kind);
     return rate;
   }
 
@@ -674,6 +689,7 @@ export class Game {
     }
     const st = this.teams.get(unit.team);
     if (st) st.gathered += amount;
+    if (this.court) this.court.onGather(unit, amount, kind);
     this.onEvent('deposit', { team: unit.team, kind, amount });
   }
 
@@ -914,6 +930,23 @@ export class Game {
   }
 
   /** Recombine the nav layers and hand the result to the path finder. */
+  /**
+   * The continuous, radius-aware answer to "can a body walk this line?".
+   * The nav grid is 2 m; buildings are not, so the pathfinder's string-pulling
+   * asks this before it cuts a corner (see PathFinder._smooth).
+   */
+  segmentBlocked(x0, z0, x1, z1) {
+    const d = Math.hypot(x1 - x0, z1 - z0);
+    if (d < 0.6) return false;
+    const probe = { radius: 0.42, def: { naval: false }, kind: 'unit', team: 0 };
+    const steps = Math.min(40, Math.ceil(d / 1.1));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (!this.isPassable(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t, probe)) return true;
+    }
+    return false;
+  }
+
   refreshNav() {
     this.navDirty = false;
     this.pathFinderEnemy.setGrid(this.navFinalEnemy, WORLD.half);
@@ -997,6 +1030,10 @@ export class Game {
 
   auraBonusFor(unit) {
     let best = 0;
+    if (this.court) {
+      const m = this.court.damageMul(unit);
+      if (m > 1) best = m - 1;
+    }
     const team = unit.team;
     for (const u of this.units) {
       if (u.dead || u.team !== team || u === unit) continue;
@@ -1010,9 +1047,10 @@ export class Game {
 
   unitSpeedMul(unit) {
     // packed formation cohesion: slight slowdown when very close to allies
-    const base = this.buffMul(unit.team, 'speed');
-    if (!this.modHost) return base;
-    return base * this.modHost.speedMul(unit);
+    let base = this.buffMul(unit.team, 'speed');
+    if (this.court) base *= this.court.speedMul(unit);
+    if (this.modHost) base *= this.modHost.speedMul(unit);
+    return base;
   }
 
   /* ==========================================================
@@ -1071,14 +1109,21 @@ export class Game {
   get sightDayMul() { return 0.84 + 0.16 * this.daylight; }
 
   /** Everything the council panel needs to explain a decree's state. */
+  /** What a decree costs this realm, after the Hierophant's discount. */
+  decreePrice(team, def) {
+    if (!def) return 0;
+    return Math.round(def.cost * (this.court ? this.court.decreeDiscount(team) : 1));
+  }
+
   decreeState(team, id) {
     const st = this.teams.get(team);
     const def = DECREE_LIST.find((d) => d.id === id);
     if (!st || !def) return { ok: false, reason: 'Unknown decree' };
     if (def.age !== undefined && st.age < def.age) return { ok: false, reason: `Needs ${AGES[def.age].name}`, needsAge: def.age };
     if (def.once && st.decreesUsed[id]) return { ok: false, reason: 'Already proclaimed', used: true };
-    if (st.favor < def.cost) return { ok: false, reason: `Needs ${def.cost} favour`, short: def.cost - Math.floor(st.favor) };
-    return { ok: true, reason: '', affordable: true };
+    const price = this.decreePrice(team, def);
+    if (st.favor < price) return { ok: false, reason: `Needs ${price} favour`, short: price - Math.floor(st.favor), price };
+    return { ok: true, reason: '', affordable: true, price };
   }
 
   /** 0..1 progress of a running buff (for the HUD countdown bars). */
@@ -1093,14 +1138,15 @@ export class Game {
     const st = this.teams.get(team);
     const def = DECREE_LIST.find((d) => d.id === id);
     if (!st || !def) return { ok: false, reason: 'Unknown decree' };
-    if (st.favor < def.cost) return { ok: false, reason: `Needs ${def.cost} favour` };
-    if (def.age !== undefined && st.age < def.age) return { ok: false, reason: 'Requires a later age' };
+    const price = this.decreePrice(team, def);
+    if (st.favor < price) return { ok: false, reason: `Needs ${price} favour` };
     if (def.once && st.decreesUsed[id]) return { ok: false, reason: 'Already proclaimed' };
-    st.favor -= def.cost;
+    st.favor -= price;
     st.decreesUsed[id] = (st.decreesUsed[id] || 0) + 1;
+    if (this.court) this.court.onDecree(team, price);
     const result = def.apply(this, st, team);
     if (result === false) {
-      st.favor += def.cost;                 // refund a no-op
+      st.favor += price;                    // refund a no-op
       return { ok: false, reason: 'Nothing to affect' };
     }
     if (team === TEAM_PLAYER) {
@@ -1255,6 +1301,7 @@ export class Game {
       // every fallen enemy is a small offering to the court
       killer.favor = Math.min(400, killer.favor + 0.6);
     }
+    if (this.court) this.court.onKill(attacker, unit);
     unit.deadT = 0;
     this.deadUnits.push(unit);
     this.popDirty = true;
@@ -1475,6 +1522,8 @@ export class Game {
       this.phaseChanged = true;
       this.onEvent('phase', { phase, prev: prevPhase, hour: this.worldTime });
     }
+
+    if (this.court) this.court.update(dt);
 
     // favour and temporary decree buffs
     for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
@@ -2183,8 +2232,8 @@ export function formationSlots(count, cx, cz, opts = {}) {
 }
 
 
-const NULL_FX = {
-  spawn() {}, dust() {}, smoke() {}, fire() {}, blood() {}, sparks() {},
-  explosion() {}, heal() {}, splash() {}, leaves() {}, glowPulse() {}, embers() {}, pollen() {}
-};
+/* Every effect method, forever. The simulation must never fail because a
+   headless caller has no renderer, and a mod must never fail because an
+   effect it asks for was added to FX after this table was written. */
+const NULL_FX = new Proxy({}, { get: (t, k) => (k === 'then' ? undefined : () => {}) });
 const NULL_SOUND = { play() {} };

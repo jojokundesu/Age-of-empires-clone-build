@@ -422,6 +422,25 @@ if (process.env.FUZZ_TRACE) {
           `passable-here ${game.isPassable(u.x, u.z, u)} cellBlocked ${game.pathFinder.isBlocked(cx, cz)}`,
           `destPassable ${u.destX !== undefined ? game.isPassable(u.destX, u.destZ, u) : '?'}`,
           `stall ${u.stallT?.toFixed(2)} stuck ${u.stuckScore}`);
+        if (process.env.FUZZ_DIAG) {
+          const dirs = [];
+          for (let k = 0; k < 8; k++) {
+            const a = (k / 8) * Math.PI * 2;
+            const ok = game.isPassable(u.x + Math.cos(a) * 0.8, u.z + Math.sin(a) * 0.8, u);
+            dirs.push(ok ? '.' : '#');
+          }
+          console.log('   around:', dirs.join(''), 'path:', u.path ? JSON.stringify(u.path.map((p) => p.map((v) => +v.toFixed(1)))) : 'none');
+          const near = game.buildings.filter((b) => !b.dead && Math.hypot(b.x - u.x, b.z - u.z) < 9);
+          console.log('   buildings:', near.map((b) => `${b.type}@${b.x.toFixed(1)},${b.z.toFixed(1)} size${b.def.size}${b.wall ? ' WALL' : ''}`).join(' | ') || 'none');
+          const [ux, uz] = game.pathFinder.worldToCell(u.x, u.z);
+          const rows = [];
+          for (let dz = -2; dz <= 2; dz++) {
+            let row = '';
+            for (let dx = -2; dx <= 2; dx++) row += game.pathFinder.isBlocked(ux + dx, uz + dz) ? '#' : (dx === 0 && dz === 0 ? 'o' : '.');
+            rows.push(row);
+          }
+          console.log('   grid:\n     ' + rows.join('\n     '));
+        }
       }
     }
   }

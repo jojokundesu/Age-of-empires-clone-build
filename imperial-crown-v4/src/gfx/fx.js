@@ -202,6 +202,54 @@ export class FX {
       r: 1, g: 0.95, b: 0.8, sprite: SPRITE.STREAK, additive: false, alpha: 0.35, drag: 0.9, stretch: 1.6
     });
   }
+  /**
+   * A line of light between two points: stacked additive glows, jittered so a
+   * jagged call reads as lightning and a straight one as a beam. Always
+   * camera-facing, costs only pooled sprites, and works at any zoom — this is
+   * what a spell should look like between the caster and the target.
+   */
+  beamBetween(x0, y0, z0, x1, y1, z1, o = {}) {
+    const col = o.color || [0.86, 0.92, 1];
+    const scale = o.scale || 1;
+    const life = o.life || 0.42;
+    const jag = o.jag === undefined ? 0.3 : o.jag;
+    const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+    const len = Math.max(0.5, Math.hypot(dx, dy, dz));
+    const n = Math.min(30, Math.max(5, Math.round(len * 1.15)));
+    const w = (o.width || 0.3) * scale;
+    let jx = 0, jy = 0, jz = 0;
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      if (i) {
+        jx += (Math.random() - 0.5) * jag * scale;
+        jy += (Math.random() - 0.5) * jag * scale * 0.6;
+        jz += (Math.random() - 0.5) * jag * scale;
+      }
+      this.spawn({
+        x: x0 + dx * t + jx, y: y0 + dy * t + jy, z: z0 + dz * t + jz,
+        vx: 0, vy: 0, vz: 0,
+        life: life * (0.7 + Math.random() * 0.65),
+        size: w * (0.65 + Math.sin(t * Math.PI) * 0.8),
+        grow: (o.grow === undefined ? 0.4 : o.grow) * scale,
+        alpha: o.alpha === undefined ? 0.9 : o.alpha,
+        r: col[0], g: col[1], b: col[2],
+        sprite: SPRITE.GLOW, additive: true, drag: 1, gravity: 0, fadeOut: true
+      });
+    }
+  }
+  /** A vertical shaft: lightning from the sky, or a pillar of light. */
+  beam(x, z, y0, y1, o = {}) {
+    this.beamBetween(x, y0, z, x, y1, z, o);
+  }
+  /** An expanding ring of air, flat on the ground plane's normal. */
+  shock(x, y, z, scale = 1, color = [0.9, 0.94, 1]) {
+    this.spawn({
+      x, y, z, vx: 0, vy: 0.2, vz: 0, life: 0.5,
+      size: 0.5 * scale, grow: 11 * scale, alpha: 0.85,
+      r: color[0], g: color[1], b: color[2],
+      sprite: SPRITE.RING, additive: true, drag: 1, gravity: 0, fadeOut: true
+    });
+  }
   glowPulse(x, y, z, r = 0.6, g = 0.8, b = 1) {
     this.spawn({
       x, y, z, vx: 0, vy: 0.4, vz: 0, life: 1.4, size: 0.8, grow: 1.4,

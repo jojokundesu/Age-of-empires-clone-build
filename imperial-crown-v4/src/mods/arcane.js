@@ -1,155 +1,213 @@
 /* ============================================================
    arcane.js — The Arcane Order
    ------------------------------------------------------------
-   A single spellcaster with four spells that each answer a different
-   problem, and a mana pool that makes choosing between them the
-   actual gameplay:
+   A magician is not a unit you buy once; it is a unit you *grow*.
+   Insight is earned by casting, by killing, and by standing in the
+   shadow of a tower, and every rank opens new spells and changes the
+   model on the field.
 
-     Fireball    — the answer to a clumped army (area damage + burn)
-     Blink       — the answer to being caught (an escape that will
-                   not teleport through a wall)
-     Time Warp   — the answer to cavalry (a slow field on the ground)
-     Golem       — the answer to a wall of spears (a temporary tank)
+     rank 1  Apprentice   fireball, blink
+     rank 2  Adept        + ice lance, arcane ward
+     rank 3  Magus        + chain lightning, time warp, attunement
+     rank 4  Archmage     + meteor, stone golem
+     rank 5  Sage         + frost nova, thunderstorm
+     rank 6  Ascendant    + SKYFALL, one per day, anywhere on the map
 
-   Mana regenerates whether or not the magician is fighting, so the
-   interesting decision is *when* to spend it: a Fireball now or a
-   Golem in twenty seconds.
+   Attunement is the long tail: two elements are woven together to
+   discover a hybrid that is *not* on the card until someone finds it.
+   There are six of them, and each one is a different answer to a
+   different problem. That is the thing a player is still discovering
+   in their fourth hour.
+
+   The whole mod is deliberately fragile and expensive: a magician is
+   the most valuable thing on the field, and the AI knows it.
    ============================================================ */
-import { TEAM_PLAYER } from '../sim/game.js';
+import { TEAM_PLAYER, TEAM_ENEMY } from '../sim/game.js';
+import { UNIT_DEFS } from '../sim/data.js';
 
 const MAGICIAN = 'magician';
 const GOLEM = 'stone_golem';
-const MAX_MAGICIANS = 4;
+const TOWER = 'arcane_tower';
+const MAX_BASE_MAGICIANS = 4;
 
-const MANA_MAX = 100;
-const MANA_REGEN = 3.4;
+/* one in-game day, in seconds: the sky falls once per day */
+const DAY = 240;
+
+const RANKS = [
+  { rank: 1, title: 'Apprentice', xp: 0, mana: 100, regen: 3.4, type: MAGICIAN },
+  { rank: 2, title: 'Adept', xp: 80, mana: 118, regen: 3.9, type: 'magician_adept' },
+  { rank: 3, title: 'Magus', xp: 220, mana: 138, regen: 4.5, type: 'magician_magus' },
+  { rank: 4, title: 'Archmage', xp: 430, mana: 162, regen: 5.2, type: 'magician_archmage' },
+  { rank: 5, title: 'Sage', xp: 720, mana: 190, regen: 6.0, type: 'magician_sage' },
+  { rank: 6, title: 'Ascendant', xp: 1100, mana: 225, regen: 7.0, type: 'magician_ascendant' }
+];
+const RANK_BY_TYPE = new Map(RANKS.map((r) => [r.type, r]));
+
+const ELEMENTS = {
+  fire: { name: 'Fire', icon: 'flame', color: [1, 0.55, 0.2] },
+  ice: { name: 'Ice', icon: 'mountain', color: [0.6, 0.85, 1] },
+  storm: { name: 'Storm', icon: 'bolt', color: [0.75, 0.8, 1] },
+  arcane: { name: 'Arcane', icon: 'relic', color: [0.75, 0.5, 1] }
+};
 
 function ustate(api, u) {
   return api.unitState(u, () => ({
-    mana: MANA_MAX,
+    mana: 100,
     cd: Object.create(null),
-    burns: null
+    xp: 0,
+    rank: 1,
+    ward: null,
+    slow: null,
+    freeze: 0,
+    castTotal: 0
   }));
 }
 
-export const arcane = {
-  id: 'arcane',
-  name: 'The Arcane Order',
-  icon: 'monk',
-  tagline: 'Four spells, one pool of mana.',
-  blurb: 'Field magicians who cast fireballs, blink out of trouble, slow time and raise a stone golem.',
-  detail: [
-    'Magicians regenerate mana constantly and never run out of it — the limit is how fast, and how many spells you can afford to spend before the next fight.',
-    'Fireball: area damage plus a burn. Blink: a short teleport that refuses to cross walls. Time Warp: a slow field that catches cavalry. Golem: a temporary stone tank with a building-damage bonus.',
-    'They are fragile, expensive and worth protecting. Undead strikes do less to them.'
-  ],
-  units: {
-    [MAGICIAN]: {
-      name: 'Magician', icon: 'monk', hp: 105, attack: 7, armor: 1, pierceArmor: 2,
-      range: 6.5, speed: 2.9, time: 24, cost: { food: 60, gold: 95 },
-      classes: ['infantry', 'unique'], sight: 13, attackSpeed: 1.6, projectile: 'flame',
-      desc: 'Casts fireball, blink, time warp and golem. Mana regenerates; spells share a cooldown clock each.'
-    },
-    [GOLEM]: {
-      name: 'Stone Golem', icon: 'mountain', hp: 320, attack: 20, armor: 6, pierceArmor: 4,
-      speed: 2.2, time: 1, cost: {}, classes: ['siege'], sight: 9,
-      attackSpeed: 1.9, bonuses: { building: 24 }, pop: 0,
-      desc: 'A summoned cairn. Temporary, tough, and very good at doors.'
-    }
-  },
+function rankInfo(u) {
+  const st = u.modState && u.modState.arcane;
+  if (!st) return RANKS[0];
+  return RANKS[Math.max(0, Math.min(RANKS.length - 1, (st.rank || 1) - 1))];
+}
 
-  createState() {
-    return {
-      fields: [],          // {x, z, r, until, team}
-      golems: [],          // {unit, until}
-      casts: 0
-    };
-  },
+function isMagician(u) {
+  return !!u && !u.dead && !!(u.modState && u.modState.arcane);
+}
 
-  setup(api) {
-    api.say('The Arcane Order answers the call. Train magicians at the Town Centre.', 'good');
-  },
+function maxMana(u) { return rankInfo(u).mana; }
 
-  /* ------------------------------------------------------------
-     training & caps
-     ------------------------------------------------------------ */
-  trainableAt(api, building) {
-    if (!building || building.team !== TEAM_PLAYER) return [];
-    if (building.type !== 'town_center' && building.type !== 'castle') return [];
-    let n = 0;
-    for (const u of api.teamUnits(TEAM_PLAYER)) if (u.type === MAGICIAN) n++;
-    const queued = building.queue ? building.queue.filter((q) => q.type === MAGICIAN).length : 0;
-    if (n + queued >= MAX_MAGICIANS) return [];
-    return [MAGICIAN];
-  },
+/** Everyone of `enemyTeam` inside a circle. */
+function enemiesIn(api, unit, x, z, r) {
+  const out = [];
+  for (const e of api.units()) {
+    if (e.dead || e.team === unit.team) continue;
+    if (Math.hypot(e.x - x, e.z - z) <= r) out.push(e);
+  }
+  return out;
+}
 
-  onSpawn(api, unit) {
-    if (unit.type !== MAGICIAN) return;
-    ustate(api, unit);
-    api.fx.heal(unit.x, unit.y + 1.4, unit.z, 3);
-  },
+/** Structures of an enemy team inside a circle (their footprint counts). */
+function buildingsIn(api, team, x, z, r) {
+  const out = [];
+  for (const b of api.buildings()) {
+    if (b.dead || b.team === team || b.team === 0) continue;
+    const half = (b.def && b.def.size ? b.def.size : 3) * 0.5;
+    if (Math.hypot(b.x - x, b.z - z) <= r + half) out.push(b);
+  }
+  return out;
+}
 
-  /* ------------------------------------------------------------
-     the spells
-     ------------------------------------------------------------ */
-  spells() {
-    return [
-      {
-        id: 'fireball', name: 'Fireball', icon: 'flame', cost: 30, cd: 7, range: 13, radius: 2.8,
-        label: 'Fireball', color: [1, 0.55, 0.2], target: 'ground',
-        can: (u, x, z) => Math.hypot(u.x - x, u.z - z) <= 13
-      },
-      {
-        id: 'blink', name: 'Blink', icon: 'bolt', cost: 20, cd: 9, range: 9, radius: 0.6,
-        label: 'Blink', color: [0.5, 0.7, 1], target: 'ground',
-        can: (u, x, z) => Math.hypot(u.x - x, u.z - z) <= 9
-      },
-      {
-        id: 'warp', name: 'Time Warp', icon: 'hourglass', cost: 40, cd: 16, range: 12, radius: 5,
-        label: 'Time Warp', color: [0.6, 0.45, 1], target: 'ground',
-        can: (u, x, z) => Math.hypot(u.x - x, u.z - z) <= 12
-      },
-      {
-        id: 'golem', name: 'Stone Golem', icon: 'mountain', cost: 55, cd: 30, range: 5, radius: 1,
-        label: 'Raise Golem', color: [0.8, 0.75, 0.6], target: 'self'
-      }
-    ];
-  },
+/** A jagged bolt of light between two points, drawn as sparks and a ring. */
+function bolt(api, ax, az, bx, bz, color) {
+  const steps = 7;
+  const y0 = api.height(ax, az) + 1.2;
+  const y1 = api.height(bx, bz) + 0.9;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const x = ax + (bx - ax) * t + (api.rng() - 0.5) * 0.7;
+    const z = az + (bz - az) * t + (api.rng() - 0.5) * 0.7;
+    const y = y0 + (y1 - y0) * t;
+    api.fx.sparks(x, y, z, 2, color);
+  }
+  api.mark(bx, bz, { kind: 1, r0: color[0], g0: color[1], b0: color[2], r: 1.6, life: 0.28 });
+}
 
-  castSpell(api, unit, spell, x, z) {
-    const st = ustate(api, unit);
-    if (st.mana < spell.cost) { api.say('Not enough mana', 'warn'); return false; }
-    if ((st.cd[spell.id] || 0) > api.time) { api.say(`${spell.name} is still recovering`, 'warn'); return false; }
-    if (spell.can && !spell.can(unit, x, z)) { api.say('Out of range', 'warn'); return false; }
+function gainXp(api, unit, amount) {
+  const st = ustate(api, unit);
+  st.xp += amount;
+  const next = RANKS[st.rank];              // the entry after the current rank
+  if (!next || st.xp < next.xp) return;
+  st.rank = next.rank;
+  /* the model is the rank: a new type, same stats, so the renderer swaps the
+     whole silhouette (robe, halo, grimoire, crown) in one assignment */
+  const def = UNIT_DEFS[next.type];
+  if (!def) return;
+  const oldMax = unit.maxHp;
+  unit.type = next.type;
+  unit.def = def;
+  unit.name = def.name;
+  unit.classes = def.classes;
+  unit._stats = null;
+  unit._statsVersion = -1;
+  /* a rank is worth a little more life, never a full heal: a hunted mage must
+     still be at risk on the field */
+  unit.maxHp = Math.round(oldMax * 1.07);
+  unit.hp = Math.min(unit.maxHp, unit.hp + Math.round(oldMax * 0.18));
+  st.mana = next.mana;
+  api.fx.heal(unit.x, unit.y + 1.6, unit.z, 8);
+  api.mark(unit.x, unit.z, { kind: 1, r0: 0.55, g0: 0.8, b0: 1, r: 3.2, life: 1.1 });
+  api.say(`${unit.name || 'Magician'} — ${next.title}. ${rankBlurb(next.rank)}`, 'good');
+  api.banner(`${next.title}`);
+}
 
-    if (spell.id === 'fireball') {
-      const r = spell.radius;
+function rankBlurb(rank) {
+  return ({
+    2: 'Ice Lance and Arcane Ward are yours.',
+    3: 'Chain Lightning, Time Warp — and the Attunement rite.',
+    4: 'Meteor and the Stone Golem answer.',
+    5: 'Frost Nova and Thunderstorm.',
+    6: 'SKYFALL. Once a day, the sky is yours to drop.'
+  })[rank] || '';
+}
+
+function castable(api, unit, spell) {
+  const st = ustate(api, unit);
+  const rank = st.rank || 1;
+  if (rank < spell.rank) return { ok: false, why: `Rank ${spell.rank}` };
+  if (st.mana < spell.cost) return { ok: false, why: `${Math.ceil(spell.cost - st.mana)} mana short` };
+  if ((st.cd[spell.id] || 0) > api.time) return { ok: false, why: `${Math.ceil(st.cd[spell.id] - api.time)}s` };
+  return { ok: true, why: '' };
+}
+
+function performCast(api, unit, spell, x, z) {
+  const st = ustate(api, unit);
+  const ok = castable(api, unit, spell);
+  if (!ok.ok) { api.say(`${spell.name}: ${ok.why}`, 'warn'); return false; }
+  if (Math.hypot(unit.x - x, unit.z - z) > (spell.range || 14)) {
+    api.say(`${spell.name}: out of range`, 'warn');
+    return false;
+  }
+  if (spell.can && !spell.can(api, unit, x, z)) return false;
+  const done = spell.cast(api, unit, x, z);
+  if (done === false) return false;
+  st.mana -= spell.cost;
+  st.castTotal++;
+  st.cd[spell.id] = api.time + (spell.cd || 8) * (1 - 0.04 * ((st.rank || 1) - 1));
+  gainXp(api, unit, 8 + (spell.rank || 1) * 3);
+  return true;
+}
+
+/* ============================================================
+   the spellbook
+   ============================================================ */
+const SPELLS = [
+  {
+    id: 'fireball', name: 'Fireball', icon: 'flame', rank: 1, cost: 30, cd: 7, range: 15, radius: 2.8,
+    color: [1, 0.55, 0.2],
+    desc: 'Area damage plus a burn.',
+    cast(api, unit, x, z) {
+      const r = 3.2;
       let hit = 0;
-      for (const e of api.units()) {
-        if (e.dead || e.team === unit.team) continue;
+      for (const e of enemiesIn(api, unit, x, z, r)) {
         const d = Math.hypot(e.x - x, e.z - z);
-        if (d > r) continue;
-        hit++;
-        api.damage(e, 46 * (1 - d / (r * 1.6)), unit);
+        api.damage(e, 46 * (1 - d / (r * 1.7)), unit);
         const es = api.unitState(e);
-        es.burn = { until: api.time + 5, dps: 4, source: unit.team };
-      }
-      /* buildings take a smaller share: a wizard is not a trebuchet */
-      for (const b of api.buildings()) {
-        if (b.dead || b.team === unit.team || b.team === 0) continue;
-        if (Math.hypot(b.x - x, b.z - z) > r + b.size * 0.5) continue;
-        api.damage(b, 18, unit);
+        es.burn = { until: api.time + 5, dps: 5, source: unit.team };
         hit++;
       }
-      api.fx.explosion(x, api.height(x, z) + 0.6, z, 1.15);
-      api.mark(x, z, { kind: 0, r0: 1, g0: 0.45, b0: 0.15, r: r * 1.6, life: 0.5 });
-      api.state.casts++;
-      if (hit === 0) api.say('The fireball found nothing', 'info');
+      for (const b of buildingsIn(api, unit.team, x, z, r)) { api.damage(b, 20, unit); hit++; }
+      api.fx.explosion(x, api.height(x, z) + 0.6, z, 1.2);
+      api.fx.beamBetween(unit.x, unit.y + 1.3, unit.z, x, api.height(x, z) + 0.5, z,
+        { color: [1, 0.6, 0.25], scale: 1.1, life: 0.3, jag: 0.22, width: 0.22 });
+      api.fx.fire(x, api.height(x, z) + 0.4, z, 5);
+      api.mark(x, z, { kind: 0, r0: 1, g0: 0.45, b0: 0.15, r: r * 1.7, life: 0.5 });
+      if (!hit) api.say('The fireball found nothing', 'info');
     }
-
-    if (spell.id === 'blink') {
-      /* no blinking through a wall: the straight line has to be walkable, and
-         the landing spot has to be inside the world and out of the water */
+  },
+  {
+    id: 'blink', name: 'Blink', icon: 'bolt', rank: 1, cost: 20, cd: 9, range: 9.5,
+    color: [0.5, 0.7, 1],
+    desc: 'A short teleport that refuses walls.',
+    cast(api, unit, x, z) {
       if (!api.line(unit.x, unit.z, x, z) || !api.passable(x, z)) {
         api.say('Something solid is in the way', 'warn');
         return false;
@@ -161,185 +219,851 @@ export const arcane = {
       unit.y = api.height(unit.x, unit.z);
       api.fx.smoke(unit.x, unit.y + 0.8, unit.z, 6, 1.2, 0.5);
       api.mark(unit.x, unit.z, { kind: 0, r0: 0.6, g0: 0.75, b0: 1, r: 1.8 });
-      api.state.casts++;
     }
-
-    if (spell.id === 'warp') {
-      api.state.fields.push({ x, z, r: spell.radius, until: api.time + 5.5, team: unit.team });
-      api.mark(x, z, { kind: 1, r0: 0.4, g0: 0.4, b0: 1, r: spell.radius, life: 0.9 });
+  },
+  {
+    id: 'ice_lance', name: 'Ice Lance', icon: 'mountain', rank: 2, cost: 26, cd: 8, range: 13,
+    color: [0.6, 0.85, 1],
+    desc: 'A spear of ice that pierces a line of enemies and slows them.',
+    cast(api, unit, x, z) {
+      const dx = x - unit.x, dz = z - unit.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const ux = dx / len, uz = dz / len;
+      let hit = 0;
+      for (const e of enemiesIn(api, unit, (unit.x + x) / 2, (unit.z + z) / 2, len * 0.6 + 2)) {
+        const px = e.x - unit.x, pz = e.z - unit.z;
+        const along = px * ux + pz * uz;
+        if (along < 0 || along > len) continue;
+        const perp = Math.abs(px * uz - pz * ux);
+        if (perp > 1.35) continue;
+        api.damage(e, 38, unit);
+        const es = api.unitState(e);
+        es.slow = { mul: 0.5, until: api.time + 2.5 };
+        api.fx.sparks(e.x, e.y + 1, e.z, 6, [0.7, 0.9, 1]);
+        hit++;
+      }
+      api.fx.beamBetween(unit.x, unit.y + 1.1, unit.z, x, api.height(x, z) + 0.9, z,
+        { color: [0.7, 0.92, 1], scale: 1.2, life: 0.34, jag: 0.1, width: 0.26 });
+      for (let i = 0; i <= 6; i++) {
+        const t = i / 6;
+        api.fx.sparks(unit.x + dx * t, api.height(unit.x + dx * t, unit.z + dz * t) + 1.1, unit.z + dz * t, 2, [0.65, 0.88, 1]);
+      }
+      api.mark(x, z, { kind: 1, r0: 0.5, g0: 0.8, b0: 1, r: 2.2, life: 0.4 });
+      if (!hit) api.say('The lance found no one', 'info');
+    }
+  },
+  {
+    id: 'ward', name: 'Arcane Ward', icon: 'shield', rank: 2, cost: 34, cd: 18, range: 1,
+    color: [0.7, 0.55, 1],
+    desc: 'A shield that eats the next blows.',
+    cast(api, unit) {
+      const st = ustate(api, unit);
+      st.ward = { absorb: 90 + (st.rank || 1) * 18, until: api.time + 9 };
+      api.fx.heal(unit.x, unit.y + 1.1, unit.z, 6);
+      api.fx.shock(unit.x, unit.y + 0.9, unit.z, 0.7, [0.78, 0.66, 1]);
+      api.mark(unit.x, unit.z, { kind: 1, r0: 0.7, g0: 0.55, b0: 1, r: 1.5, life: 0.7 });
+      api.say('The ward settles around you', 'good');
+    }
+  },
+  {
+    id: 'chain', name: 'Chain Lightning', icon: 'bolt', rank: 3, cost: 42, cd: 13, range: 12,
+    color: [0.8, 0.85, 1],
+    desc: 'Leaps between up to five enemies.',
+    cast(api, unit, x, z) {
+      const pool = enemiesIn(api, unit, x, z, 7);
+      if (!pool.length) { api.say('No one to chain', 'info'); return false; }
+      let from = { x, z };
+      let dmg = 36;
+      let hits = 0;
+      const used = new Set();
+      for (let i = 0; i < 5 && pool.length; i++) {
+        let best = null, bestD = Infinity;
+        for (const e of pool) {
+          if (used.has(e)) continue;
+          const d = Math.hypot(e.x - from.x, e.z - from.z);
+          if (d < bestD) { bestD = d; best = e; }
+        }
+        if (!best) break;
+        used.add(best);
+        bolt(api, from.x, from.z, best.x, best.z, [0.85, 0.9, 1]);
+        api.fx.beamBetween(from.x, api.height(from.x, from.z) + 1.3, from.z,
+          best.x, api.height(best.x, best.z) + 1.1, best.z,
+          { color: [0.9, 0.95, 1], scale: 1.05, life: 0.36, jag: 1.15, width: 0.24 });
+        api.damage(best, dmg, unit);
+        api.fx.sparks(best.x, best.y + 1.1, best.z, 8, [0.9, 0.95, 1]);
+        from = best;
+        dmg *= 0.82;
+        hits++;
+      }
+      if (hits) api.say(`Chain Lightning — ${hits} struck`, 'good');
+    }
+  },
+  {
+    id: 'warp', name: 'Time Warp', icon: 'hourglass', rank: 3, cost: 40, cd: 16, range: 13, radius: 5.5,
+    color: [0.6, 0.45, 1],
+    desc: 'A field that slows everything hostile inside it.',
+    cast(api, unit, x, z) {
+      api.state.fields.push({ x, z, r: 5.5, until: api.time + 6, team: unit.team });
+      api.mark(x, z, { kind: 1, r0: 0.4, g0: 0.4, b0: 1, r: 5.5, life: 1 });
       api.fx.smoke(x, api.height(x, z) + 0.4, z, 8, 1.5, 0.8);
-      api.state.casts++;
     }
-
-    if (spell.id === 'golem') {
-      const spot = api.headroom(unit.x + 1.6, unit.z + 1.6) || [unit.x + 1.6, unit.z + 1.6];
+  },
+  {
+    id: 'meteor', name: 'Meteor', icon: 'flame', rank: 4, cost: 62, cd: 26, range: 16, radius: 4.5,
+    color: [1, 0.42, 0.16],
+    desc: 'A rock from the sky. It takes a moment to arrive.',
+    cast(api, unit, x, z) {
+      api.state.meteors.push({ x, z, at: api.time + 1.7, team: unit.team, by: unit });
+      api.mark(x, z, { kind: 1, r0: 1, g0: 0.4, b0: 0.1, r: 4.9, life: 1.7 });
+      api.say('Meteor — incoming', 'warn');
+    }
+  },
+  {
+    id: 'golem', name: 'Stone Golem', icon: 'mountain', rank: 4, cost: 55, cd: 30, range: 6,
+    color: [0.8, 0.75, 0.6],
+    desc: 'A temporary tank that eats buildings.',
+    cast(api, unit) {
+      const spot = api.headroom(unit.x + 1.8, unit.z + 1.8) || [unit.x + 1.8, unit.z + 1.8];
       const g = api.spawn(GOLEM, unit.team, spot[0], spot[1]);
       if (!g) { api.say('There is no room for a golem here', 'warn'); return false; }
+      g.owner = unit;
       api.state.golems.push({ unit: g, until: api.time + 26 });
       api.fx.dust(g.x, g.y, g.z, 10, 1.6);
       api.mark(g.x, g.z, { kind: 0, r0: 0.8, g0: 0.75, b0: 0.5, r: 2.2 });
-      api.game.notify('The stone walks', 'good');
-      api.state.casts++;
+      api.say('The stone walks', 'good');
     }
+  },
+  {
+    id: 'nova', name: 'Frost Nova', icon: 'mountain', rank: 5, cost: 70, cd: 30, range: 1, radius: 7.5,
+    color: [0.65, 0.9, 1],
+    desc: 'Everything around the caster freezes solid.',
+    cast(api, unit) {
+      let n = 0;
+      for (const e of enemiesIn(api, unit, unit.x, unit.z, 7.5)) {
+        api.damage(e, 34, unit);
+        const es = api.unitState(e);
+        es.freeze = api.time + 1.9;
+        es.slow = { mul: 0.4, until: api.time + 3.5 };
+        api.fx.sparks(e.x, e.y + 1, e.z, 5, [0.75, 0.95, 1]);
+        n++;
+      }
+      api.fx.smoke(unit.x, unit.y + 0.6, unit.z, 14, 2.4, 1.1);
+      api.fx.shock(unit.x, unit.y + 0.4, unit.z, 2.4, [0.72, 0.92, 1]);
+      api.mark(unit.x, unit.z, { kind: 1, r0: 0.6, g0: 0.9, b0: 1, r: 7.5, life: 0.9 });
+      api.say(n ? `Frost Nova — ${n} frozen` : 'Frost Nova', 'good');
+    }
+  },
+  {
+    id: 'thunderstorm', name: 'Thunderstorm', icon: 'bolt', rank: 5, cost: 80, cd: 40, range: 16, radius: 7,
+    color: [0.8, 0.85, 1],
+    desc: 'A storm cell that keeps striking for eight seconds.',
+    cast(api, unit, x, z) {
+      api.state.storms.push({ x, z, until: api.time + 8, next: 0, team: unit.team, by: unit });
+      api.mark(x, z, { kind: 1, r0: 0.7, g0: 0.8, b0: 1, r: 7, life: 1 });
+      api.say('The sky gathers', 'warn');
+    }
+  },
+  {
+    id: 'skyfall', name: 'SKYFALL', icon: 'bolt', rank: 6, cost: 100, cd: 0, range: 999,
+    daily: true, color: [0.9, 0.95, 1],
+    desc: 'Once a day: the sky itself comes down, anywhere on the map.',
+    cast(api, unit, x, z) {
+      const day = Math.floor(api.time / DAY);
+      if (api.state.skyday === day) {
+        api.say('The sky is spent — it returns tomorrow', 'warn');
+        return false;
+      }
+      api.state.skyday = day;
+      skyfall(api, unit, x, z);
+    }
+  }
+];
+const SPELL_BY_ID = new Map(SPELLS.map((s) => [s.id, s]));
 
-    st.mana -= spell.cost;
-    st.cd[spell.id] = api.time + spell.cd;
-    return true;
+/* ============================================================
+   the six hybrids — nothing here is on the card until it is found
+   ============================================================ */
+const HYBRIDS = [
+  {
+    id: 'plasma', name: 'Plasma Lance', icon: 'flame', pair: ['fire', 'storm'], cost: 60, cd: 20, range: 17,
+    color: [1, 0.8, 0.45],
+    desc: 'Fire and storm: a beam that burns through a whole line.',
+    cast(api, unit, x, z) {
+      const dx = x - unit.x, dz = z - unit.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const ux = dx / len, uz = dz / len;
+      let hit = 0;
+      for (const e of enemiesIn(api, unit, (unit.x + x) / 2, (unit.z + z) / 2, len * 0.6 + 3)) {
+        const px = e.x - unit.x, pz = e.z - unit.z;
+        const along = px * ux + pz * uz;
+        if (along < 0 || along > len) continue;
+        if (Math.abs(px * uz - pz * ux) > 1.6) continue;
+        api.damage(e, 95, unit);
+        const es = api.unitState(e);
+        es.burn = { until: api.time + 4, dps: 6, source: unit.team };
+        hit++;
+      }
+      for (const b of buildingsIn(api, unit.team, x, z, 4)) api.damage(b, 55, unit);
+      for (let i = 0; i <= 10; i++) {
+        const t = i / 10;
+        api.fx.sparks(unit.x + dx * t, api.height(unit.x + dx * t, unit.z + dz * t) + 1.2, unit.z + dz * t, 4, [1, 0.85, 0.5]);
+      }
+      api.fx.beamBetween(unit.x, unit.y + 1.3, unit.z, x, api.height(x, z) + 0.9, z,
+        { color: [1, 0.85, 0.45], scale: 2.0, life: 0.5, jag: 0.05, width: 0.5 });
+      api.fx.explosion(x, api.height(x, z) + 0.8, z, 1.5);
+      api.fx.shock(x, api.height(x, z) + 0.5, z, 1.4, [1, 0.9, 0.6]);
+      api.say(hit ? `Plasma Lance — ${hit} burned` : 'Plasma Lance', 'good');
+    }
+  },
+  {
+    id: 'stasis', name: 'Stasis Field', icon: 'hourglass', pair: ['ice', 'arcane'], cost: 65, cd: 26, range: 12,
+    color: [0.65, 0.85, 1],
+    desc: 'Ice and arcane: a bubble where time simply stops.',
+    cast(api, unit, x, z) {
+      let n = 0;
+      for (const e of enemiesIn(api, unit, x, z, 6)) {
+        const es = api.unitState(e);
+        es.freeze = api.time + 3.2;
+        api.fx.sparks(e.x, e.y + 1, e.z, 4, [0.7, 0.9, 1]);
+        n++;
+      }
+      api.mark(x, z, { kind: 1, r0: 0.6, g0: 0.85, b0: 1, r: 6, life: 3.2 });
+      api.say(n ? `Stasis — ${n} held still` : 'Stasis Field', 'good');
+    }
+  },
+  {
+    id: 'phoenix', name: 'Phoenix Ember', icon: 'heart', pair: ['fire', 'arcane'], cost: 70, cd: 34, range: 12,
+    color: [1, 0.7, 0.35],
+    desc: 'Fire and arcane: mend and cleanse every ally near the cinder.',
+    cast(api, unit, x, z) {
+      let n = 0;
+      for (const a of api.teamUnits(unit.team)) {
+        if (a.dead || Math.hypot(a.x - x, a.z - z) > 7) continue;
+        a.hp = Math.min(a.maxHp, a.hp + 95);
+        const as = a.modState || {};
+        for (const k of Object.keys(as)) {
+          if (as[k] && typeof as[k] === 'object') {
+            delete as[k].burn;
+            if (as[k].plague) as[k].plague = 0;
+            if (as[k].carrier) as[k].carrier = false;
+          }
+        }
+        api.fx.heal(a.x, a.y + 1.2, a.z, 3);
+        n++;
+      }
+      api.fx.explosion(x, api.height(x, z) + 1.0, z, 1.1);
+      api.mark(x, z, { kind: 0, r0: 1, g0: 0.65, b0: 0.3, r: 7, life: 0.8 });
+      api.say(n ? `Phoenix Ember — ${n} mended` : 'Phoenix Ember', 'good');
+    }
+  },
+  {
+    id: 'tempest', name: 'Tempest Step', icon: 'bolt', pair: ['storm', 'arcane'], cost: 55, cd: 22, range: 11,
+    color: [0.75, 0.85, 1],
+    desc: 'Storm and arcane: arrive in a clap of thunder, and stun what is there.',
+    cast(api, unit, x, z) {
+      if (!api.passable(x, z)) { api.say('There is no room to step there', 'warn'); return false; }
+      const spot = api.headroom(x, z) || [x, z];
+      api.fx.smoke(unit.x, unit.y + 0.8, unit.z, 8, 1.4, 0.6);
+      unit.x = spot[0]; unit.z = spot[1];
+      unit.path = null; unit.targetPos = null; unit.pathIdx = 0;
+      unit.y = api.height(unit.x, unit.z);
+      let n = 0;
+      for (const e of enemiesIn(api, unit, unit.x, unit.z, 4.5)) {
+        const es = api.unitState(e);
+        es.freeze = api.time + 1.5;
+        api.damage(e, 18, unit);
+        n++;
+      }
+      api.fx.sparks(unit.x, unit.y + 1.4, unit.z, 18, [0.9, 0.95, 1]);
+      api.mark(unit.x, unit.z, { kind: 1, r0: 0.8, g0: 0.9, b0: 1, r: 4.5, life: 0.6 });
+      api.say(n ? `Tempest Step — ${n} stunned` : 'Tempest Step', 'good');
+    }
+  },
+  {
+    id: 'thermal', name: 'Thermal Shock', icon: 'flame', pair: ['fire', 'ice'], cost: 58, cd: 20, range: 14,
+    color: [1, 0.6, 0.5],
+    desc: 'Fire and ice at once: the body cannot decide, and slows to a crawl.',
+    cast(api, unit, x, z) {
+      let n = 0;
+      for (const e of enemiesIn(api, unit, x, z, 6)) {
+        api.damage(e, 48, unit);
+        const es = api.unitState(e);
+        es.slow = { mul: 0.45, until: api.time + 4.5 };
+        api.fx.sparks(e.x, e.y + 1, e.z, 6, [1, 0.7, 0.6]);
+        n++;
+      }
+      api.fx.explosion(x, api.height(x, z) + 0.7, z, 1.3);
+      api.fx.smoke(x, api.height(x, z) + 0.6, z, 10, 2.2, 1.2);
+      api.mark(x, z, { kind: 0, r0: 1, g0: 0.6, b0: 0.4, r: 6, life: 0.7 });
+      api.say(n ? `Thermal Shock — ${n} caught` : 'Thermal Shock', 'good');
+    }
+  },
+  {
+    id: 'hail', name: 'Hailstorm', icon: 'mountain', pair: ['ice', 'storm'], cost: 75, cd: 34, range: 15,
+    color: [0.8, 0.9, 1],
+    desc: 'Ice and storm: a field of falling ice that grinds an army down.',
+    cast(api, unit, x, z) {
+      api.state.storms.push({ x, z, until: api.time + 7, next: 0, team: unit.team, by: unit, hail: true });
+      api.fx.smoke(x, api.height(x, z) + 0.8, z, 12, 2.6, 1.4);
+      api.mark(x, z, { kind: 1, r0: 0.75, g0: 0.88, b0: 1, r: 6.5, life: 1.1 });
+      api.say('Hailstorm', 'good');
+    }
+  }
+];
+const HYBRID_BY_ID = new Map(HYBRIDS.map((h) => [h.id, h]));
+const PAIRS = [];
+for (const h of HYBRIDS) PAIRS.push({ id: h.id, pair: h.pair });
+
+/* ============================================================
+   skyfall — the once-a-day
+   ============================================================ */
+function skyfall(api, unit, x, z) {
+  const y = api.height(x, z);
+  /* one bolt is a graphic; four, a beat apart, are weather. The first carries
+     the damage, the rest are thunder chasing it down. */
+  const strokes = [
+    { at: 0, main: true, ox: 0, oz: 0 },
+    { at: 0.24, main: false, ox: 2.2, oz: -1.6 },
+    { at: 0.46, main: false, ox: -2.4, oz: 1.8 },
+    { at: 0.7, main: false, ox: 0.8, oz: 2.6 }
+  ];
+  for (const st of strokes) api.state.strikes.push({ x: x + st.ox, z: z + st.oz, at: api.time + st.at, by: unit, main: st.main });
+  api.fx.beam(x, z, y, y + 40, { color: [0.95, 0.98, 1], scale: 2.4, life: 0.9, jag: 0.9, width: 0.8, alpha: 0.95 });
+  api.fx.beam(x, z, y, y + 40, { color: [0.62, 0.78, 1], scale: 4.2, life: 1.2, jag: 0.25, width: 1.6, alpha: 0.32, grow: 1.4 });
+  api.fx.explosion(x, y + 1.2, z, 3.4);
+  api.fx.shock(x, y + 0.6, z, 3.6, [0.9, 0.96, 1]);
+  api.fx.fire(x, y + 0.5, z, 18);
+  api.fx.smoke(x, y + 0.9, z, 20, 3.4, 2.6);
+  api.mark(x, z, { kind: 0, r0: 1, g0: 0.95, b0: 0.8, r: 12, life: 1.8 });
+  api.mark(x, z, { kind: 1, r0: 0.9, g0: 0.95, b0: 1, r: 9, life: 2.4 });
+  api.mark(x, z, { kind: 1, r0: 1, g0: 0.8, b0: 0.5, r: 5, life: 3.6 });
+  api.shake(1.1);
+  api.flash(0.62, [1, 0.99, 0.94]);
+  api.banner('SKYFALL');
+  let units = 0, builds = 0;
+  for (const e of enemiesIn(api, unit, x, z, 9)) {
+    api.damage(e, 260, unit);
+    const es = api.unitState(e);
+    es.slow = { mul: 0.35, until: api.time + 3 };
+    api.fx.sparks(e.x, e.y + 1.2, e.z, 6, [1, 1, 1]);
+    units++;
+  }
+  for (const b of buildingsIn(api, unit.team, x, z, 9)) { api.damage(b, 150, unit); builds++; }
+  /* the ground remembers */
+  api.state.scars.push({ x, z, until: api.time + 60 });
+  api.say(`SKYFALL — ${units} slain, ${builds} structures broken`, 'good');
+}
+
+/* the trailing strokes of a skyfall: light, a little damage, no bookkeeping */
+function resolveStrikes(api) {
+  const st = api.state;
+  for (let i = st.strikes.length - 1; i >= 0; i--) {
+    const s = st.strikes[i];
+    if (api.time < s.at) continue;
+    st.strikes.splice(i, 1);
+    if (s.main) continue;                 /* the first stroke already landed */
+    const y = api.height(s.x, s.z);
+    api.fx.beam(s.x, s.z, y, y + 26, { color: [0.92, 0.96, 1], scale: 1.4, life: 0.5, jag: 1.2, width: 0.4 });
+    api.fx.explosion(s.x, y + 0.6, s.z, 1.1);
+    api.fx.shock(s.x, y + 0.3, s.z, 1.2, [0.9, 0.95, 1]);
+    for (const e of enemiesIn(api, s.by || { team: 0 }, s.x, s.z, 3.2)) api.damage(e, 55, s.by);
+    for (const b of buildingsIn(api, s.by ? s.by.team : 0, s.x, s.z, 3.2)) api.damage(b, 26, s.by);
+  }
+}
+
+/* ============================================================
+   the mod
+   ============================================================ */
+export const arcane = {
+  id: 'arcane',
+  name: 'The Arcane Order',
+  icon: 'monk',
+  tagline: 'One magician, six ranks, nineteen spells.',
+  blurb: 'A magician who grows from a fireball-throwing apprentice into an Ascendant who can drop the sky on an enemy base — once a day.',
+  detail: [
+    'Magicians earn insight by casting, by killing, and by standing near an Arcane Tower. Every rank unlocks new spells and literally changes the model: grimoire, halo, cape, crown.',
+    'Eleven base spells across fire, ice, storm and arcane — Ice Lance, Chain Lightning, Meteor, Frost Nova, Thunderstorm… and SKYFALL at rank 6, a once-per-day pillar of lightning that damages everything in a 9 m circle, anywhere on the map.',
+    'Attunement is the long game: weave two elements at rank 3+ to discover one of six hybrids that are not listed anywhere until you find them.',
+    'The AI knows exactly how dangerous a high-rank magician is: it watches for casters, forms hunting parties, and will spend an army to kill one.'
+  ],
+  units: {
+    [MAGICIAN]: {
+      name: 'Magician', icon: 'monk', hp: 110, attack: 7, armor: 1, pierceArmor: 2,
+      range: 6.5, speed: 2.85, time: 26, cost: { food: 60, gold: 100 },
+      classes: ['infantry', 'caster', 'unique'], caster: true, sight: 14, attackSpeed: 1.6,
+      projectile: 'flame', pop: 1, threat: 4,
+      desc: 'Earns insight by casting. Ranks up into new spells and a new silhouette.'
+    },
+    ...Object.fromEntries(RANKS.slice(1).map((r) => [r.type, {
+      name: r.title, icon: 'monk', hp: 110, attack: 7, armor: 1, pierceArmor: 2,
+      range: 6.5, speed: 2.85, time: 26, cost: { food: 60, gold: 100 },
+      classes: ['infantry', 'caster', 'unique'], caster: true, sight: 14, attackSpeed: 1.6,
+      projectile: 'flame', pop: 1, hidden: true, threat: 3 + r.rank,
+      desc: `${r.title} of the Arcane Order.`
+    }])),
+    [GOLEM]: {
+      name: 'Stone Golem', icon: 'mountain', hp: 340, attack: 22, armor: 6, pierceArmor: 4,
+      speed: 2.2, time: 1, cost: {}, classes: ['siege'], sight: 9,
+      attackSpeed: 1.9, bonuses: { building: 26 }, pop: 0, threat: 2,
+      desc: 'A summoned cairn. Temporary, tough, and very good at doors.'
+    }
+  },
+  buildings: {
+    [TOWER]: {
+      name: 'Arcane Tower', icon: 'tower', hp: 1250, armor: 4, pierceArmor: 8, size: 3.4,
+      sight: 13, cost: { wood: 150, stone: 120 }, time: 30, minAge: 1, power: -2,
+      desc: 'Teaches nearby magicians (insight over time) and raises the magician cap by one.'
+    }
+  },
+
+  createState() {
+    return {
+      fields: [],
+      golems: [],
+      strikes: [],
+      meteors: [],
+      storms: [],
+      scars: [],
+      casts: 0,
+      skyday: -1,
+      discovered: new Set(),
+      towers: []
+    };
+  },
+
+  setup(api) {
+    api.say('The Arcane Order answers the call. Train magicians at the Town Centre.', 'good');
   },
 
   /* ------------------------------------------------------------
-     auras
+     training, caps, towers
      ------------------------------------------------------------ */
+  magicianCap(api, team) {
+    let towers = 0;
+    for (const b of api.teamBuildings(team)) if (b.type === TOWER && !b.dead) towers++;
+    return MAX_BASE_MAGICIANS + Math.min(2, towers);
+  },
+
+  countMagicians(api, team) {
+    let n = 0;
+    for (const u of api.teamUnits(team)) if (isMagician(u)) n++;
+    return n;
+  },
+
+  trainableAt(api, building, team = TEAM_PLAYER) {
+    if (!building || building.team !== TEAM_PLAYER) return [];
+    if (building.type !== 'town_center' && building.type !== 'castle') return [];
+    const queued = building.queue ? building.queue.filter((q) => q.type === MAGICIAN).length : 0;
+    if (this.countMagicians(api, TEAM_PLAYER) + queued >= this.magicianCap(api, TEAM_PLAYER)) return [];
+    return [MAGICIAN];
+  },
+
+  buildMenu(api, team = TEAM_PLAYER) {
+    if (team !== TEAM_PLAYER) return [];
+    return [TOWER];
+  },
+
+  onSpawn(api, unit) {
+    if (unit.type !== MAGICIAN && !RANK_BY_TYPE.has(unit.type)) return;
+    const st = ustate(api, unit);
+    if (unit.type !== MAGICIAN) st.rank = RANK_BY_TYPE.get(unit.type).rank;
+    st.mana = maxMana(unit);
+    api.fx.heal(unit.x, unit.y + 1.4, unit.z, 3);
+  },
+
+  onBuildingComplete(api, b) {
+    if (b.type === TOWER) api.say('An Arcane Tower rises — magicians study faster here', 'good');
+  },
+
+  onDeath(api, ent, killer) {
+    if (!ent || !killer) return;
+    if (killer.modState && killer.modState.arcane && isMagician(killer)) {
+      gainXp(api, killer, ent.kind === 'building' ? 40 : 26);
+    }
+    /* a golem that kills still feeds its master */
+    if (killer.type === GOLEM && killer.owner && isMagician(killer.owner)) {
+      gainXp(api, killer.owner, ent.kind === 'building' ? 30 : 18);
+    }
+  },
+
+  /** Weave two elements. Returns true when something new was found. */
+  attune(api, unit, id) {
+    const h = HYBRID_BY_ID.get(id);
+    if (!h) return false;
+    if (api.state.discovered.has(id)) {
+      api.say(`${h.name} is already in the book`, 'info');
+      return false;
+    }
+    const st = ustate(api, unit);
+    if ((st.rank || 1) < 3) { api.say('Attunement needs a Magus (rank 3)', 'warn'); return false; }
+    if (st.mana < 80) { api.say('Not enough mana to attune', 'warn'); return false; }
+    st.mana -= 80;
+    api.state.discovered.add(id);
+    gainXp(api, unit, 30);
+    api.fx.explosion(unit.x, unit.y + 1.4, unit.z, 1.4);
+    api.fx.sparks(unit.x, unit.y + 1.6, unit.z, 20, ELEMENTS[h.pair[0]].color);
+    api.mark(unit.x, unit.z, { kind: 1, r0: 0.8, g0: 0.7, b0: 1, r: 3.4, life: 1.2 });
+    api.say(`Attunement complete — ${h.name}. ${h.desc}`, 'good');
+    api.banner(h.name);
+    return true;
+  },
+
+  /** The six pairs, for the workshop card and for tests. */
+  attunementPairs() {
+    return PAIRS.map((p) => {
+      const h = HYBRID_BY_ID.get(p.id);
+      return { id: h.id, name: h.name, pair: p.pair.slice(), cost: h.cost, desc: h.desc };
+    });
+  },
+
+  /* ------------------------------------------------------------
+     a small scripting surface: tests and the tutorial both use it
+     ------------------------------------------------------------ */
+  spells() { return SPELLS.slice(); },
+  hybrids() { return HYBRIDS.slice(); },
+  ranks() { return RANKS.slice(); },
+  rankOf(unit) { return rankInfo(unit); },
+  castSpell(api, unit, spell, x, z) { return performCast(api, unit, spell, x, z); },
+  spellCosts() { return SPELLS.map((s) => ({ id: s.id, mana: s.cost || 0, cd: s.cd || 0, rank: s.rank || 1 })); },
+
+  /* ------------------------------------------------------------
+     tick: mana, insight, fields, storms, meteors, scars
+     ------------------------------------------------------------ */
+  tick(api, dt) {
+    const st = api.state;
+    const time = api.time;
+
+    for (const u of api.units()) {
+      if (u.dead) continue;
+      const ms = u.modState && u.modState.arcane;
+      if (!ms) continue;
+      const info = rankInfo(u);
+      ms.mana = Math.min(info.mana, ms.mana + info.regen * dt);
+      /* insight: a trickle everywhere, a stream beside a tower */
+      ms.xp += dt * 0.16;
+      if (u.type === MAGICIAN || RANK_BY_TYPE.has(u.type)) {
+        for (const b of api.teamBuildings(u.team)) {
+          if (b.dead || b.type !== TOWER) continue;
+          if (Math.hypot(b.x - u.x, b.z - u.z) < 10) { ms.xp += dt * 0.7; break; }
+        }
+      }
+      gainXp(api, u, 0);
+      if (ms.ward && time > ms.ward.until) ms.ward = null;
+      if (ms.slow && time > ms.slow.until) ms.slow = null;
+      /* the highest ranks bleed light: a cheap, readable aura */
+      if ((ms.rank || 1) >= 4 && api.rng() < dt * 1.4) {
+        api.fx.heal(u.x, u.y + 1.2, u.z, 1);
+      }
+      if ((ms.rank || 1) >= 6 && api.rng() < dt * 2.2) {
+        api.fx.sparks(u.x, u.y + 2.0, u.z, 2, [0.8, 0.9, 1]);
+      }
+    }
+
+    resolveStrikes(api);
+
+    /* slow fields */
+    for (let i = st.fields.length - 1; i >= 0; i--) {
+      const f = st.fields[i];
+      if (time > f.until) { st.fields.splice(i, 1); continue; }
+    }
+
+    /* meteors */
+    for (let i = st.meteors.length - 1; i >= 0; i--) {
+      const m = st.meteors[i];
+      if (time < m.at) continue;
+      st.meteors.splice(i, 1);
+      const y = api.height(m.x, m.z);
+      api.fx.beam(m.x, m.z, y, y + 26, { color: [1, 0.55, 0.2], scale: 2.2, life: 0.6, jag: 0.5, width: 0.55 });
+      api.fx.explosion(m.x, y + 0.8, m.z, 2.6);
+      api.fx.shock(m.x, y + 0.5, m.z, 2.6, [1, 0.7, 0.35]);
+      api.fx.fire(m.x, y + 0.4, m.z, 14);
+      api.fx.smoke(m.x, y + 0.8, m.z, 14, 3, 2);
+      api.mark(m.x, m.z, { kind: 0, r0: 1, g0: 0.4, b0: 0.1, r: 9, life: 1 });
+      api.shake(0.5);
+      for (const e of enemiesIn(api, m.by || { team: m.team, x: m.x, z: m.z }, m.x, m.z, 4.8)) {
+        api.damage(e, 105, m.by);
+        const es = api.unitState(e);
+        es.burn = { until: time + 5, dps: 7, source: m.team };
+      }
+      for (const b of buildingsIn(api, m.team, m.x, m.z, 4.8)) api.damage(b, 46, m.by);
+      st.scars.push({ x: m.x, z: m.z, until: time + 40 });
+    }
+
+    /* storm cells */
+    for (let i = st.storms.length - 1; i >= 0; i--) {
+      const s = st.storms[i];
+      if (time > s.until) { st.storms.splice(i, 1); continue; }
+      if (time < s.next) continue;
+      s.next = time + (s.hail ? 0.55 : 0.62);
+      const foes = enemiesIn(api, { team: s.team, x: s.x, z: s.z }, s.x, s.z, 7);
+      if (s.hail) {
+        for (const e of foes) {
+          api.damage(e, 12, s.by);
+          const es = api.unitState(e);
+          es.slow = { mul: 0.7, until: time + 1.4 };
+        }
+        api.fx.sparks(s.x + (api.rng() - 0.5) * 8, api.height(s.x, s.z) + 5, s.z + (api.rng() - 0.5) * 8, 3, [0.85, 0.95, 1]);
+      } else {
+        const victim = foes.length ? foes[(api.rng() * foes.length) | 0] : null;
+        const tx = victim ? victim.x : s.x + (api.rng() - 0.5) * 8;
+        const tz = victim ? victim.z : s.z + (api.rng() - 0.5) * 8;
+        const ty = api.height(tx, tz);
+        api.fx.beam(tx, tz, ty, ty + 22, { color: [0.88, 0.94, 1], scale: 1.0, life: 0.32, jag: 1.3, width: 0.26 });
+        api.fx.shock(tx, ty + 0.3, tz, 0.5, [0.85, 0.92, 1]);
+        api.fx.sparks(tx, ty + 4.5, tz, 6, [0.85, 0.9, 1]);
+        api.fx.explosion(tx, ty + 0.6, tz, 0.9);
+        api.mark(tx, tz, { kind: 1, r0: 0.9, g0: 0.95, b0: 1, r: 1.8, life: 0.25 });
+        if (victim) api.damage(victim, 26, s.by);
+        for (const b of buildingsIn(api, s.team, tx, tz, 1.6)) api.damage(b, 8, s.by);
+      }
+    }
+
+    /* golem lifetime */
+    for (let i = st.golems.length - 1; i >= 0; i--) {
+      const g = st.golems[i];
+      if (!g.unit || g.unit.dead || time > g.until) {
+        if (g.unit && !g.unit.dead) {
+          api.fx.dust(g.unit.x, g.unit.y + 0.6, g.unit.z, 8, 1.4);
+          g.unit.kill(null);
+        }
+        st.golems.splice(i, 1);
+      }
+    }
+
+    /* scorch marks fade */
+    for (let i = st.scars.length - 1; i >= 0; i--) {
+      if (time > st.scars[i].until) st.scars.splice(i, 1);
+    }
+  },
+
+  /* ------------------------------------------------------------
+     combat modifiers
+     ------------------------------------------------------------ */
+  speedMul(api, unit) {
+    if (!unit || unit.dead) return 1;
+    const ms = unit.modState && unit.modState.arcane;
+    if (ms && ms.freeze && api.time < ms.freeze) return 0.05;
+    let m = 1;
+    if (ms && ms.slow && api.time < ms.slow.until) m *= ms.slow.mul;
+    for (const f of api.state.fields) {
+      if (api.time > f.until) continue;
+      if (unit.team === f.team) continue;
+      if (Math.hypot(unit.x - f.x, unit.z - f.z) <= f.r) { m *= 0.42; break; }
+    }
+    return m;
+  },
+
   onDamage(api, ent, amount, attacker, kind) {
-    /* the ward: undead strikes wash off a magician */
-    if (ent && ent.type === MAGICIAN && attacker && attacker.def && attacker.def.classes.includes('undead')) {
+    if (!ent) return amount;
+    const st = ent.modState && ent.modState.arcane;
+    if (st && st.ward && api.time < st.ward.until && st.ward.absorb > 0) {
+      const soak = Math.min(st.ward.absorb, amount);
+      st.ward.absorb -= soak;
+      if (st.ward.absorb <= 0) st.ward = null;
+      return amount - soak;
+    }
+    /* the old ward: undead strikes wash off a magician */
+    if (ent.def && ent.def.caster && attacker && attacker.def &&
+      attacker.def.classes && attacker.def.classes.includes('undead')) {
       return amount * 0.6;
     }
     return amount;
   },
 
-  speedMul(api, unit) {
-    if (!unit || unit.dead) return 1;
-    for (const f of api.state.fields) {
-      if (f.until <= api.time) continue;
-      if (unit.team === f.team) continue;           // the caster's own side walks freely
-      if (Math.hypot(unit.x - f.x, unit.z - f.z) > f.r) continue;
-      return 0.42;
-    }
-    return 1;
-  },
-
   /* ------------------------------------------------------------
-     tick: mana, burns, fields, golems
-     ------------------------------------------------------------ */
-  tick(api, dt) {
-    const now = api.time;
-
-    for (const u of api.teamUnits(TEAM_PLAYER)) {
-      if (u.type !== MAGICIAN) continue;
-      const st = ustate(api, u);
-      st.mana = Math.min(MANA_MAX, st.mana + MANA_REGEN * dt);
-    }
-    for (const u of api.teamUnits(2)) {
-      if (u.type !== MAGICIAN) continue;
-      const st = ustate(api, u);
-      st.mana = Math.min(MANA_MAX, st.mana + MANA_REGEN * dt);
-    }
-
-    /* burn stacks from fireballs */
-    for (const u of api.units()) {
-      const st = u.modState && u.modState.arcane;
-      if (!st || !st.burn) continue;
-      if (now >= st.burn.until) { st.burn = null; continue; }
-      u.hp = Math.max(0, u.hp - st.burn.dps * dt);
-      if (u.hp <= 0) u.kill(null);
-      else if (api.rng() < dt * 3) api.fx.fire(u.x, u.y + 0.9, u.z, 1, 0.5);
-    }
-
-    /* expire fields and golems */
-    const fields = api.state.fields;
-    for (let i = fields.length - 1; i >= 0; i--) {
-      if (now >= fields[i].until) fields.splice(i, 1);
-    }
-    const golems = api.state.golems;
-    for (let i = golems.length - 1; i >= 0; i--) {
-      const g = golems[i];
-      if (!g.unit || g.unit.dead) { golems.splice(i, 1); continue; }
-      if (now < g.until) continue;
-      golems.splice(i, 1);
-      api.fx.dust(g.unit.x, g.unit.y + 0.4, g.unit.z, 12, 1.4);
-      g.unit.kill(null);
-    }
-  },
-
-  atmosphere(api) {
-    /* a faint violet shimmer, only while the player fields a magician */
-    let magic = false;
-    for (const u of api.teamUnits(TEAM_PLAYER)) if (u.type === MAGICIAN) { magic = true; break; }
-    if (!magic) return null;
-    return { tint: [1.0, 0.98, 1.06], fog: 0.0002 };
-  },
-
-  hud(api) {
-    let best = null;
-    for (const u of api.teamUnits(TEAM_PLAYER)) {
-      if (u.type !== MAGICIAN) continue;
-      const st = ustate(api, u);
-      if (!best || st.mana > best.st.mana) best = { u, st };
-    }
-    if (!best) {
-      api.hud({ icon: 'monk', label: 'Arcane', value: 'no magician yet', tone: 'calm' });
-      return;
-    }
-    api.hud({
-      icon: 'monk', label: 'Mana',
-      value: `${Math.round(best.st.mana)} / ${MANA_MAX}`,
-      pct: best.st.mana / MANA_MAX,
-      tone: best.st.mana >= 55 ? 'good' : best.st.mana >= 30 ? 'calm' : 'bad'
-    });
-  },
-
-  gauge(api) {
-    let best = null;
-    for (const u of api.teamUnits(TEAM_PLAYER)) {
-      if (u.type !== MAGICIAN) continue;
-      const st = ustate(api, u);
-      if (!best || st.mana > best.st.mana) best = { u, st };
-    }
-    if (!best) return null;
-    return { label: 'Mana', value: best.st.mana / MANA_MAX, text: `${Math.round(best.st.mana)}` };
-  },
-
-  /* ------------------------------------------------------------
-     command card
+     the command card
      ------------------------------------------------------------ */
   commands(ctx) {
-    const sel = ctx.selection.filter((e) => e.kind === 'unit' && e.type === MAGICIAN && e.team === TEAM_PLAYER);
-    if (!sel.length) return [];
-    const api = ctx.api;
-    const unit = sel[0];
-    const st = ustate(api, unit);
-    const out = [];
-    for (const spell of this.spells()) {
-      const cooling = (st.cd[spell.id] || 0) > api.time;
-      const afford = st.mana >= spell.cost;
-      const left = cooling ? Math.ceil((st.cd[spell.id] || 0) - api.time) : 0;
-      out.push({
-        icon: spell.icon,
-        label: cooling ? `${left}s` : spell.name,
-        cost: `${spell.cost} mana`,
-        enabled: !cooling && afford,
-        reason: cooling ? `${spell.name} recovers for ${left}s` : 'Not enough mana',
-        primary: spell.id === 'fireball',
+    const { api, ui } = ctx;
+    const sel = ctx.selection || [];
+    const mage = sel.find((e) => e && isMagician(e));
+    if (!mage || !ui) return [];
+    const st = ustate(api, mage);
+    const info = rankInfo(mage);
+    const list = [];
+
+    /* the book */
+    list.push({
+      icon: 'book',
+      label: 'Spells',
+      cost: `${st.mana | 0}/${info.mana}`,
+      primary: true,
+      action: () => ui._renderAdHoc(this.spellCards(ctx, mage))
+    });
+
+    /* attunement */
+    if ((st.rank || 1) >= 3) {
+      list.push({
+        icon: 'relic',
+        label: 'Attune',
+        cost: `${api.state.discovered.size}/${HYBRIDS.length}`,
+        action: () => ui._renderAdHoc(this.attuneCards(ctx, mage))
+      });
+    }
+
+    /* skyfall, once a day, rank 6 */
+    if ((st.rank || 1) >= 6) {
+      const day = Math.floor(api.time / DAY);
+      const ready = api.state.skyday !== day;
+      list.push({
+        icon: 'bolt',
+        label: 'SKYFALL',
+        cost: ready ? 'once today' : 'tomorrow',
+        enabled: ready,
+        reason: 'The sky is already spent today',
+        primary: true,
         action: () => {
-          if (spell.target === 'self') {
-            if (this.castSpell(api, unit, spell, unit.x, unit.z)) ctx.ui?.refreshCommands(true);
-            return;
-          }
           ctx.cast({
-            id: spell.id,
-            label: spell.label,
-            range: spell.range,
-            radius: spell.radius,
-            color: spell.color,
-            target: 'ground',
-            unit,
+            id: 'skyfall', label: 'SKYFALL', range: 999, radius: 9,
+            color: [0.95, 0.97, 1], target: 'ground', unit: mage,
             onCast: (x, z) => {
-              const done = this.castSpell(api, unit, spell, x, z);
-              ctx.ui?.refreshCommands(true);
+              const done = performCast(api, mage, SPELL_BY_ID.get('skyfall'), x, z);
+              ui.refreshCommands(true);
               return done;
             }
           });
-          ctx.ui?.refreshCommands(true);
         }
       });
     }
-    return out;
+    return list;
   },
 
-  dispose(api) {
-    for (const g of api.state.golems) if (g.unit && !g.unit.dead) g.unit.kill(null);
-    api.state.golems.length = 0;
-    api.state.fields.length = 0;
+  spellCards(ctx, mage) {
+    const { api, ui } = ctx;
+    const st = ustate(api, mage);
+    const known = SPELLS.filter((s) => (st.rank || 1) >= s.rank).map((s) => s);
+    const cards = [];
+    for (const h of HYBRIDS) {
+      if (api.state.discovered.has(h.id)) cards.push(this.spellCard(ctx, mage, h));
+    }
+    for (const s of known) cards.push(this.spellCard(ctx, mage, s));
+    cards.sort((a, b) => (a.rank - b.rank));
+    cards.push({
+      icon: 'close', label: 'Back', cost: '',
+      action: () => { ui._adHocUntil = 0; ui.sig = ''; ui.refreshCommands(); }
+    });
+    return cards;
+  },
+
+  spellCard(ctx, mage, spell) {
+    const { api, ui } = ctx;
+    const st = ustate(api, mage);
+    const ok = castable(api, mage, spell);
+    const self = (spell.range || 14) <= 2;
+    return {
+      icon: spell.icon,
+      label: spell.name,
+      cost: spell.daily ? (api.state.skyday === Math.floor(api.time / DAY) ? 'spent' : '1/day')
+        : `${spell.cost} mana`,
+      enabled: ok.ok,
+      reason: ok.why,
+      rank: spell.rank,
+      action: () => {
+        if (self) {
+          performCast(api, mage, spell, mage.x, mage.z);
+          ui._adHocUntil = 0; ui.sig = ''; ui.refreshCommands();
+          return;
+        }
+        ui._adHocUntil = 0; ui.sig = '';
+        ctx.cast({
+          id: spell.id, label: spell.name, range: spell.range || 14,
+          radius: spell.radius || 1.6, color: spell.color || [0.55, 0.8, 1],
+          target: 'ground', unit: mage,
+          onCast: (x, z) => {
+            const done = performCast(api, mage, spell, x, z);
+            ui.refreshCommands(true);
+            return done;
+          }
+        });
+      }
+    };
+  },
+
+  attuneCards(ctx, mage) {
+    const { api, ui } = ctx;
+    const st = ustate(api, mage);
+    const cards = [];
+    for (const p of PAIRS) {
+      const h = HYBRID_BY_ID.get(p.id);
+      const found = api.state.discovered.has(p.id);
+      const a = ELEMENTS[p.pair[0]], b = ELEMENTS[p.pair[1]];
+      cards.push({
+        icon: found ? h.icon : 'scroll',
+        label: found ? h.name : `${a.name} + ${b.name}`,
+        cost: found ? 'discovered' : '80 mana',
+        enabled: !found && st.mana >= 80,
+        reason: found ? 'Already in your book' : 'Not enough mana',
+        rank: 3,
+        action: () => {
+          if (found) return;
+          if (this.attune(api, mage, p.id)) {
+            ui._adHocUntil = 0; ui.sig = '';
+            ui.refreshCommands();
+          }
+        }
+      });
+    }
+    cards.push({
+      icon: 'close', label: 'Back', cost: '',
+      action: () => { ui._adHocUntil = 0; ui.sig = ''; ui.refreshCommands(); }
+    });
+    return cards;
+  },
+
+  /* ------------------------------------------------------------
+     readouts
+     ------------------------------------------------------------ */
+  hud(api) {
+    const mages = api.teamUnits(TEAM_PLAYER).filter(isMagician);
+    const best = mages.reduce((a, u) => {
+      const r = rankInfo(u).rank;
+      return !a || r > a.r ? { u, r, st: u.modState.arcane } : a;
+    }, null);
+    if (best) {
+      api.hud({
+        icon: 'monk',
+        label: best.st.rank >= 6 ? 'Ascendant' : rankInfo(best.u).title,
+        value: mages.length > 1 ? `${mages.length} magi · ${best.st.xp | 0} insight` : `${best.st.xp | 0} insight · ${best.st.mana | 0} mana`,
+        pct: best.st.mana / rankInfo(best.u).mana,
+        tone: best.st.rank >= 5 ? 'good' : ''
+      });
+    } else {
+      api.hud({ icon: 'monk', label: 'Arcane', value: 'no magician', tone: '' });
+    }
+    const day = Math.floor(api.time / DAY);
+    if (best && best.st.rank >= 6) {
+      const ready = api.state.skyday !== day;
+      api.hud({ icon: 'bolt', label: 'Skyfall', value: ready ? 'ready' : 'next day', tone: ready ? 'good' : '' });
+    }
+  },
+
+  gauge(api) {
+    const sel = (api.game.selection || []).find((e) => e && isMagician(e));
+    const u = sel || api.teamUnits(TEAM_PLAYER).find(isMagician);
+    if (!u) return null;
+    const st = u.modState.arcane;
+    return {
+      id: 'arcane_mana',
+      label: 'Mana',
+      value: st.mana / rankInfo(u).mana,
+      text: `${st.mana | 0} / ${rankInfo(u).mana}`
+    };
+  },
+
+  atmosphere(api) {
+    const mages = api.teamUnits(TEAM_PLAYER).filter(isMagician);
+    let best = 0;
+    for (const m of mages) best = Math.max(best, (m.modState.arcane.rank || 1));
+    if (best < 4) return null;
+    /* a high-rank magician bends the light around the battlefield */
+    const t = Math.min(1, (best - 3) / 3);
+    return {
+      tint: [1 - 0.04 * t, 1 - 0.02 * t, 1 + 0.03 * t],
+      fog: 0.0004 * t,
+      exposure: 1 + 0.03 * t,
+      cloud: 0.06 * t
+    };
   }
 };
+
+export { SPELLS, HYBRIDS, RANKS };

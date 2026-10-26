@@ -192,6 +192,7 @@ export class Input {
     this.canvas.setPointerCapture?.(e.pointerId);
     e.preventDefault();
     this.vel.x = 0; this.vel.y = 0;
+    this.lastX = e.clientX; this.lastY = e.clientY;
     this.pointers.set(e.pointerId, {
       x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY,
       t: performance.now(), button: e.button, type: e.pointerType
@@ -236,6 +237,7 @@ export class Input {
 
   pointerMove(e) {
     if (!this.enabled) return;
+    this.lastX = e.clientX; this.lastY = e.clientY;
     const p = this.pointers.get(e.pointerId);
     if (!p) {
       if (e.pointerType === 'mouse') this.hover(e.clientX, e.clientY);
@@ -466,6 +468,39 @@ export class Input {
     const g = this.groundAt(x, y, [0, 0, 0]);
     const now = performance.now();
     const doubleTap = now - this.lastTapTime < 320 && this.lastTapEntity === hit;
+
+    /* 0a. an armed court appointment or writ: the next tap picks the person */
+    if (game.courtArmed || game.courtWrit) {
+      if (game.courtArmed) {
+        const office = game.courtArmed.office;
+        game.courtArmed = null;
+        if (hit && hit.kind === 'unit' && hit.team === game.playerTeam) {
+          const res = game.court.appoint(game.playerTeam, office, hit);
+          if (res.ok) {
+            this.ui?.toast(`${hit.def.name} is raised`, 'good');
+            this.audio?.play?.('horn');
+          } else {
+            this.ui?.toast(res.reason || 'The appointment fails', 'warn');
+            this.audio?.play?.('warn');
+          }
+        } else {
+          this.ui?.toast('Appointment cancelled — tap one of your own units', 'warn');
+        }
+        this.lastTapTime = 0;
+        return;
+      }
+      const office = game.courtWrit.office;
+      game.courtWrit = null;
+      if (hit && hit.kind === 'unit' && hit.team !== game.playerTeam && hit.team !== 0) {
+        const res = game.court.useWrit(game.playerTeam, office, hit);
+        if (res.ok) this.ui?.toast('The whisper is on its way', 'good');
+        else this.ui?.toast(res.reason || 'The writ fails', 'warn');
+      } else {
+        this.ui?.toast('No enemy marked', 'warn');
+      }
+      this.lastTapTime = 0;
+      return;
+    }
 
     /* 0. an armed mod spell takes the tap before anything else: the player has
        already chosen the ability, so the next tap is its target */
@@ -741,8 +776,10 @@ export class Input {
     else if (k === 'escape') {
       if (this.game.placing) { this.game.placing = null; this.ui?.refreshCommands(true); }
       if (this.game.modCast) this.game.modHost.cancelCast();
-      else if (this.armed) { this.armed = null; this.ui?.refreshCommands(true); }
-      else { this.game.clearSelection(); this.ui?.refreshCommands(true); }
+      this.game.courtArmed = null;
+      this.game.courtWrit = null;
+      if (this.armed) { this.armed = null; this.ui?.refreshCommands(true); }
+      else if (!this.game.placing && !this.game.modCast) { this.game.clearSelection(); this.ui?.refreshCommands(true); }
     } else if (k === 'a') {
       const units = this.game.selectionOfTeam(1).filter((u) => u.kind === 'unit' && u.def.attack > 0);
       if (units.length) { this.armed = { kind: 'attackMove' }; this.ui?.toast('Tap the ground to attack-move', 'info'); this.ui?.refreshCommands(true); }
@@ -784,6 +821,22 @@ export class Input {
     if (px || pz) {
       const spd = this.cam.dist * 1.15 * dt;
       this.cam.pan(px * spd, pz * spd);
+    }
+    /* the spell reticle follows the finger (or the mouse) while a cast is
+       armed, so the area of effect is visible *before* the tap, not after it */
+    const g = this.game;
+    if (g) {
+      if (g.modCast) {
+        const p = this.pointers.size ? [...this.pointers.values()][0] : null;
+        const px = p ? p.x : this.lastX;
+        const py = p ? p.y : this.lastY;
+        if (px !== undefined) {
+          const gg = this.groundAt(px, py, this._reticle || (this._reticle = [0, 0, 0]));
+          g.castReticle = { x: gg[0], z: gg[2] };
+        }
+      } else if (g.castReticle) {
+        g.castReticle = null;
+      }
     }
     if (this.audio) this.audio.setListener(this.cam.target[0], this.cam.target[2]);
   }

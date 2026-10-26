@@ -166,6 +166,11 @@ await page.evaluate(() => {
 });
 await page.click('#modStart');
 await page.waitForFunction('window.__imperial.running === true', { timeout: 300000 });
+/* the strip is filled by the HUD's own 9 Hz refresh, not by startMatch */
+await page.waitForFunction(() => {
+  const h = document.getElementById('modHud');
+  return h && !h.classList.contains('hidden') && h.querySelectorAll('.modChip').length >= 4;
+}, { timeout: 60000, polling: 120 });
 await page.waitForFunction('!!(window.__imperial.game && window.__imperial.game.modHost)', { timeout: 120000 });
 await page.waitForFunction(() => {
   const h = document.getElementById('modHud');
@@ -289,9 +294,14 @@ await check('tapping the spell card and then the ground casts it', async () => {
     if (!mage) return { err: 'magician gone' };
     g.setSelection([mage]);
     a.ui.refreshCommands(true);
-    const buttons = [...document.querySelectorAll('#cmdGrid .cmdBtn')].filter((b) => b.style.display !== 'none');
-    const labels = buttons.map((b) => b.querySelector('.lbl').textContent);
-    const fire = buttons.find((b) => /fireball/i.test(b.querySelector('.lbl').textContent));
+    const visible = () => [...document.querySelectorAll('#cmdGrid .cmdBtn')].filter((b) => b.style.display !== 'none');
+    const label = (b) => (b.querySelector('.lbl') || b).textContent;
+    /* the arcane mod puts its spells behind a Spells card: that is the card
+       the player taps first, and the book replaces the whole grid */
+    const book = visible().find((b) => /spells/i.test(label(b)));
+    if (book) book.click();
+    const labels = visible().map(label);
+    const fire = visible().find((b) => /fireball/i.test(label(b)));
     if (!fire) return { err: 'no Fireball card: ' + labels.join(',') };
     fire.click();
     return { labels, armed: !!g.modCast, mana: mage.modState.arcane.mana };

@@ -236,6 +236,10 @@ export class Unit extends Entity {
     if (civ === 'franks' && this.type === 'axeman' && g.hasTech(team, 'chivalry')) s.attack *= 1.15;
     if (civ === 'byzantines' && this.type === 'cataphract' && g.hasTech(team, 'greek_fire')) s.attack *= 1.1;
     if (civ === 'persians' && this.type === 'war_elephant' && g.hasTech(team, 'mahouts')) { s.speed *= 1.3; s.maxHpScale = 1.3; }
+    if (g.court) {
+      s.sight += g.court.sightBonus(team);
+      s.healMul = g.court.healMul(team);
+    }
     if (this.def.auraRange) s.auraRange = this.def.auraRange;
     s.maxHpScale = s.maxHpScale || 1;
     this._stats = s;
@@ -493,7 +497,26 @@ export class Unit extends Entity {
       this.chkZ = this.z;
       if (this.stuckScore >= 3) {
         this.stuckScore = 0;
-        g.unstick(this);
+        /* First try to put the unit on open ground. If there is no open
+           ground within reach it is genuinely sealed in -- by a wall run, a
+           cliff pocket or a building placed on top of it -- and a unit that
+           spends the rest of the match walking into a wall is worse than a
+           unit that simply stops. */
+        const freed = g.unstick(this);
+        if (freed) this.sealedT = 0;
+        else {
+          this.sealedT = (this.sealedT || 0) + 1;
+          if (this.sealedT >= 3 && this.state !== STATE.ATTACK && this.state !== STATE.GATHER && this.state !== STATE.BUILD) {
+            this.sealedT = 0;
+            this.path = null;
+            this.pathIdx = 0;
+            this.targetPos = null;
+            this.destX = this.destZ = null;
+            this.moving = false;
+            this.stallT = 0;
+            this.state = STATE.IDLE;
+          }
+        }
       }
     }
     // watchdog: nothing may stay wedged forever
@@ -543,13 +566,16 @@ export class Unit extends Entity {
   }
 
   updateMove(dt, stats) {
-    if (!this.targetPos) {
-      // re-issue a lost path toward the standing order
+    /* Either half of a move can be lost: a path can be dropped by the
+       watchdog or by an abandoned waypoint while the order still stands.
+       Both cases re-issue the path -- otherwise the unit walks in the state
+       machine forever without moving, which is the worst bug in an RTS. */
+    if (!this.targetPos || !this.path) {
       this.repathTimer -= dt;
       if (this.destX != null && this.repathTimer <= 0) {
         this.repathTimer = 0.45;
         this.setPath(this.destX, this.destZ, true);
-        if (!this.path) return;
+        if (!this.path) { this.targetPos = null; return; }
       } else return;
     }
     const arrived = this.stepMovement(dt, stats);
@@ -742,6 +768,7 @@ export class Unit extends Entity {
     let cap = 15;
     if (g.hasTech(this.team, 'wheelbarrow')) cap += 8;
     if (g.hasTech(this.team, 'hand_cart')) cap += 12;
+    if (g.court) cap += g.court.carryBonus(this);
     return cap;
   }
 
@@ -946,7 +973,8 @@ export class Unit extends Entity {
     }
     this.moving = false;
     this.path = null;
-    const heal = (this.def.heal || 10) * dt * (g.civBonuses(this.team).monkHeal || 1);
+    const courtHeal = g.court ? g.court.healMul(this.team) : 1;
+    const heal = (this.def.heal || 10) * dt * (g.civBonuses(this.team).monkHeal || 1) * courtHeal;
     target.heal(heal);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 3) * 0.35 + 0.3);
     if (g.rng() < dt * 3) g.fx.heal(target.x, target.y, target.z, 1);
@@ -1067,7 +1095,27 @@ export class Unit extends Entity {
         this.z = clamp(nz, -250, 250);
       } else if (g.isPassable(nx, nz, this)) {
         this.x = nx; this.z = nz;
+        this._wpBlock = 0;
       } else {
+        /* A waypoint that stays blocked is a waypoint from a stale grid: the
+           nav grid knows about walls and buildings, not about the tree the
+           unit is now standing beside. Sliding around it forever is the
+           classic RTS livelock, so after a moment the waypoint is abandoned
+           and the next one (which came from the grid) is tried. */
+        this._wpBlock = (this._wpBlock || 0) + dt;
+        if (this._wpBlock > 0.4) {
+          this._wpBlock = 0;
+          this.pathIdx++;
+          if (this.pathIdx >= this.path.length) {
+            /* the whole path is blocked: report arrival so the caller can
+               decide whether to re-path or give up */
+            this.moving = false;
+            this.path = null;
+            this.pathIdx = 0;
+            return true;
+          }
+          continue;
+        }
         // slide along the obstacle on whichever axis is free
         const fx = g.isPassable(nx, this.z, this);
         const fz = g.isPassable(this.x, nz, this);

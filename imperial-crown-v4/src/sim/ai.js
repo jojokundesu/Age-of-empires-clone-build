@@ -66,6 +66,20 @@ export class AIController {
     this.units = { military: [], villagers: [], buildings: { byType: new Map(), all: [] } };
     this.waitUntil = 0;
     this.log = [];
+    /* --- the hunt: a standing bounty on high-value enemy units ------------
+       `threat` is a number any mod can put on a unit def (a mage is worth
+       more than a spearman, a ranked mage more than a fresh one), so the AI
+       hunts *interesting* things without ever naming a mod. */
+    this.hunt = [];
+    this.huntTarget = null;
+    this.huntCooldown = 0;
+    this.huntWarnAt = -99;
+    this.raidUnits = [];
+    this.raidGoal = null;
+    this.raidTimer = 45;
+    this.raidRefresh = 0;
+    this.waveStrength = 0;
+    this.lastWaveSeen = 0;
   }
 
   /* ---------------- helpers ---------------- */
@@ -113,6 +127,7 @@ export class AIController {
     this.econTimer -= dt;
     this.buildTimer -= dt;
     this.attackTimer -= dt;
+    this.raidTimer -= dt;
     if (this.timer > 0) return;
     this.timer = 0.5;
 
@@ -148,7 +163,40 @@ export class AIController {
   }
 
   /* ---------------- court ---------------- */
+  /** Appoint what can be appointed, and spend writs at the right moment. */
+  manageCourtOffices(st, age) {
+    const g = this.game;
+    if (!g.court) return;
+    /* appointments: one per decision, so the court fills over a few seconds */
+    const cands = g.court.candidate(this.team);
+    for (const [id, unit] of Object.entries(cands)) {
+      if (g.court.canAppoint(this.team, id, unit)) continue;
+      const res = g.court.appoint(this.team, id, unit);
+      if (res.ok) break;
+    }
+    /* writs, in the order a general would use them */
+    const army = this.militaryUnits();
+    if (this.armyState === 'attack' && army.length >= 6) {
+      const w = g.court.writ(this.team, 'marshal');
+      if (w && w.ready) g.court.useWrit(this.team, 'marshal', null);
+    }
+    const wounded = army.filter((u) => u.hp < u.maxHp * 0.55).length;
+    if (wounded >= Math.max(3, army.length * 0.35)) {
+      const w = g.court.writ(this.team, 'hierophant');
+      if (w && w.ready) g.court.useWrit(this.team, 'hierophant', null);
+    }
+    if (age >= 1 && this.countUnits('villager') >= 10) {
+      const w = g.court.writ(this.team, 'chancellor');
+      if (w && w.ready) g.court.useWrit(this.team, 'chancellor', null);
+    }
+    if (this.huntTarget && !this.huntTarget.dead) {
+      const w = g.court.writ(this.team, 'spymaster');
+      if (w && w.ready) g.court.useWrit(this.team, 'spymaster', this.huntTarget);
+    }
+  }
+
   manageCourt(st, age) {
+    this.manageCourtOffices(st, age);
     const g = this.game;
     const my = this.myBuildings();
     // the market turns a gold mountain into the food the army actually eats
@@ -571,6 +619,197 @@ export class AIController {
     }
   }
 
+  /* ---------------- target value ---------------- */
+  /** The enemy unit this AI would most like to delete, and why. */
+  eliteTargets() {
+    const out = [];
+    for (const u of this.game.units) {
+      if (u.dead || u.team === this.team || u.team === 0 || u.wild) continue;
+      if (unitThreat(u) >= 4) out.push(u);
+    }
+    return out;
+  }
+
+  /* ---------------- the hunt ----------------
+     A small, fast squad whose only job is to kill a high-value enemy. It
+     ignores buildings, re-targets every time the mage moves, refuses to
+     form while it is outnumbered, and disbands the moment the mage dies.
+     If the target is a human player's mage, the player is told: a threat
+     you never see is not a strategy, it is a dice roll. */
+  manageHunt(army) {
+    const g = this.game;
+    if (this.aggression < 0.45) return;
+    this.hunt = this.hunt.filter((u) => !u.dead);
+    const elites = this.eliteTargets();
+
+    if (!elites.length) {
+      for (const u of this.hunt) if (u.aiRole === 'hunt') u.aiRole = null;
+      this.hunt.length = 0;
+      this.huntTarget = null;
+      return;
+    }
+    if (g.time < this.huntCooldown) {
+      for (const u of this.hunt) if (u.aiRole === 'hunt') u.aiRole = null;
+      this.hunt.length = 0;
+      return;
+    }
+
+    /* score: threat first, then isolation — a mage alone is a gift, a mage
+       behind six spearmen is a trap */
+    let best = null;
+    let bestScore = -Infinity;
+    for (const e of elites) {
+      let guards = 0;
+      for (const f of g.units) {
+        if (f === e || f.dead || f.team !== e.team) continue;
+        if (dist2(f.x, f.z, e.x, e.z) < 121) guards++;
+      }
+      let nearest = Infinity;
+      for (const f of army) {
+        const d = dist2(f.x, f.z, e.x, e.z);
+        if (d < nearest) nearest = d;
+      }
+      const score = unitThreat(e) * 26 - Math.min(guards, 16) * 8 - Math.sqrt(nearest) * 0.8;
+      if (score > bestScore) { bestScore = score; best = e; }
+    }
+    if (!best) return;
+    if (this.huntTarget !== best) {
+      this.huntTarget = best;
+      this.huntWarnAt = 0;
+    }
+    const threat = unitThreat(best);
+    const want = Math.min(9, 2 + Math.floor(threat / 2) + Math.floor(g.time / 240));
+
+    /* a squad needs a chance: count the target's bodyguards, not the map */
+    let guards = 0;
+    for (const f of g.units) {
+      if (f === best || f.dead || f.team !== best.team) continue;
+      if (dist2(f.x, f.z, best.x, best.z) < 144) guards++;
+    }
+    const free = army.filter((u) => (!u.aiRole || u.aiRole === 'wave') && this.hunt.indexOf(u) < 0);
+    while (this.hunt.length < want && free.length) {
+      /* cavalry first: a hunt is a chase */
+      let pick = 0;
+      for (let i = 1; i < free.length; i++) {
+        const a = free[i], b = free[pick];
+        const ka = (a.def.classes.includes('cavalry') ? 0 : 2) + Math.sqrt(dist2(a.x, a.z, best.x, best.z)) * 0.01;
+        const kb = (b.def.classes.includes('cavalry') ? 0 : 2) + Math.sqrt(dist2(b.x, b.z, best.x, best.z)) * 0.01;
+        if (ka < kb) pick = i;
+      }
+      const u = free.splice(pick, 1)[0];
+      this.hunt.push(u);
+    }
+
+    /* the squad is not strong enough to take the guards yet: wait, but keep
+       the target — a mage that levels up must not become invisible */
+    const assault = this.hunt.length >= Math.min(want, 2) && this.hunt.length * 2.2 >= guards;
+    if (!assault) {
+      for (const u of this.hunt) {
+        u.aiRole = 'hunt';
+        if (u.state === STATE.IDLE) u.moveTo(best.x + (this.rng() - 0.5) * 10, best.z + (this.rng() - 0.5) * 10, true);
+      }
+      return;
+    }
+
+    for (const u of this.hunt) {
+      u.aiRole = 'hunt';
+      u.noAggro = false;
+      if (u.target !== best || (u.state !== STATE.ATTACK && u.state !== STATE.MOVE)) {
+        u.target = best;
+        u.state = STATE.ATTACK;
+        u.unreachable = false;
+      }
+    }
+
+    if (best.team === g.playerTeam && g.time - this.huntWarnAt > 24 && this.hunt.length >= 2) {
+      this.huntWarnAt = g.time;
+      const name = (best.def && best.def.name) || 'wizard';
+      g.notify(`${this.hunt.length} enemy riders are hunting your ${name}`, 'bad');
+    }
+
+    /* losing the squad is not a reason to keep feeding it */
+    const survivors = this.hunt.filter((u) => u.hp > u.maxHp * 0.28).length;
+    if (survivors <= 1 && want >= 3) {
+      this.huntCooldown = g.time + 14;
+      for (const u of this.hunt) {
+        if (u.dead) continue;
+        u.aiRole = null;
+        u.target = null;
+        u.state = STATE.MOVE;
+        u.moveTo(this.base.x + (this.rng() - 0.5) * 10, this.base.z + (this.rng() - 0.5) * 10, true);
+      }
+      this.hunt.length = 0;
+    }
+  }
+
+  /* ---------------- fast raids ----------------
+     Two or three fast units, sent early, at the economy or at a lone hero.
+     They are cheap enough to lose and annoying enough that the player has to
+     answer them — which is the point: an opponent that only ever attacks in
+     one big wave is a metronome, not an enemy. */
+  manageRaids(army) {
+    const g = this.game;
+    if (this.aggression < 0.5 || g.time < 55) return;
+    /* keep an existing raid pointed at a target that still exists */
+    this.raidUnits = this.raidUnits.filter((u) => !u.dead);
+    if (this.raidUnits.length && g.time > this.raidRefresh) {
+      this.raidRefresh = g.time + 8;
+      const goal = this.pickRaidGoal();
+      this.raidGoal = goal;
+      for (const u of this.raidUnits) {
+        if (u.aiRole !== 'raid') continue;
+        if (goal && (u.state === STATE.IDLE || !u.target) && !u.unreachable) {
+          u.state = STATE.ATTACK_MOVE;
+          u.noAggro = false;
+          u.moveTo(goal.x + (this.rng() - 0.5) * 7, goal.z + (this.rng() - 0.5) * 7, true);
+        }
+      }
+    }
+    if (this.raidTimer > 0) return;
+    const want = Math.min(6, 2 + Math.floor((g.time - 55) / 170));
+    const pool = army.filter((u) => !u.aiRole || u.aiRole === 'wave');
+    /* never strip the home defence bare */
+    if (pool.length < want + 4 || army.length < want + 5) return;
+    const goal = this.pickRaidGoal();
+    if (!goal) return;
+    pool.sort((a, b) => (a.def.classes.includes('cavalry') ? 0 : 1) - (b.def.classes.includes('cavalry') ? 0 : 1));
+    const raid = pool.slice(0, want);
+    for (const u of raid) {
+      u.aiRole = 'raid';
+      u.target = null;
+      u.noAggro = false;
+      u.state = STATE.ATTACK_MOVE;
+      u.moveTo(goal.x + (this.rng() - 0.5) * 7, goal.z + (this.rng() - 0.5) * 7, true);
+    }
+    this.raidUnits = raid;
+    this.raidGoal = goal;
+    this.raidRefresh = g.time + 8;
+    this.raidTimer = Math.max(20, 58 - this.aggression * 30);
+  }
+
+  /** Raiders want a worker, a wizard, or failing that a wall. */
+  pickRaidGoal() {
+    const g = this.game;
+    let best = null;
+    let bestScore = -Infinity;
+    for (const u of g.units) {
+      if (u.dead || u.team === this.team || u.team === 0 || u.wild) continue;
+      let score = 10;
+      if (u.def.classes.includes('villager')) score += 16;
+      const th = unitThreat(u);
+      if (th >= 4) score += 50 + th * 4;
+      score -= Math.sqrt(dist2(u.x, u.z, this.base.x, this.base.z)) * 0.30;
+      if (score > bestScore) { bestScore = score; best = u; }
+    }
+    if (best) return best;
+    for (const b of g.buildings) {
+      if (b.dead || b.team === this.team || b.team === 0) continue;
+      const score = 8 - Math.sqrt(dist2(b.x, b.z, this.base.x, this.base.z)) * 0.28;
+      if (score > bestScore) { bestScore = score; best = b; }
+    }
+    return best;
+  }
+
   /* ---------------- military ---------------- */
   manageMilitary(st, age) {
     const g = this.game;
@@ -578,58 +817,93 @@ export class AIController {
     const enemyBase = this.enemyBase;
     const base = this.base;
 
-    // threat detection near home
-    const threat = g.findEnemyNear({ x: base.x, z: base.z, team: this.team }, 34);
-    if (threat && army.length) {
-      // defend
+    /* 1. home defence. The most *dangerous* intruder wins, not the nearest:
+       a mage or a ram behind your woodline matters more than a scout. */
+    const intruders = [];
+    for (const u of g.units) {
+      if (u.dead || u.team === this.team || u.team === 0 || u.wild) continue;
+      if (dist2(u.x, u.z, base.x, base.z) < 34 * 34) intruders.push(u);
+    }
+    if (intruders.length && army.length) {
+      intruders.sort((a, b) => (unitThreat(b) - unitThreat(a)) ||
+        (dist2(a.x, a.z, base.x, base.z) - dist2(b.x, b.z, base.x, base.z)));
+      const worst = intruders[0];
       for (const u of army) {
-        if (u.state === STATE.IDLE || u.state === STATE.ATTACK_MOVE || u.state === STATE.MOVE) {
-          if (u.target !== threat && u.state !== STATE.ATTACK) {
-            u.target = threat;
-            u.state = STATE.ATTACK;
-          }
+        if (u.aiRole === 'hunt') continue;      // a hunt already has a job
+        u.aiRole = 'defend';
+        if (u.target !== worst) {
+          u.target = worst;
+          u.state = STATE.ATTACK;
+          u.noAggro = false;
+          u.unreachable = false;
         }
+      }
+      if (worst.team === g.playerTeam && unitThreat(worst) >= 5 && g.time - this.huntWarnAt > 30) {
+        this.huntWarnAt = g.time;
+        g.notify('That caster is standing in your base — everything is on it', 'warn');
       }
       this.armyState = 'defend';
       return;
     }
+    for (const u of army) if (u.aiRole === 'defend') u.aiRole = null;
 
-    // wave timing
+    /* 2. the standing bounty, then 3. the raid clock */
+    this.manageHunt(army);
+    this.manageRaids(army);
+
+    /* the line: everything that is not already hunting or raiding */
+    const waveUnits = army.filter((u) => !u.aiRole || u.aiRole === 'wave');
+
+    /* wave timing */
     const ready = army.length >= Math.min(this.diff.maxArmy, 5 + Math.floor((g.time - this.diff.firstWave) / this.diff.waveEvery) * 3);
     const canAttack = g.time > this.diff.firstWave && (this.attackTimer <= 0 || (ready && this.armyState !== 'attack'));
 
-    if (canAttack && army.length >= 4) {
+    if (canAttack && waveUnits.length >= 4) {
       this.armyState = 'attack';
       this.attackTimer = this.diff.waveEvery;
       this.lastAttackTime = g.time;
-      // rally first, then march
-      const targetX = enemyBase.x;
-      const targetZ = enemyBase.z;
-      // split: some units siege the nearest building, others attack-move
-      const target = g.buildings.find((b) => !b.dead && b.team !== this.team && b.team !== 0) || null;
-      for (const u of army) {
+      this.waveStrength = waveUnits.length;
+      this.lastWaveSeen = g.time;
+      /* the target is a structure near the enemy base, not the first building
+         in the array: an AI that marches at a random farm looks confused */
+      const target = g.nearestEnemyStructure({ x: enemyBase.x, z: enemyBase.z, team: this.team }, this.team, 40);
+      for (const u of waveUnits) {
         if (u.state === STATE.ATTACK && u.target && !u.target.dead) continue;
+        u.aiRole = 'wave';
+        if (target && u.def.classes.includes('siege')) {
+          u.state = STATE.ATTACK;
+          u.target = target;
+          u.noAggro = false;
+          continue;
+        }
         u.state = STATE.ATTACK_MOVE;
         u.target = null;
-        u.moveTo(targetX + (this.rng() - 0.5) * 16, targetZ + (this.rng() - 0.5) * 16, true);
+        u.noAggro = false;
+        u.moveTo(enemyBase.x + (this.rng() - 0.5) * 16, enemyBase.z + (this.rng() - 0.5) * 16, true);
       }
       return;
     }
 
     if (this.armyState === 'attack') {
-      // keep the push alive: refresh orders for stragglers
+      /* keep the push alive: refresh orders for stragglers */
       if (g.time - this.lastAttackTime > 9) {
         this.lastAttackTime = g.time;
-        const alive = army.length;
-        if (alive < 3) {
+        const alive = waveUnits.length;
+        /* a wave that has lost most of its strength pulls back to reform;
+           feeding a broken army into a town is how the old AI threw games */
+        const broken = this.waveStrength && alive < Math.max(3, this.waveStrength * 0.45);
+        if (alive < 3 || broken) {
           this.armyState = 'gather';
           this.attackTimer = Math.max(20, this.diff.waveEvery * 0.5);
           for (const u of army) {
+            if (u.aiRole === 'hunt' || u.aiRole === 'raid') continue;
+            u.aiRole = null;
+            u.target = null;
             u.state = STATE.MOVE;
-            u.moveTo(base.x, base.z, true);
+            u.moveTo(base.x + (this.rng() - 0.5) * 10, base.z + (this.rng() - 0.5) * 10, true);
           }
         } else {
-          for (const u of army) {
+          for (const u of waveUnits) {
             /* A soldier that reported "no way through" is standing outside a
                wall. Put it to work on the wall: an AI army that politely stops
                at a palisade is not an opponent. */
@@ -653,10 +927,11 @@ export class AIController {
       return;
     }
 
-    // gather phase: idle army regroups near the base
+    /* gather phase: idle army regroups near the base */
     if (army.length) {
       for (const u of army) {
-        if (u.state === STATE.IDLE) {
+        if (u.state === STATE.IDLE && (!u.aiRole || u.aiRole === 'wave')) {
+          u.aiRole = null;
           const a = this.rng() * Math.PI * 2;
           const r = 6 + this.rng() * 7;
           u.state = STATE.MOVE;
@@ -665,6 +940,27 @@ export class AIController {
       }
     }
   }
+}
+
+/* A unit's worth as a target. Mods publish `def.threat`; the classes below
+   are the built-in hints, so a base-game siege engine is worth killing before
+   a spearman even without a mod in the session. */
+const CLASS_THREAT = { caster: 4, siege: 2, unique: 2 };
+export function unitThreat(u) {
+  if (!u || u.dead || !u.def) return 0;
+  let t = u.def.threat || 0;
+  const cls = u.def.classes;
+  if (cls) {
+    for (let i = 0; i < cls.length; i++) {
+      const v = CLASS_THREAT[cls[i]];
+      if (v && v > t) t = v;
+    }
+  }
+  if (u.def.hero) t += 2;
+  /* an officer of the enemy court is worth more than the unit carrying the
+     office: killing the Marshal is how you break an army's spine */
+  if (u.courtOffice) t += 3;
+  return t;
 }
 
 function isUnique(type) {

@@ -990,6 +990,22 @@ void main(){
 }
 `;
 
+/* A full-screen additive wash, drawn straight to the framebuffer. It exists
+   outside the post chain on purpose: post is off on the balanced and low
+   tiers, and a lightning bolt that only flashes on high-end phones is a bug,
+   not a feature. */
+export const FLASH_FS = /* glsl */`#version 300 es
+precision highp float;
+out vec4 fragColor;
+uniform float uFlash;
+uniform vec3 uFlashTint;
+void main(){
+  float a = clamp(uFlash, 0.0, 0.9);
+  vec3 c = clamp(uFlashTint, 0.0, 1.0);
+  fragColor = vec4(c * a, a);
+}
+`;
+
 export const POST_FS = /* glsl */`#version 300 es
 precision highp float;
 in vec2 vUV;

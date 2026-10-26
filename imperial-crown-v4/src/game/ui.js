@@ -11,11 +11,15 @@ import {
 import { clamp, fmtTime } from '../core/math.js';
 import { iconFor } from './menu.js';
 import { STATE } from '../sim/entities.js';
+import { OFFICES as COURT_OFFICES, RANK_AT } from '../sim/court.js';
 
 const CMD_HZ = 9;              // command card / text refresh rate
 const MINI_HZ = 11;
 
 const STANCE_LABEL = { aggressive: 'Aggressive', defensive: 'Defensive', stand: 'Stand ground' };
+
+/** Deeds needed for the next rank of an office. */
+function rankTarget(rank) { return RANK_AT[Math.min(RANK_AT.length - 1, rank)] || 0; }
 
 function costText(cost) {
   if (!cost) return '';
@@ -44,7 +48,7 @@ export class UI {
     const ids = ['resFood', 'resWood', 'resGold', 'resStone', 'resFavor', 'resPop',
       'dotFood', 'dotWood', 'dotGold', 'dotStone',
       'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer',
-      'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnDecrees', 'decreeBadge',
+      'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnDecrees', 'decreeBadge', 'btnCourt', 'courtBadge',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
       'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
       'minimap', 'miniStamp', 'btnGotoTC', 'btnMiniMode', 'btnFormation',
@@ -81,6 +85,7 @@ export class UI {
     click(el.btnArmy, () => this.selectArmy());
     click(el.btnTech, () => this.openTech());
     click(el.btnDecrees, () => this.openDecrees());
+    click(el.btnCourt, () => this.openCourt());
     click(el.btnMenu, () => this.app.openPause?.());
     click(el.btnPause, () => this.togglePause());
     click(el.btnSound, () => this.toggleSound());
@@ -649,12 +654,14 @@ export class UI {
         ${b.name} · ${Math.ceil(b.time)}s</span>`).join('')}</div>` : '';
     const rows = list.map((d) => {
       const st = g.decreeState ? g.decreeState(1, d.id) : { ok: favor >= d.cost };
-      const why = st.ok ? `${d.cost} favour` : st.used ? 'Already done' : st.reason;
+      const price = Math.round(d.cost * (g.court ? g.court.decreeDiscount(1) : 1));
+      const why = st.ok ? `${price} favour` : st.used ? 'Already done' : (st.reason || 'Not yet');
       const cls = st.ok ? '' : 'locked';
+      const saved = price < d.cost ? ` <em class="gold tiny">Hierophant −${Math.round((1 - price / d.cost) * 100)}%</em>` : '';
       return `
       <div class="row ${cls}" data-decree-row="${d.id}">
         <b>${icon(d.icon)} ${d.name}</b>
-        <span>${d.desc}<br>
+        <span>${d.desc}${saved}<br>
           <button class="ghostBtn" data-decree="${d.id}" ${st.ok ? '' : 'disabled'} title="${why}">${why}</button>
         </span>
       </div>`;
@@ -669,6 +676,81 @@ export class UI {
       const res = g.activateDecree(1, b.dataset.decree);
       if (res && res.ok) { this.audio?.play('horn'); this.toast(res.msg || 'Decree proclaimed', 'good'); this.openDecrees(); }
       else { this.toast(res?.reason || 'Not enough favour', 'warn'); this.audio?.play('warn'); }
+    }, { once: true });
+  }
+
+  /* ---------------- the Court ----------------
+     Four offices, each held by a person on the map. The panel only *arms*
+     an appointment or a writ: the next tap on the battlefield chooses the
+     subject, which keeps the whole system inside the grammar the player
+     already knows (pick a card, tap a target). */
+  openCourt() {
+    const g = this.game;
+    if (!g || !g.court) return;
+    const t = g.teams.get(1);
+    const age = t.age;
+    const rows = g.court.summary(1).map((o) => {
+      const def = COURT_OFFICES.find((d) => d.id === o.id);
+      const locked = age < def.age;
+      const holder = o.holder;
+      const rankPips = '●'.repeat(o.rank) + '○'.repeat(3 - o.rank);
+      const writ = o.writ;
+      const writWhy = !holder ? 'No holder' : (!writ.ready ? (writ.cooldown > 0 ? `${Math.ceil(writ.cooldown)}s` : `${def.writ.cost.favor} favour`) : '');
+      const deedBar = `<div class="deedBar"><i style="width:${Math.round(o.progress * 100)}%"></i></div>`;
+      return `
+      <div class="courtRow ${locked ? 'locked' : ''} ${holder ? 'on' : ''}" data-office-row="${o.id}">
+        <b>${icon(o.icon)} ${o.name} <span class="tiny dim">${rankPips}</span></b>
+        <span>
+          ${holder
+            ? `<em>${holder.def.name} · rank ${o.rank}</em> ${o.rank < 3 ? deedBar + `<em class="dim tiny">${o.deeds}/[${rankTarget(o.rank)}] ${def.deedLabel}</em>` : '<em class="gold tiny">rank III</em>'}`
+            : `<em class="dim">${o.vacantFor > 0 ? `in mourning · ${Math.ceil(o.vacantFor)}s` : 'vacant'}</em>`}
+          <br><span class="tiny dim">${def.passive[Math.min(o.rank - 1, 2)]}</span>
+          <br>
+          ${locked ? `<span class="tiny dim">Unlocks in the ${def.age === 1 ? 'Feudal' : 'Castle'} Age</span>` : holder
+            ? `<button class="ghostBtn" data-appoint="${o.id}">Replace · ${costText(def.cost)}</button>
+               <button class="ghostBtn" data-dismiss="${o.id}">Dismiss</button>`
+            : `<button class="ghostBtn" data-appoint="${o.id}" ${o.vacantFor > 0 ? 'disabled' : ''}>Appoint · ${costText(def.cost)}</button>`}
+          <button class="ghostBtn" data-writ="${o.id}" ${writ.ready ? '' : 'disabled'} title="${writWhy}">${def.writ.name}${writWhy ? ` · ${writWhy}` : ''}</button>
+        </span>
+      </div>`;
+    }).join('');
+    this.menu?.openModal('THE COURT', 'Offices of the realm', `<div class="courtList">${rows}</div>`,
+      `<span class="dim tiny">An office is held by a body on the battlefield: appoint a soldier, a villager, a rider or a monk, keep them alive, and the rank comes. Lose them and the office stands empty.</span>`);
+    const body = document.getElementById('modalBody');
+    if (!body) return;
+    body.addEventListener('click', (e) => {
+      const app = e.target.closest('[data-appoint]');
+      if (app) {
+        g.courtArmed = { office: app.dataset.appoint };
+        g.courtWrit = null;
+        this.menu?.closeModal();
+        const def = COURT_OFFICES.find((d) => d.id === app.dataset.appoint);
+        this.toast(`Tap one of your ${def.class === 'military' ? 'soldiers' : def.class === 'villager' ? 'villagers' : def.class === 'monk' ? 'monks' : 'units'} to raise them to ${def.name}`, 'gold');
+        return;
+      }
+      const dis = e.target.closest('[data-dismiss]');
+      if (dis) {
+        g.court.dismiss(1, dis.dataset.dismiss);
+        this.refreshCommands(true);
+        this.openCourt();
+        return;
+      }
+      const w = e.target.closest('[data-writ]');
+      if (w) {
+        const id = w.dataset.writ;
+        const info = g.court.writ(1, id);
+        if (!info || !info.ready) { this.toast('That writ is not ready', 'warn'); return; }
+        if (info.target === 'unit') {
+          g.courtWrit = { office: id };
+          g.courtArmed = null;
+          this.menu?.closeModal();
+          this.toast(`${info.name} — tap an enemy unit`, 'gold');
+          return;
+        }
+        const res = g.court.useWrit(1, id, null);
+        if (res.ok) { this.toast(`${info.name} is proclaimed`, 'good'); this.audio?.play('horn'); this.openCourt(); }
+        else this.toast(res.reason || 'The writ fails', 'warn');
+      }
     }, { once: true });
   }
 
@@ -1011,6 +1093,21 @@ export class UI {
     if (el.decreeBadge) {
       const n = String(Math.floor(t.favor || 0));
       if (el.decreeBadge.textContent !== n) el.decreeBadge.textContent = n;
+    }
+    if (el.courtBadge && g.court) {
+      /* the badge is a nudge, not a census: only seats the player could fill
+         this instant, i.e. unlocked by age and not in mourning */
+      let open = 0;
+      for (const o of g.court.summary(1)) {
+        const def = COURT_OFFICES.find((d) => d.id === o.id);
+        if (!def || o.holder || o.vacantFor > 0) continue;
+        if (t.age < def.age) continue;
+        open++;
+      }
+      if (el.courtBadge.textContent !== String(open)) {
+        el.courtBadge.textContent = String(open);
+        el.courtBadge.style.display = open ? '' : 'none';
+      }
     }
     // stance highlight
     const selUnits = g.selection.filter((e) => e.kind === 'unit' && e.team === 1);

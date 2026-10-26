@@ -30,7 +30,7 @@ import {
 import {
   SKY_VS, SKY_FS, TERRAIN_VS, TERRAIN_FS, MODEL_VS, MODEL_FS, SHADOW_VS, SHADOW_FS,
   WATER_VS, WATER_FS, PARTICLE_VS, PARTICLE_FS, BILLBOARD_VS, BILLBOARD_FS,
-  DECAL_VS, DECAL_FS, POST_VS, POST_FS
+  DECAL_VS, DECAL_FS, POST_VS, POST_FS, FLASH_FS
 } from './shaders.js';
 import { InstanceBatch, QuadBatch } from './batch.js';
 import { buildTextures, uploadBaked, MAT, SPRITE } from './textures.js';
@@ -38,6 +38,7 @@ import { bakeTerrain } from './bake.js';
 import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
 import { extractPlanes, sphereInFrustum } from './camera.js';
 import { BUILDING_DEFS } from '../sim/data.js';
+import { OFFICE_BY_ID } from '../sim/court.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
 import { TIERS, renderSize } from './quality.js';
 
@@ -126,6 +127,10 @@ export class Renderer {
     this.horizon = new Float32Array([0.7, 0.76, 0.8]);
     this.cloudOffset = new Float32Array([0, 0]);
     this.cloudCover = 0.5;
+    /* a mod spell can bloom the frame for a heartbeat (skyfall, meteor).
+       Zero by default, so a normal game never pays a uniform update. */
+    this.flash = 0;
+    this.flashTint = [1, 1, 1];
     this.cloudStrength = this.quality.clouds ?? 0.085;
     this.starAmount = 0;
     this.moonAmount = 0;
@@ -191,6 +196,7 @@ export class Renderer {
     this.pBillboard = new Shader(gl, 'billboard', BILLBOARD_VS, BILLBOARD_FS);
     this.pDecal = new Shader(gl, 'decal', DECAL_VS, DECAL_FS);
     this.pPost = new Shader(gl, 'post', POST_VS, POST_FS);
+    this.pFlash = new Shader(gl, 'flash', POST_VS, FLASH_FS);
     this.fsTri = createFullscreenVAO(gl);
     this.emptyVao = gl.createVertexArray();
 
@@ -774,6 +780,7 @@ export class Renderer {
   /* ================= frame ================= */
   render(dt, game) {
     this._alpha = game && game.renderAlpha !== undefined ? game.renderAlpha : 1;
+    if (this.flash > 0) this.flash = Math.max(0, this.flash - Math.max(0, dt) * 1.15);
     if (this.ctxLost || !this.ready || !this.gl) return;
     const gl = this.gl;
     const st = this.stats;
@@ -826,6 +833,7 @@ export class Renderer {
     this._drawParticles(cam, game);
 
     if (target) this._drawPost();
+    if (this.flash > 0.002) this._drawFlash();
     gl.disable(gl.BLEND);
     game.renderStats = st;
   }
@@ -1395,6 +1403,18 @@ export class Renderer {
       const tc = e.team === 1 ? [0.35, 0.95, 0.5] : e.team === 2 ? [1, 0.36, 0.3] : [1, 0.86, 0.4];
       d.push(e.x, e.y + 0.07, e.z, r, tc[0], tc[1], tc[2], 0.9, 0, 1, 0, 0);
     }
+    /* the court's officers keep a ring of their own office's colour on the
+       ground, so a Marshal can be found in a crowd without clicking him */
+    if (game.court && game.court.eachHolder) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 2.4);
+      game.court.eachHolder((u, o) => {
+        const c = o.color || [1, 0.86, 0.4];
+        const r = (u.radius || 0.5) * (1.7 + pulse * 0.12);
+        d.push(u.x, u.y + 0.065, u.z, r * 1.4, c[0], c[1], c[2], 0.3, 0, 0, 0, 0);
+        d.push(u.x, u.y + 0.075, u.z, r, c[0], c[1], c[2], 0.95, 0, 1, 0, 0);
+        d.push(u.x, u.y + 0.085, u.z, r * 0.62, c[0], c[1], c[2], 0.5, 0, 1, 0, 0);
+      });
+    }
     /* an armed mod spell shows its footprint under the finger: the same ring
        the game uses for everything else, in the spell's own colour */
     const cast = game.modCast;
@@ -1470,15 +1490,33 @@ export class Renderer {
       if (u.dead || u.garrisoned) continue;
       const selected = sel && sel.has(u);
       const ratio = clamp(u.hp / Math.max(1, u.maxHp), 0, 1);
-      if (!selected && ratio > 0.995) continue;
+      const office = u.courtOffice ? game.court : null;
+      if (!selected && ratio > 0.995 && !office) continue;
       if ((u.x - cx) ** 2 + (u.z - cz) ** 2 > 92 * 92) continue;
       const meta = this.unitMeta.get(u.type) || UNIT_META_FALLBACK;
       const w = selected ? 1.15 : 0.85;
       const y = u.y + meta.height + 0.42;
       if (!this._inFrustum(u.x, y, u.z, 2)) continue;
-      b.push(u.x, y, u.z, w + 0.06, 0.02, 0.02, 0.02, 0.45, 0.12, 0, 0.6, 0);
-      const col = u.team === 1 ? [0.42, 0.92, 0.45] : u.team === 2 ? [0.98, 0.36, 0.3] : [0.95, 0.84, 0.45];
-      b.push(u.x - (w * (1 - ratio)) * 0.5, y, u.z, w * ratio, col[0], col[1], col[2], 0.95, 0.1, 0, 0.9, 0);
+      if (office) {
+        const o = OFFICE_BY_ID.get(u.courtOffice);
+        const c = (o && o.color) || [1, 0.86, 0.4];
+        const rank = u.courtRank || 1;
+        const bob = Math.sin(this.time * 2.2 + u.id * 0.7) * 0.04;
+        const hy = u.y + meta.height + 0.66 + bob;
+        /* the sigil grows with the office's rank: a ring, a second ring, and a
+           third — a Marshal you can pick out of a crowd at a glance */
+        b.push(u.x, hy, u.z, 0.34 + rank * 0.07, c[0], c[1], c[2], 0.22 + rank * 0.05, 0.5, 1, 0, 0);
+        b.push(u.x, hy, u.z, 0.22 + rank * 0.03, c[0], c[1], c[2], 0.95, 0.22, 1, 0, 0);
+        if (rank >= 2) b.push(u.x, hy + 0.16, u.z, 0.13, c[0], c[1], c[2], 0.8, 0.13, 1, 0, 0);
+        if (rank >= 3) b.push(u.x, hy + 0.3, u.z, 0.09, c[0], c[1], c[2], 0.7, 0.09, 1, 0, 0);
+      }
+      /* a full-health officer shows his sigil and nothing else: an empty bar
+         over every commander would be noise, not information */
+      if (selected || ratio <= 0.995) {
+        b.push(u.x, y, u.z, w + 0.06, 0.02, 0.02, 0.02, 0.45, 0.12, 0, 0.6, 0);
+        const col = u.team === 1 ? [0.42, 0.92, 0.45] : u.team === 2 ? [0.98, 0.36, 0.3] : [0.95, 0.84, 0.45];
+        b.push(u.x - (w * (1 - ratio)) * 0.5, y, u.z, w * ratio, col[0], col[1], col[2], 0.95, 0.1, 0, 0.9, 0);
+      }
     }
     for (let i = 0; i < game.buildings.length; i++) {
       const bd = game.buildings[i];
@@ -1594,6 +1632,24 @@ export class Renderer {
     gl.enable(gl.DEPTH_TEST);
   }
 
+  /** Additive full-screen wash. One draw call, only while a spell is flashing. */
+  _drawFlash() {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, this.renderW, this.renderH);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    const s = this.pFlash.use();
+    s.f('uFlash', this.flash);
+    s.v3('uFlashTint', this.flashTint[0], this.flashTint[1], this.flashTint[2]);
+    drawFullscreen(gl, this.fsTri);
+    this.stats.drawCalls++;
+    gl.depthMask(true);
+    gl.enable(gl.DEPTH_TEST);
+  }
+
   /** Screen-space projection for the HUD. */
   projectToScreen(cam, x, y, z, out) {
     const m = cam.viewProj;
@@ -1630,7 +1686,7 @@ export class Renderer {
     }
     if (this.fogTexture) gl.deleteTexture(this.fogTexture);
     for (const p of [this.pSky, this.pTerrain, this.pModel, this.pShadow, this.pWater,
-      this.pParticle, this.pBillboard, this.pDecal, this.pPost]) if (p) p.dispose();
+      this.pParticle, this.pBillboard, this.pDecal, this.pPost, this.pFlash]) if (p) p.dispose();
   }
 }
 
