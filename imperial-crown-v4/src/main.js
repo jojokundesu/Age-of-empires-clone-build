@@ -700,8 +700,12 @@ class App {
       climate: g.climate ? g.climate.toJSON() : null,
       realm: g.realm ? g.realm.toJSON() : null,
       elites: g.elites ? g.elites.toJSON() : null,
-      units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round(u.xp || 0), Math.round(u.morale ?? 100), Math.round(u.survived || 0)]),
-      buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
+      /* A garrisoned man is saved with the index of the roof he is standing in,
+         not with his stale position: without it a reload emptied every tower
+         and castle on the map onto the ground, and a player who had put his
+         archers on the wall found them outside it. Index -1 is "on the field". */
+      units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round(u.xp || 0), Math.round(u.morale ?? 100), Math.round(u.survived || 0), g.garrisonIndexOf(u)]),
+      buildings: g.buildings.filter((b) => !b.dead && b.team !== 0).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
     };
     const ok = Menu.writeSave(data);
@@ -730,19 +734,27 @@ class App {
     if (save.climate && game.climate) game.climate.fromJSON(save.climate);
     game.wonderClocks = new Map((save.wonder || []).filter(([team]) => game.teamIds.includes(team)));
 
+    /* the saved order of `buildings` is the index space the units refer to */
+    const placed = [];
     for (const [type, team, x, z, hp, prog, facing] of save.buildings || []) {
       if (!game.teamIds.includes(team)) continue;   // neutral shrines regenerate with the world
+      placed.push(null);   // keep the index even for a roof that refuses to rebuild
       const b = game.placeBuilding(type, team, x, z, { instant: true, free: true, facing });
       if (b) {
         b.hp = Math.min(b.maxHp, hp);
         b.buildProgress = prog ?? 1;
         if (b.buildProgress >= 1) game.onBuildingComplete(b);
+        placed[placed.length - 1] = b;
       }
     }
-    for (const [type, team, x, z, hp, rank, xp, morale, survived] of save.units || []) {
+    for (const [type, team, x, z, hp, rank, xp, morale, survived, inBuilding] of save.units || []) {
       if (!game.teamIds.includes(team)) continue;
-      const u = game.spawnUnit(type, team, x, z);
+      const u = game.spawnUnit(type, team, x, z, null, { force: true });
       if (!u) continue;
+      if (inBuilding !== undefined && inBuilding >= 0 && placed[inBuilding]) {
+        const host = placed[inBuilding];
+        if (host.garrisonUnit(u)) game.popDirty = true;
+      }
       if (rank) {
         /* restore the rank before the hit points: the pool the save was taken
            with is the pool the rank had already bought */

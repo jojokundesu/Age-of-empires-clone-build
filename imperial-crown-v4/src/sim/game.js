@@ -957,12 +957,18 @@ export class Game {
     return onlyZ ? z : x;
   }
 
-  spawnUnit(type, team, x, z, fromBuilding) {
+  /**
+   * `opts.force` skips the population gate. A reload is authoritative: the
+   * state being restored is the state the match was in, and a save taken while
+   * a crown was over its cap (its houses had been burned after the men were
+   * trained) used to silently drop soldiers -- a reload could cost an army.
+   */
+  spawnUnit(type, team, x, z, fromBuilding, opts = {}) {
     const st = this.teams.get(team);
     if (!st) return null;
     this.recomputePop();
     const def = UNIT_DEFS[type];
-    if (st.popUsed + (def.pop || 1) > st.popCap) {
+    if (!opts.force && st.popUsed + (def.pop || 1) > st.popCap) {
       if (team === TEAM_PLAYER) this.notify('Population limit reached — build houses', 'bad');
       return null;
     }
@@ -1660,6 +1666,24 @@ export class Game {
     this.spatial.clear();
     this.spatial.insertAll(this.units);
     return leavers.length;
+  }
+
+  /**
+   * The index of the building a unit is standing in, in the order
+   * `buildings.filter(b => !b.dead)` -- the same order the save writes.
+   * -1 for a man on the field.
+   */
+  garrisonIndexOf(unit) {
+    if (!unit || !unit.garrisoned || !unit.garrisonTarget) return -1;
+    let i = 0;
+    for (const b of this.buildings) {
+      /* exactly the buildings the save writes and the load rebuilds: a dead
+         roof and a neutral shrine are in neither list */
+      if (b.dead || b.team === TEAM_NEUTRAL) continue;
+      if (b === unit.garrisonTarget) return i;
+      i++;
+    }
+    return -1;
   }
 
   removeFromGarrison(unit) {

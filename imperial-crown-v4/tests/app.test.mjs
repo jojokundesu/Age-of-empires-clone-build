@@ -349,6 +349,57 @@ await acheck('a four-crown war saves and reloads as the same war', async () => {
   assert(app.ais.length === 3, 'the reloaded war lost its AI crowns');
   for (const a of app.ais) assert(a.foe !== null, 'an AI crown has no foe after a reload');
 });
+/* A reload is authoritative. Two things used to be lost between the save and
+   the load: the garrison (every man came back standing on the ground beside a
+   tower he had been inside) and, when a crown was over its cap because its
+   houses had been burned, the men themselves -- spawnUnit() enforced the
+   population gate and returned null. */
+await acheck('a reload restores the garrison and never drops a soldier', async () => {
+  const raf = (fn) => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf; window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261 });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const g = app.game;
+  const hall = g.buildings.find((b) => b.team === 1 && b.def.ageAdvance);
+  assert(hall && hall.def.garrison, 'the hall cannot hold a garrison');
+  const men = [];
+  for (let i = 0; i < 3; i++) {
+    const u = g.spawnUnitRaw('archer', 1, hall.x + 6 + i * 0.5, hall.z + 6);
+    assert(u, 'archer spawn failed');
+    assert(g.garrisonUnit(u, hall), 'the hall refused the garrison');
+    men.push(u);
+  }
+  /* over the cap: burn the houses that made the room */
+  for (const b of g.buildings) if (b.team === 1 && b.type === 'house') b.dead = true;
+  g.recomputePop();
+  assert(g.teams.get(1).popUsed > g.teams.get(1).popCap, 'the crown was not over its cap');
+  const before = {
+    men: g.units.filter((u) => !u.dead && u.team === 1).length,
+    inHall: hall.garrison.length,
+    pop: g.teams.get(1).popUsed
+  };
+  assert(app.saveMatch(), 'the match could not be saved');
+  const blob = JSON.parse(window.localStorage.getItem('imperial-crown-save'));
+  const r = (fn) => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = r; window.requestAnimationFrame = r;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, load: blob });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const g2 = app.game;
+  g2.recomputePop();
+  const after = {
+    men: g2.units.filter((u) => !u.dead && u.team === 1).length,
+    inHall: g2.buildings.filter((b) => b.team === 1).reduce((n, b) => n + (b.garrison ? b.garrison.length : 0), 0),
+    pop: g2.teams.get(1).popUsed
+  };
+  assert(after.men === before.men, `the reload lost ${before.men - after.men} men of ${before.men}`);
+  assert(after.inHall === before.inHall, `the reload emptied the garrison (${before.inHall} → ${after.inHall})`);
+  assert(after.pop === before.pop, `population came back as ${after.pop}, saved as ${before.pop}`);
+  for (const u of g2.units) {
+    if (!u.garrisoned) continue;
+    assert(u.garrisonTarget && !u.garrisonTarget.dead, 'a man is garrisoned in nothing');
+  }
+});
+
 check('quit the war', () => {
   app.quitToMenu();
   assert(!document.getElementById('menuScreen').classList.contains('hidden'), 'menu not shown');
