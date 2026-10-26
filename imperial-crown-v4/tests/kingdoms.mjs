@@ -224,7 +224,7 @@ check('a fallen crown\u2019s treasury, learning and soldiers pass to its conquer
   loser.res.gold = 500; loser.res.food = 300; loser.favor = 60;
   loser.techs.add('forging'); loser.techs.add('scale_armor');
   loser.buffs.push({ kind: 'attack', mul: 1.3, time: 40, name: 'Rally' });
-  const loserArmy = g.units.filter((u) => !u.dead && u.team === 3).length;
+  const loserArmy = g.units.filter((u) => !u.dead && u.team === 3 && !u.isKing).length;
   const winnerArmy = g.units.filter((u) => !u.dead && u.team === 1).length;
   const winnerGold = winner.res.gold;
   const r = g.collapse(3, 1);

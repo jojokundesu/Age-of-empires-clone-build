@@ -15,13 +15,18 @@
    built in a duel still holds; the two extra crowns take blue
    and gold, which are far apart from all four season tints.
    ============================================================ */
+/* The one palette the whole game paints teams with: the model shader tints
+   every roof and helm from it, the HUD dots and the crown strip use the same
+   values, and the minimap has always drawn the player in that blue. Four
+   crowns are therefore always the same four colours to the player, whichever
+   of them they are commanding. */
 export const TEAM_COLORS = {
-  1: { ring: [0.35, 0.95, 0.5], unit: [0.42, 0.92, 0.45], css: '#63e88a', name: 'green' },
-  2: { ring: [1, 0.36, 0.3], unit: [0.98, 0.36, 0.3], css: '#e0564b', name: 'red' },
-  3: { ring: [0.36, 0.62, 1], unit: [0.42, 0.62, 1], css: '#5c9bff', name: 'blue' },
-  4: { ring: [0.95, 0.8, 0.32], unit: [0.95, 0.8, 0.32], css: '#f0cb6a', name: 'gold' }
+  1: { ring: [0.42, 0.63, 1], unit: [0.32, 0.55, 0.98], css: '#5c8ffa', name: 'blue' },
+  2: { ring: [1, 0.42, 0.34], unit: [0.95, 0.28, 0.22], css: '#f24738', name: 'red' },
+  3: { ring: [0.6, 0.9, 0.4], unit: [0.5, 0.82, 0.3], css: '#80d14d', name: 'green' },
+  4: { ring: [0.86, 0.64, 1], unit: [0.78, 0.52, 0.95], css: '#c785f2', name: 'purple' }
 };
-export const NEUTRAL_COLOR = { ring: [1, 0.86, 0.4], unit: [0.95, 0.84, 0.45], css: '#d9c07a', name: 'gold' };
+export const NEUTRAL_COLOR = { ring: [1, 0.86, 0.4], unit: [0.85, 0.72, 0.42], css: '#d9b86b', name: 'gold' };
 export const teamColor = (team) => TEAM_COLORS[team] || NEUTRAL_COLOR;
 
 export const RES = ['food', 'wood', 'gold', 'stone'];

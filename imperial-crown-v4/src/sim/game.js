@@ -424,7 +424,12 @@ export class Game {
       const s = this.spawnUnitRaw('scout_cavalry', team, tx + 4, tz + 3);
       if (s) s.stance = 'defensive';
     }
-    if (this.victory === 'regicide') {
+    /* Every throne has a man on it. In a regicide match his life IS the war,
+       and in a war of crowns he is the crown made flesh -- but he is only a
+       knife at your throat under the terms that say so, and a king is not a
+       mage: the Mage is one card a kingdom plays, and losing her is not
+       losing the kingdom. */
+    if (this.victory === 'regicide' || this.crowns > 2) {
       const king = this.spawnUnitRaw('hero_general', team, tx - 4, tz + 2);
       if (king) {
         king.isKing = true;
@@ -432,6 +437,7 @@ export class Game {
         king.hp = 900;
         king.name = 'King';
         king.speedMul = 1.05;
+        king.kingship = true;
       }
       tc.crowns = team;
     }
@@ -2211,9 +2217,14 @@ export class Game {
       this.recomputePop();
       this.refreshNav();
     }
-    /* what cannot be inherited is burned so it cannot be used against the heir */
+    /* The old king cannot be inherited: a conqueror who lets the last of a
+       line live is a conqueror with a rebellion in his own hall. He is killed
+       outright rather than left at one hit point by armour. */
     for (const u of this.units) {
-      if (!u.dead && u.team === team && u.isKing) u.takeDamage(u.maxHp, null, 'siege');
+      if (!u.dead && u.team === team && u.isKing) {
+        u.hp = 0;
+        u.kill(null);
+      }
     }
     /* and every AI that was campaigning against this crown picks a new foe */
     this.onEvent('collapse', { team, heir: target, spoils });
@@ -2494,6 +2505,19 @@ export class Game {
       if (h < 0.1) return { ok: false, reason: 'water' };
       if (this.world.height.slope(x, z) > 0.55) return { ok: false, reason: 'slope' };
     }
+    /* A hall is not raised in the shadow of an enemy host. Without this rule
+       a besieged crown simply builds another town centre as soon as the old
+       one falls, and no siege ever ends a war: the attacker breaks the walls,
+       marches home, and comes back to find them rebuilt. With it, an army
+       that *stays* in the rubble is an army that has actually taken a crown
+       -- which is the whole point of the holdfast rule it serves. */
+    if (def.ageAdvance) {
+      for (const u of this.units) {
+        if (u.dead || u.garrisoned || !u.def || u.def.attack <= 0) continue;
+        if (!this.isHostile(team, u.team)) continue;
+        if (dist2(u.x, u.z, x, z) < 26 * 26) return { ok: false, reason: 'contested' };
+      }
+    }
     // no overlap with buildings / resources / units (walls are exempt-ish)
     for (const b of this.buildings) {
       if (b.dead) continue;
@@ -2626,14 +2650,23 @@ export class Game {
    * same radius (they are the actual obstacle); anything else is a fallback.
    */
   /** The nearest town centre of an enemy crown: the thing a war is fought over. */
+  /**
+   * The hall a besieging army should march on: the *weakest* one it can
+   * reach, not simply the nearest. Two halls a crown apart means nothing if
+   * the attacker keeps switching from the wounded one to the fresh one --
+   * that is how a war of crowns grinds for an hour without a single throne
+   * falling. Distance breaks the tie.
+   */
   enemyHall(team, x, z, radius = 60) {
-    let best = null, bestD = radius * radius;
+    let best = null, bestScore = Infinity;
     for (let i = 0; i < this.buildings.length; i++) {
       const b = this.buildings[i];
       if (b.dead || b.team === team || b.team === 0) continue;
       if (!b.def || !b.def.ageAdvance) continue;
-      const d = dist2(b.x, b.z, x, z);
-      if (d < bestD) { bestD = d; best = b; }
+      const d = Math.sqrt(dist2(b.x, b.z, x, z));
+      if (d > radius) continue;
+      const score = (b.hp / b.maxHp) * 30 + d * 0.6 + ((b.buildProgress || 1) < 1 ? 4 : 0);
+      if (score < bestScore) { bestScore = score; best = b; }
     }
     return best;
   }

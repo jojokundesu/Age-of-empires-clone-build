@@ -37,7 +37,7 @@ import { buildTextures, uploadBaked, MAT, SPRITE } from './textures.js';
 import { bakeTerrain } from './bake.js';
 import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
 import { extractPlanes, sphereInFrustum } from './camera.js';
-import { BUILDING_DEFS, teamColor } from '../sim/data.js';
+import { BUILDING_DEFS, teamColor, TEAM_COLORS, NEUTRAL_COLOR } from '../sim/data.js';
 import { OFFICE_BY_ID } from '../sim/court.js';
 import { STATE } from '../sim/entities.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
@@ -50,13 +50,13 @@ export { MAT, SPRITE };
    test suite) keeps working. */
 export const QUALITY = TIERS;
 
-/** sRGB team colours (authored by eye, used for HUD-ish tinting). */
+/** sRGB team colours, from the one palette in data.js. */
 const TEAM_RGB = {
-  1: [0.32, 0.55, 0.98],
-  2: [0.95, 0.28, 0.22],
-  0: [0.85, 0.72, 0.42],
-  3: [0.5, 0.82, 0.3],
-  4: [0.78, 0.52, 0.95]
+  0: NEUTRAL_COLOR.unit,
+  1: TEAM_COLORS[1].unit,
+  2: TEAM_COLORS[2].unit,
+  3: TEAM_COLORS[3].unit,
+  4: TEAM_COLORS[4].unit
 };
 
 /** The same palette in linear space, for the model shader (no pow() per px). */

@@ -12,6 +12,10 @@ const bots = [new AIController(game, 1, {}), new AIController(game, 2, {})];
 
 const dt = 1 / 30;
 let worst = 0, total = 0, errors = 0;
+/* The peak each crown ever fielded. A crown that is overrun did still raise
+   an army; the health check is that the economy produced one, not that it
+   survived a war the AI now actually knows how to win. */
+const peak = { 1: 0, 2: 0 };
 const t0 = performance.now();
 const maxTicks = Math.round(seconds / dt);
 for (let i = 0; i < maxTicks; i++) {
@@ -36,6 +40,12 @@ for (let i = 0; i < maxTicks; i++) {
       ` | proj${game.projectiles.activeCount} favour ${Math.floor(s1.favor)}/${Math.floor(s2.favor)} buffs ${(s1.buffs||[]).length}/${(s2.buffs||[]).length}`
     );
   }
+  if (i % 30 === 0) {
+    for (const t of [1, 2]) {
+      const n = game.units.filter((u) => !u.dead && u.team === t && u.type !== 'villager' && u.def.attack > 0).length;
+      if (n > peak[t]) peak[t] = n;
+    }
+  }
   if (game.gameOver) { console.log('GAME OVER at', game.time.toFixed(0) + 's', game.result); break; }
 }
 const dur = (performance.now() - t0) / 1000;
@@ -56,8 +66,9 @@ const seasonsSeen = game.calendar ? Math.floor(game.time / game.calendar.seasonL
    banking gold, nobody gathering wood, no army, no age-up) still "runs" and
    would otherwise pass unnoticed. */
 const bad = [];
-if (seconds >= 480 && tents === 0) bad.push('no supply tent was ever built — raids must break');
-if (seconds >= 400 && seasonsSeen < 1) bad.push('the wheel of the year never turned');
+const elapsed = Math.min(seconds, game.time);
+if (elapsed >= 480 && tents === 0) bad.push('no supply tent was ever built — raids must break');
+if (elapsed >= 400 && seasonsSeen < 1) bad.push('the wheel of the year never turned');
 const samples = [];
 for (const team of [1, 2]) {
   const st = game.teams.get(team);
@@ -65,11 +76,12 @@ for (const team of [1, 2]) {
   const army = game.units.filter((u) => !u.dead && u.team === team && u.type !== 'villager' && u.def.attack > 0).length;
   samples.push({ team, villagers, army, age: st.age, gold: st.res.gold, gathered: st.gathered });
   if (errors > 0) bad.push(`${errors} tick errors`);
-  if (seconds >= 240 && !game.gameOver) {
-    if (st.gathered < 600) bad.push(`team ${team} gathered only ${st.gathered | 0} in ${seconds}s`);
-    if (st.age < 1 && seconds >= 420) bad.push(`team ${team} never left the Dark Age`);
-    if (villagers === 0 && seconds >= 300) bad.push(`team ${team} has no villagers left and no result`);
-    if (army === 0 && seconds >= 500) bad.push(`team ${team} never fielded an army`);
+  const eliminated = game.aliveTeam ? !game.aliveTeam(team) : false;
+  if (elapsed >= 240 && !eliminated) {
+    if (st.gathered < 600) bad.push(`team ${team} gathered only ${st.gathered | 0} in ${elapsed.toFixed(0)}s`);
+    if (st.age < 1 && elapsed >= 420) bad.push(`team ${team} never left the Dark Age`);
+    if (villagers === 0 && elapsed >= 300) bad.push(`team ${team} has no villagers left and no result`);
+    if (peak[team] === 0 && elapsed >= 300) bad.push(`team ${team} never fielded an army`);
     if (st.res.gold > 2500 && st.res.food < 100) bad.push(`team ${team} is hoarding gold (${st.res.gold | 0}) while starving (${st.res.food | 0} food)`);
   }
 }

@@ -6,7 +6,7 @@
    ============================================================ */
 import {
   AGES, CIVS, RES_META, TECH_DEFS, UNIT_DEFS, BUILDING_DEFS, BUILDING_AGE, UNIT_AGE,
-  POP_CAP, unitForCiv, teamColor
+  POP_CAP, unitForCiv, teamColor, TEAM_COLORS
 } from '../sim/data.js';
 import { clamp, fmtTime } from '../core/math.js';
 import { iconFor } from './menu.js';
@@ -15,7 +15,7 @@ const TEAM_NEUTRAL = 0;
 /* The minimap has always drawn the player in blue and the enemy in red, on a
    parchment ground; that is part of the map's look, so the extra crowns take
    colours that read well at six pixels rather than reusing the 3D palette. */
-const MINIMAP_TEAM = { 1: '#63b6e8', 2: '#e0564b', 3: '#9d7bff', 4: '#d9c07a' };
+const MINIMAP_TEAM = { 1: TEAM_COLORS[1].css, 2: TEAM_COLORS[2].css, 3: TEAM_COLORS[3].css, 4: TEAM_COLORS[4].css };
 import { OFFICES as COURT_OFFICES, RANK_AT } from '../sim/court.js';
 import { TAX_RATES } from '../sim/realm.js';
 
@@ -1633,9 +1633,9 @@ export class UI {
       if (u.team !== 1 && !g.isVisible(u.x, u.z)) continue;
       /* the player keeps the blue/green it always had; rivals carry their
          crown's colour so four armies can be told apart on one map */
-      ctx.fillStyle = u.team === 1
-        ? (u.type === 'villager' ? '#9adfe8' : '#7ac25b')
-        : (MINIMAP_TEAM[u.team] || '#e0564b');
+      ctx.fillStyle = u.type === 'villager'
+        ? (u.team === 1 ? '#9adfe8' : MINIMAP_TEAM[u.team] || '#e0564b')
+        : (u.team === 1 ? '#7ac25b' : MINIMAP_TEAM[u.team] || '#e0564b');
       ctx.fillRect(px(u.x) - 1.2, pz(u.z) - 1.2, 2.6, 2.6);
     }
     // camera view

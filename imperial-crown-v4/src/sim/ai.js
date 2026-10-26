@@ -993,6 +993,114 @@ export class AIController {
     }
   }
 
+  /**
+   * The small decisions that separate a mob from an army.
+   *
+   *  · Focus fire. Every man in the wave that can reach the same victim hits
+   *    that victim: a company that spreads its blows across ten spearmen
+   *    kills nobody, and ten blows on one spearman kills a spearman.
+   *  · Kiting. An archer with a swordsman in his face does not stand there;
+   *    he gives ground and keeps shooting, which is the only way a ranged
+   *    line survives contact.
+   *
+   * Runs at the AI's 2 Hz; every order is re-evaluated, so nothing sticks.
+   */
+  micro(waveUnits, enemyBase) {
+    const g = this.game;
+    if (!waveUnits.length) return;
+    let cx = 0, cz = 0, n = 0;
+    for (const u of waveUnits) { cx += u.x; cz += u.z; n++; }
+    cx /= n; cz /= n;
+
+    /* --- focus fire: the most dangerous enemy within reach of the line --- */
+    let focus = null, bestT = 0, bestD = 22 * 22;
+    for (const e of g.units) {
+      if (e.dead || e.garrisoned || !g.isHostile(this.team, e.team)) continue;
+      if (!e.def || e.def.attack <= 0) continue;
+      const d = (e.x - cx) ** 2 + (e.z - cz) ** 2;
+      if (d > bestD) continue;
+      const t = this.threatOf(e);
+      if (t > bestT + 0.5 || (focus && t > bestT && d < bestD)) { bestT = t; bestD = d; focus = e; }
+    }
+    if (focus && bestT >= 3) {
+      for (const u of waveUnits) {
+        if (u.aiRole !== 'wave') continue;
+        if (u.def.siege) continue;
+        const d = (u.x - focus.x) ** 2 + (u.z - focus.z) ** 2;
+        if (d > 24 * 24) continue;
+        if (u.target !== focus) {
+          u.target = focus;
+          u.state = STATE.ATTACK;
+          u.noAggro = false;
+        }
+      }
+    }
+
+    /* --- the wall is the objective, not the farmyard ---
+       Left alone, an army walking into a town picks the first shed it sees,
+       spends the whole battle on a lumber camp, and goes home. A commander
+       tells them the objective: once the enemy field army near the line is
+       gone, every man within reach turns on the hall and works it down. Men
+       still fighting hand to hand finish that fight first -- but the moment
+       they are free, the wall is the job. */
+    const hall = (this.siegeHall && !this.siegeHall.dead) ? this.siegeHall
+      : g.enemyHall(this.team, enemyBase.x, enemyBase.z, 55);
+    if (hall) {
+      this.siegeHall = hall;
+      for (const u of waveUnits) {
+        if (u.aiRole !== 'wave') continue;
+        if (u.target === hall) continue;
+        if ((u.x - hall.x) ** 2 + (u.z - hall.z) ** 2 > 34 * 34) {
+          /* not at the wall yet: march, do not get distracted by the farms */
+          if (u.state === STATE.IDLE && !u.def.classes.includes('siege')) {
+            u.state = STATE.ATTACK_MOVE;
+            u.moveTo(hall.x + (this.rng() - 0.5) * 12, hall.z + (this.rng() - 0.5) * 12, true);
+          }
+          continue;
+        }
+        /* at the wall: kill whoever is in your face, then the wall */
+        let man = null, md = 7 * 7;
+        for (const e of g.units) {
+          if (e.dead || e.garrisoned || !e.def || e.def.attack <= 0) continue;
+          if (!g.isHostile(this.team, e.team)) continue;
+          const d = (e.x - u.x) ** 2 + (e.z - u.z) ** 2;
+          if (d < md) { md = d; man = e; }
+        }
+        u.noAggro = false;
+        if (man) {
+          if (u.target !== man) { u.state = STATE.ATTACK; u.target = man; }
+          continue;
+        }
+        if (u.target !== hall) {
+          u.state = STATE.ATTACK;
+          u.target = hall;
+        }
+      }
+    }
+
+    /* --- kiting: bows give ground, spears do not --- */
+    for (const u of waveUnits) {
+      if (u.aiRole !== 'wave' || !u.def || u.def.siege) continue;
+      const rng = (u.def.range || 0);
+      if (rng < 3) continue;                       // a melee man stands
+      if (u.state === STATE.ATTACK) continue;      // already shooting
+      let danger = null, dd = 3.6 * 3.6;
+      for (const e of g.units) {
+        if (e.dead || e.garrisoned || !g.isHostile(this.team, e.team)) continue;
+        if (!e.def || e.def.attack <= 0 || (e.def.range || 0) > 2.5) continue;
+        const d = (e.x - u.x) ** 2 + (e.z - u.z) ** 2;
+        if (d < dd) { dd = d; danger = e; }
+      }
+      if (danger) {
+        const dx = u.x - danger.x, dz = u.z - danger.z;
+        const len = Math.hypot(dx, dz) || 1;
+        u.state = STATE.MOVE;
+        u.target = null;
+        u.moveTo(u.x + (dx / len) * 8, u.z + (dz / len) * 8, true);
+      }
+    }
+  }
+
   manageHunt(army) {
     const g = this.game;
     if (this.aggression < 0.45) return;
@@ -1035,7 +1143,12 @@ export class AIController {
       this.huntWarnAt = 0;
     }
     const threat = unitThreat(best);
-    const want = Math.min(9, 2 + Math.floor(threat / 2) + Math.floor(g.time / 240));
+    /* A hunt is a squad, not a second army. It is allowed to grow with the
+       danger and with the length of the war, but never past a third of the
+       host: a crown that spends every man chasing one caster has an army in
+       name only, and its own walls are the ones that fall. */
+    const want = Math.min(9, 2 + Math.floor(threat / 2) + Math.floor(g.time / 240),
+      Math.max(2, Math.floor(army.length * 0.34)));
 
     /* A squad needs a chance: count the target's *bodyguards*, not the map.
        Only men who can fight are a shield -- counting villagers would make a
@@ -1047,7 +1160,10 @@ export class AIController {
       if (!f.def || !(f.def.attack > 0)) continue;
       if (dist2(f.x, f.z, best.x, best.z) < 144) guards++;
     }
-    const free = army.filter((u) => (!u.aiRole || u.aiRole === 'wave') && this.hunt.indexOf(u) < 0);
+    /* never strip a wave that is already at the enemy walls */
+    const pressing = this.armyState === 'attack' && (this.lastWaveSeen || 0) + 40 > g.time;
+    const free = army.filter((u) => ((!u.aiRole || (u.aiRole === 'wave' && !pressing)))
+      && this.hunt.indexOf(u) < 0);
     while (this.hunt.length < want && free.length) {
       /* cavalry first (a hunt is a chase), then the men who have done this
          before -- but never a crippled elite, whose death would cost more
@@ -1261,16 +1377,39 @@ export class AIController {
       intruders.sort((a, b) => (unitThreat(b) - unitThreat(a)) ||
         (dist2(a.x, a.z, base.x, base.z) - dist2(b.x, b.z, base.x, base.z)));
       const worst = intruders[0];
+      /* How much of the army comes home? All of it, if the base is really in
+         danger. But if a scout rides past the woodline while forty men are
+         battering the enemy hall, recalling the assault is how a war is lost:
+         the wave that is already winning keeps pressing and only the men who
+         are near home answer. This is the difference between a garrison and
+         a body of troops that panics at every sound. */
+      let threatSum = 0, siegeSeen = false;
+      for (const u of intruders) {
+        threatSum += unitThreat(u);
+        if (u.def.classes.includes('siege')) siegeSeen = true;
+      }
+      /* ...and a crown that is one blow from losing its hall does not stop
+         to chase riders out of its own fields. The assault holds until the
+         wall is down. */
+      const wallIsDown = this.siegeHall && !this.siegeHall.dead &&
+        this.siegeHall.hp < this.siegeHall.maxHp * 0.3;
+      const heavy = (siegeSeen || threatSum >= 9 || intruders.length >= 6) && !wallIsDown;
+      const assaulting = (this.armyState === 'attack' && (this.lastWaveSeen || 0) + 60 > g.time) || wallIsDown;
+      let answered = 0;
       for (const u of army) {
         if (u.aiRole === 'hunt') continue;      // a hunt already has a job
+        if (!heavy && assaulting && u.aiRole === 'wave' &&
+            dist2(u.x, u.z, base.x, base.z) > 52 * 52) continue;  // the assault holds
         u.aiRole = 'defend';
+        answered++;
         if (u.target !== worst) {
-          u.target = worst;
           u.state = STATE.ATTACK;
+          u.target = worst;
           u.noAggro = false;
           u.unreachable = false;
         }
       }
+      if (!answered) return;   // nothing turned back; the war goes on
       if (worst.team === g.playerTeam && unitThreat(worst) >= 5 && g.time - this.huntWarnAt > 30) {
         this.huntWarnAt = g.time;
         g.notify('That caster is standing in your base — everything is on it', 'warn');
@@ -1304,7 +1443,44 @@ export class AIController {
     const canAttack = g.time > this.diff.firstWave &&
       (this.attackTimer <= 0 || (ready && this.armyState !== 'attack') || opportunistic);
 
-    if (canAttack && waveUnits.length >= 4) {
+    /* ---- reinforcements ----
+       A siege is won by the second company, not the first. Men trained while
+       the wave is already at the enemy hall march straight out and join it.
+       Without this the wave bleeds down to nothing outside the walls while a
+       fresh company forms up behind it and walks in alone, which is the same
+       defeat in detail the staging ground exists to prevent. */
+    if (this.armyState === 'attack' && (this.lastWaveSeen || 0) + 60 > g.time) {
+      const fresh = waveUnits.filter((u) => !u.aiRole);
+      const live = waveUnits.length - fresh.length;
+      if (live >= 3) {
+        const hall = g.enemyHall(this.team, enemyBase.x, enemyBase.z, 60);
+        const place = hall || { x: enemyBase.x, z: enemyBase.z };
+        for (const u of fresh) {
+          u.aiRole = 'wave';
+          u.noAggro = false;
+          if (hall && u.def.classes.includes('siege')) {
+            u.state = STATE.ATTACK;
+            u.target = hall;
+          } else {
+            u.state = STATE.ATTACK_MOVE;
+            u.target = null;
+            u.moveTo(place.x + (this.rng() - 0.5) * 14, place.z + (this.rng() - 0.5) * 14, true);
+          }
+        }
+        if (fresh.length) {
+          this.waveStrength = (this.waveStrength || 0) + fresh.length;
+          this.lastWaveSeen = g.time;
+          return;
+        }
+      }
+    }
+
+    /* A staging ground is set once. Re-entering it every time the timer
+       ticked rebuilt the ring, reset the eighteen-second clock and sent the
+       same men back to the same field, which is how an army can stand at the
+       edge of an enemy town for ten minutes without ever touching it. */
+    const alreadyStaging = this.armyState === 'stage' && this.staging;
+    if (canAttack && waveUnits.length >= 4 && this.armyState !== 'attack' && !alreadyStaging) {
       /* ---- staging ---- 
          An army that walks at the enemy town one unit at a time is defeated
          in detail: the defender's whole garrison meets each man as he
@@ -1321,8 +1497,18 @@ export class AIController {
         strength: waveUnits.length
       };
       this.armyState = 'stage';
-      this.waveStrength = waveUnits.length;
-      for (const u of waveUnits) {
+      /* Concentration. A crown that splits its host into a raiding party, a
+         mage-hunt and an assault is beaten in detail by a crown that keeps
+         its men together: this is the oldest lesson in war and the AI used
+         to ignore it. The hunt and the raiders are called in for the assault
+         and re-formed from what survives it. */
+      for (const u of army) {
+        if (u.aiRole === 'hunt' || u.aiRole === 'raid') u.aiRole = null;
+      }
+      const host = army.filter((u) => !u.aiRole || u.aiRole === 'wave');
+      this.hunt.length = 0;
+      this.waveStrength = host.length;
+      for (const u of host) {
         u.aiRole = 'stage';
         u.target = null;
         u.noAggro = false;
@@ -1334,24 +1520,33 @@ export class AIController {
 
     if (this.armyState === 'stage' && this.staging) {
       const st2 = this.staging;
+      /* The men at the colours are the ones with the 'stage' role. This was
+         the whole stalemate in one line: the block used to count `waveUnits`,
+         which excludes everything holding a role, so it believed the ring was
+         empty, sent nobody forward, and the army stood on a hill outside the
+         enemy town for the length of a match. */
+      const staged = army.filter((u) => u.aiRole === 'stage');
       let arrived = 0;
-      for (const u of waveUnits) {
-        if (u.aiRole !== 'stage') continue;
+      for (const u of staged) {
         if ((u.x - st2.x) ** 2 + (u.z - st2.z) ** 2 < 14 * 14) arrived++;
       }
       const enough = arrived >= Math.max(3, st2.strength * 0.6);
-      if (enough || g.time >= st2.until || waveUnits.length < 3) {
+      const fresh = army.filter((u) => !u.aiRole);
+      if (enough || g.time >= st2.until || staged.length + fresh.length < 3) {
         /* go in as one body */
         this.armyState = 'attack';
         this.attackTimer = this.diff.waveEvery;
         this.lastAttackTime = g.time;
-        this.waveStrength = waveUnits.length;
+        this.waveStrength = staged.length + fresh.length;
         this.lastWaveSeen = g.time;
         /* the hall first: a war of crowns is decided by which halls still
            stand, so the engines go for the town centre and the line follows */
         const target = g.enemyHall(this.team, enemyBase.x, enemyBase.z, 44)
           || g.nearestEnemyStructure({ x: enemyBase.x, z: enemyBase.z, team: this.team }, this.team, 40);
-        for (const u of waveUnits) {
+        this.siegeHall = target && target.def && target.def.ageAdvance ? target : null;
+        /* anyone still walking to the colours is in the wave now, not a
+           straggler with a stale job */
+        for (const u of [...staged, ...fresh]) {
           u.aiRole = 'wave';
           if (target && u.def.classes.includes('siege')) {
             u.state = STATE.ATTACK;
@@ -1367,8 +1562,7 @@ export class AIController {
         this.staging = null;
       } else {
         /* stragglers keep walking to the colours */
-        for (const u of waveUnits) {
-          if (u.aiRole !== 'stage') continue;
+        for (const u of staged) {
           if (u.state === STATE.IDLE) {
             u.state = STATE.ATTACK_MOVE;
             u.moveTo(st2.x + (this.rng() - 0.5) * 10, st2.z + (this.rng() - 0.5) * 10, true);
@@ -1379,6 +1573,11 @@ export class AIController {
     }
 
     if (this.armyState === 'attack') {
+      /* Men who turned back to chase a scout off the woodpile keep their
+         place in the line when it is over: without this the wave quietly
+         dissolves into a crowd of individuals and the AI believes it is
+         still attacking with an army it no longer has. */
+      for (const u of waveUnits) u.aiRole = 'wave';
       /* keep the push alive: refresh orders for stragglers */
       if (g.time - this.lastAttackTime > 9) {
         this.lastAttackTime = g.time;
@@ -1399,7 +1598,20 @@ export class AIController {
             if (dist2(u.x, u.z, h.x, h.z) < 34 * 34) { foesLeft++; break; }
           }
         }
-        const pressing = alive >= 6 && foesLeft <= Math.max(2, alive * 0.5);
+        /* A wounded hall is worth the last of the wave. Twenty men who have
+           bled to bring the enemy town centre to a tenth of its height and
+           then walk home have bought nothing but a graveyard and a lesson:
+           the gate is open for exactly as long as it takes them to reform. */
+        let weakHall = 1;
+        for (const b of g.buildings) {
+          if (b.dead || b.team !== this.foe || !b.def.ageAdvance) continue;
+          if ((b.buildProgress || 1) < 1) continue;   // a foundation is not a hall
+          if (dist2(b.x, b.z, enemyBase.x, enemyBase.z) > 55 * 55) continue;
+          const f = b.hp / b.maxHp;
+          if (f < weakHall) weakHall = f;
+        }
+        const finishing = weakHall < 0.45 && alive >= 4;
+        const pressing = finishing || (alive >= 6 && foesLeft <= Math.max(2, alive * 0.5));
         if ((alive < 3 || broken) && !pressing) {
           this.armyState = 'gather';
           this.staging = null;
@@ -1412,6 +1624,7 @@ export class AIController {
             u.moveTo(base.x + (this.rng() - 0.5) * 10, base.z + (this.rng() - 0.5) * 10, true);
           }
         } else {
+          this.micro(waveUnits, enemyBase);
           for (const u of waveUnits) {
             /* A soldier that reported "no way through" is standing outside a
                wall. Put it to work on the wall: an AI army that politely stops

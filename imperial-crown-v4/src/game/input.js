@@ -526,7 +526,8 @@ export class Input {
           : spot.reason === 'water' ? 'Cannot build in the water'
           : spot.reason === 'slope' ? 'The ground is too steep'
           : spot.reason === 'resource' ? 'Resources are in the way'
-          : spot.reason === 'edge' ? 'That is the edge of the world' : 'Cannot build there', 'warn');
+          : spot.reason === 'edge' ? 'That is the edge of the world'
+          : spot.reason === 'contested' ? 'Enemies are too close to raise a town centre' : 'Cannot build there', 'warn');
         this.audio?.play('warn');
         navigator.vibrate?.(24);
         return;
