@@ -7,6 +7,7 @@
 import { Court } from './court.js';
 import { Veterancy } from './veterancy.js';
 import { Morale } from './morale.js';
+import { Calendar } from './calendar.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
   RES, POP_CAP, isUniqueUnit
@@ -109,6 +110,7 @@ export class Game {
       ? opts.rand
       : mulberry32((seed ^ 0x9e3779b9) >>> 0);
     /* ids are per-game so that replays and save round-trips line up */
+    this.seed = seed >>> 0;
     this._idCounter = 1;
     this.world = opts.world;
     this.playerBase = opts.world.playerBase;
@@ -134,6 +136,7 @@ export class Game {
     this.court = new Court(this);
     this.veterancy = new Veterancy(this);
     this.morale = new Morale(this);
+    this.calendar = new Calendar(this);
     this.courtArmed = null;
     this.courtWrit = null;
 
@@ -269,6 +272,7 @@ export class Game {
     this.recomputePop();
     this.surveyHome(w.playerBase);
     this.updateFog(1);
+    if (this.calendar) this.calendar.start(true);
     this.onEvent('start', {});
     return this;
   }
@@ -651,6 +655,7 @@ export class Game {
     rate *= this.buffMul(team, 'gather');
     rate *= this.gatherDayMul;
     if (this.court) rate *= this.court.gatherMul(unit, kind);
+    if (this.calendar) rate *= this.calendar.gatherMul(kind);
     return rate;
   }
 
@@ -1055,6 +1060,7 @@ export class Game {
     if (this.court) base *= this.court.speedMul(unit);
     if (this.modHost) base *= this.modHost.speedMul(unit);
     if (this.morale) base *= this.morale.speedMul(unit);
+    if (this.calendar) base *= this.calendar.speedMul();
     return base;
   }
 
@@ -1526,7 +1532,20 @@ export class Game {
 
     // time of day (drives the renderer's sun, the HUD clock and unit vision)
     const prevPhase = this.dayPhase;
-    this.worldTime = (this.worldTime + (dt * 24) / this.dayLength) % 24;
+    /* The Long Night omen runs the clock at a different rate after dusk and
+       before dawn, so the dark really is longer rather than merely darker. */
+    let dayRate = (dt * 24) / this.dayLength;
+    if (this.calendar) {
+      const stretch = this.calendar.nightStretch;
+      if (stretch > 1) {
+        const h = this.worldTime;
+        const dark = (h >= 20.0 || h < 5.0);
+        if (dark) dayRate *= stretch;
+      }
+      this.calendar.update(dt);
+      this.calendar.tick(dt);
+    }
+    this.worldTime = (this.worldTime + dayRate) % 24;
     const phase = this.dayPhase;
     if (phase !== prevPhase) {
       this.phaseChanged = true;
@@ -1817,7 +1836,7 @@ export class Game {
     for (let i = 0; i < list.length; i++) {
       const u = list[i];
       if (!u || u.dead || u.garrisoned || u.kind !== 'unit') continue;
-      if (u.state === 'rout') { broken++; continue; }
+      if (u.state === STATE.ROUT) { broken++; continue; }
       out.push(u);
     }
     if (broken && this._routNoticeAt !== this.time) {

@@ -24,6 +24,9 @@
    ============================================================ */
 import { clamp } from '../core/math.js';
 
+/** The one string the rout behaviour is keyed on; mirrors STATE.ROUT. */
+const STATE_ROUT = 'rout';
+
 export const MORALE_MAX = 100;
 export const ROUT_AT = 8;          // below this a unit breaks
 export const RECOVER_AT = 45;      // and this is what it takes to come back
@@ -106,20 +109,20 @@ export class Morale {
     /* A broken man does not outrun a formed one. Rout is a disaster, not a
        free exit: the point of holding morale up is that you never have to
        find out how the chase ends. */
-    if (unit.state === 'rout') return 0.9;
+    if (unit.state === STATE_ROUT) return 0.9;
     const m = unit.morale === undefined ? MORALE_MAX : unit.morale;
     return m < 30 ? 0.94 : 1;
   }
 
   /** Damage taken while running: the back is the softest part of a soldier. */
   damageTakenMul(unit) {
-    return unit.state === 'rout' ? 1.5 : 1;
+    return unit.state === STATE_ROUT ? 1.5 : 1;
   }
 
   /** A rout is a state change with consequences; keep it in one place. */
   break_(unit) {
-    if (unit.state === 'rout') return;
-    unit.state = 'rout';
+    if (unit.state === STATE_ROUT) return;
+    unit.state = STATE_ROUT;
     unit.target = null;
     unit.targetPos = null;
     unit.path = null;
@@ -185,12 +188,19 @@ export class Morale {
       const fed = this.inSupply(u);
       u.fed = fed;
       let rate;
-      if (fed) rate = u.state === 'rout' ? 5.5 : 2.2;
-      else rate = u.state === 'rout' ? 0.8 : -1.1;
+      if (fed) rate = u.state === STATE_ROUT ? 5.5 : 2.2;
+      else rate = u.state === STATE_ROUT ? 0.8 : -1.1;
+      /* the Wheel of the Year: winter is a second enemy, spring a nurse.
+         The season multiplies the *gain* and sharpens the *loss*, so a fed
+         army still holds in winter but a starving one dies faster there. */
+      if (g.calendar) {
+        const m = g.calendar.moraleMul();
+        rate = rate > 0 ? rate * m : rate / Math.max(0.4, m);
+      }
       if (night) rate -= 0.35;
       u.morale = clamp(u.morale + rate * step, 0, MORALE_MAX);
       if (u.morale <= ROUT_AT) this.break_(u);
-      else if (u.state === 'rout' && u.morale >= RECOVER_AT) {
+      else if (u.state === STATE_ROUT && u.morale >= RECOVER_AT) {
         u.state = 'idle';
         u.routT = 0;
         if (u.team === g.playerTeam) g.notify(`${u.name} has recovered`, 'good');

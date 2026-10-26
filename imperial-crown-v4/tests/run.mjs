@@ -28,6 +28,7 @@ const SUITES = [
   ['mods', 'tests/mods.mjs'],
   ['court', 'tests/court.mjs'],
   ['veterancy', 'tests/veterancy.mjs'],
+  ['calendar', 'tests/calendar.mjs'],
   ['morale', 'tests/morale.mjs'],
   ['wallsite', 'tests/wallsite.mjs'],
   ['modsite', 'tests/modsite.mjs', true],

@@ -39,6 +39,7 @@ import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNI
 import { extractPlanes, sphereInFrustum } from './camera.js';
 import { BUILDING_DEFS } from '../sim/data.js';
 import { OFFICE_BY_ID } from '../sim/court.js';
+import { STATE } from '../sim/entities.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
 import { TIERS, renderSize } from './quality.js';
 
@@ -1612,7 +1613,7 @@ export class Renderer {
          must always draw something, or the two things the player most needs
          to see -- who is experienced, who is running -- would vanish at full
          health. */
-      if (!selected && ratio > 0.995 && !office && !u.rank && u.state !== 'rout') continue;
+      if (!selected && ratio > 0.995 && !office && !u.rank && u.state !== STATE.ROUT) continue;
       if ((u.x - cx) ** 2 + (u.z - cz) ** 2 > 92 * 92) continue;
       const meta = this.unitMeta.get(u.type) || UNIT_META_FALLBACK;
       const w = selected ? 1.15 : 0.85;
@@ -1620,7 +1621,7 @@ export class Renderer {
       if (!this._inFrustum(u.x, y, u.z, 2)) continue;
       /* a broken unit flies a red lamp: the player must be able to see who
          is running without clicking every man */
-      if (u.state === 'rout') {
+      if (u.state === STATE.ROUT) {
         const pulse = 0.75 + 0.25 * Math.sin(this.time * 6 + u.id);
         b.push(u.x, y + 0.26, u.z, 0.13 * pulse, 1.0, 0.36, 0.3, 0.9, 0.04, 0, 0, 0);
       }

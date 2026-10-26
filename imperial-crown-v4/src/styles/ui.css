@@ -725,3 +725,25 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .inspStats .morale { color: #cdd8e6; display: inline-flex; align-items: center; gap: 3px; }
 .inspStats .morale .ic { width: 10px; height: 10px; }
 .inspStats .morale.bad { color: #ff9b84; font-weight: 600; }
+
+/* ============================================================
+   THE WHEEL OF THE YEAR
+   A small pill under the clock. Colour carries the season; a red
+   dot carries "the omen is bad", because a player needs to know at
+   a glance whether to attack or to dig in.
+   ============================================================ */
+.seasonChip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 8.5px; letter-spacing: 0.5px; color: var(--ink-faint);
+  padding: 1px 5px 1px 4px; border-radius: 6px;
+  border: 1px solid rgba(232, 196, 122, 0.18);
+  background: rgba(20, 16, 12, 0.45);
+}
+.seasonChip .ic { width: 10px; height: 10px; color: currentColor; }
+.seasonChip b { font-weight: 600; }
+.seasonChip[data-season="spring"] { color: #9be08a; }
+.seasonChip[data-season="summer"] { color: #ffc861; }
+.seasonChip[data-season="autumn"] { color: #ff9b52; }
+.seasonChip[data-season="winter"] { color: #a9c9ff; }
+.seasonChip[data-bad="1"] { border-color: rgba(230, 120, 90, 0.55); }
+.seasonChip[data-bad="1"]::after { content: "!"; color: #ff8f75; font-weight: 700; margin-left: 1px; }

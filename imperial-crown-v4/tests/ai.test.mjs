@@ -41,11 +41,23 @@ for (let i = 0; i < maxTicks; i++) {
 const dur = (performance.now() - t0) / 1000;
 console.log('---', (maxTicks * dt).toFixed(0) + 's simulated in', dur.toFixed(2) + 's wall; avg tick', (total / maxTicks).toFixed(3), 'ms; worst', worst.toFixed(2), 'ms; errors', errors);
 console.log('units alive', game.units.filter((u) => !u.dead).length, 'buildings alive', game.buildings.filter((b) => !b.dead).length, 'projectiles', game.projectiles.activeCount);
+/* Supply tents are the AI's own answer to the morale system: an army that
+   walks away from them breaks. A bot that never builds one is not playing
+   the game the player is playing. */
+const tents = game.buildings.filter((b) => b.type === 'supply_tent').length;
+const season = game.calendar ? game.calendar.season.key : 'n/a';
+const omen = game.calendar && game.calendar.omen ? game.calendar.omen.id : 'n/a';
+console.log('the wheel:', season, 'year', game.calendar ? game.calendar.year : '?', '| omen', omen, '| tents', tents);
+const seasonsAll = game.calendar ? ['spring', 'summer', 'autumn', 'winter'] : [];
+const seasonIdx = game.calendar ? game.calendar.seasonIndex : 0;
+const seasonsSeen = game.calendar ? Math.floor(game.time / game.calendar.seasonLength) + game.calendar.year - 1 : 0;
 
 /* Assertions, not just a log. An economy that silently deadlocks (everyone
    banking gold, nobody gathering wood, no army, no age-up) still "runs" and
    would otherwise pass unnoticed. */
 const bad = [];
+if (seconds >= 300 && tents === 0) bad.push('no supply tent was ever built — raids must break');
+if (seconds >= 300 && seasonsSeen < 1) bad.push('the wheel of the year never turned');
 const samples = [];
 for (const team of [1, 2]) {
   const st = game.teams.get(team);

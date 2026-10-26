@@ -47,7 +47,7 @@ export class UI {
     this.el = {};
     const ids = ['resFood', 'resWood', 'resGold', 'resStone', 'resFavor', 'resPop',
       'dotFood', 'dotWood', 'dotGold', 'dotStone',
-      'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer',
+      'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer', 'seasonChip',
       'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnDecrees', 'decreeBadge', 'btnCourt', 'courtBadge',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
       'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
@@ -1035,6 +1035,29 @@ export class UI {
         el.wonderTimer.classList.toggle('done', !!w && left <= 0);
       }
     }
+    /* ---- the Wheel of the Year ----
+       A season pill under the clock. It carries the season's name and
+       colour, and its tooltip is the actual rule table plus the omen: the
+       omen is *not* discoverable from an icon, so it is spelled out. */
+    if (el.seasonChip && g.calendar) {
+      const cal = g.calendar;
+      const key = `${cal.season.key}|${cal.omen ? cal.omen.id : ''}|${Math.round(cal.progress * 20)}`;
+      if (this._lastSeasonKey !== key) {
+        this._lastSeasonKey = key;
+        const s = cal.season;
+        const o = cal.omen;
+        el.seasonChip.dataset.season = s.key;
+        el.seasonChip.dataset.bad = o && o.bad ? '1' : '0';
+        const use = el.seasonChip.querySelector('use');
+        if (use) use.setAttribute('href', `#i-${iconFor(s.icon)}`);
+        const b = el.seasonChip.querySelector('b');
+        if (b) b.textContent = s.name;
+        const left = Math.ceil(cal.remaining);
+        const text = `${cal.describe()}\n${left}s left in ${s.name} (year ${cal.year})`;
+        el.seasonChip.title = text;
+        el.seasonChip.setAttribute('aria-label', text.replace(/\n/g, ', '));
+      }
+    }
     if (el.worldTime) {
       const wt = g.worldTime || 12;
       const hh = Math.floor(wt);
@@ -1170,7 +1193,7 @@ export class UI {
             : st === STATE.ATTACK ? 'Fighting' : st === STATE.MOVE ? 'Moving'
               : st === STATE.ATTACK_MOVE ? 'Advancing' : st === STATE.IDLE ? 'Idle'
                 : st === STATE.REPAIR ? 'Repairing' : st === STATE.HEAL ? 'Healing'
-                  : st === 'rout' ? 'Falling back' : 'Ready';
+                  : st === STATE.ROUT ? 'Falling back' : 'Ready';
         sub = `${teamName} · ${stateName}`;
         if (e.rank && g.veterancy) sub += ` · ${g.veterancy.name(e)}`;
       }

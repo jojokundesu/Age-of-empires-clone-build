@@ -288,6 +288,49 @@ await check('an officer of rank II extends supply to his men', async () => {
 });
 
 /* ------------------------------------------------------------------ 7 */
+await check('the Wheel of the Year shows in the top bar and reads out its rules', async () => {
+  const st = await page.evaluate(() => {
+    const a = window.__imperial, g = a.game;
+    a.ui.updateText();
+    const chip = document.getElementById('seasonChip');
+    const cs = chip ? getComputedStyle(chip) : null;
+    return {
+      exists: !!chip,
+      season: g.calendar ? g.calendar.season.key : null,
+      dataSeason: chip ? chip.dataset.season : null,
+      label: chip ? chip.querySelector('b').textContent : '',
+      use: chip ? chip.querySelector('use').getAttribute('href') : '',
+      title: chip ? chip.title : '',
+      visible: cs ? cs.display !== 'none' : false
+    };
+  });
+  assert(st.exists, 'no season chip in the top bar');
+  assert(st.visible, 'the season chip is hidden');
+  assert(st.dataSeason === st.season, `the chip says ${st.dataSeason}, the sim says ${st.season}`);
+  assert(st.label.length > 2, 'the chip has no season name');
+  assert(st.use.startsWith('#i-'), 'the chip has no icon');
+  assert(/Food \d+%/.test(st.title) && /Omen:/.test(st.title), 'the tooltip does not spell out the rules: ' + st.title);
+  return `${st.label} (${st.dataSeason})`;
+});
+
+await check('the season turns in the HUD when the wheel turns', async () => {
+  const st = await page.evaluate(() => {
+    const a = window.__imperial, g = a.game;
+    const before = g.calendar.season.key;
+    /* jump the wheel to the last tenth of a second of the season */
+    g.calendar.t = g.calendar.seasonLength - 0.05;
+    a.ui.updateText();
+    window.__stepSim(0.4);
+    a.ui.updateText();
+    const chip = document.getElementById('seasonChip');
+    return { before, after: g.calendar.season.key, chip: chip.dataset.season, title: chip.title };
+  });
+  assert(st.before !== st.after, `the wheel did not turn (${st.before})`);
+  assert(st.chip === st.after, `the chip is stale: ${st.chip} vs ${st.after}`);
+  return `${st.before} → ${st.after}`;
+});
+
+/* ------------------------------------------------------------------ 8 */
 await check('nothing errored in the browser', async () => {
   const bad = consoleErrors.filter((t) => !/favicon|AudioContext|autoplay|Deprecation/i.test(t));
   assert(pageErrors.length === 0, 'page errors: ' + pageErrors.slice(0, 3).join(' | '));

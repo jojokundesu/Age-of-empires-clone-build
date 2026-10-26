@@ -625,6 +625,7 @@ class App {
       teams: { 1: g.exportTeam(1), 2: g.exportTeam(2) },
       wonder: [...g.wonderClocks.entries()],
       court: g.court ? g.court.toJSON() : null,
+      calendar: g.calendar ? g.calendar.toJSON() : null,
       units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round(u.xp || 0), Math.round(u.morale ?? 100)]),
       buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
@@ -682,6 +683,8 @@ class App {
       }
     }
     if (game.court && save.court) game.court.fromJSON(save.court);
+    /* the wheel is restored before anything reads a multiplier from it */
+    if (game.calendar && save.calendar) game.calendar.fromJSON(save.calendar);
     game.syncIdCounter();
     game.spawnUnit && game.recomputePop();
     game.buildingSpatialDirty = true;

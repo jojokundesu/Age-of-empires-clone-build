@@ -158,8 +158,60 @@ export class AIController {
     // ---------- court: market + decrees ----------
     this.manageCourt(st, age);
 
+    // ---------- the sky ----------
+    this.manageOmens(st, age);
+
     // ---------- military ----------
     this.manageMilitary(st, age);
+  }
+
+  /* ============================================================
+     THE WHEEL
+     ------------------------------------------------------------
+     The AI is not immune to weather. It reads the season and the omen
+     and changes its plans the way a good player does: it booms in the
+     months that feed it, hoards through winter, repays the Frost with
+     wood, and attacks when the sky is on its side -- the Comet, the
+     Silent March, the Iron Sky, a long night to raid through.
+     ============================================================ */
+  manageOmens(st, age) {
+    const g = this.game;
+    const cal = g.calendar;
+    if (!cal) return;
+    const season = cal.season.key;
+    const omen = cal.omen ? cal.omen.id : null;
+    /* How much the AI *wants* to attack right now, 0..1.5. It multiplies the
+       raid cadence, not the army size: an AI that builds more units in summer
+       is just a bigger AI, an AI that spends them in summer is a player. */
+    let mood = 1;
+    if (season === 'winter') mood *= 0.55;
+    else if (season === 'autumn') mood *= 1.1;
+    if (omen === 'red_comet' || omen === 'silent_march') mood *= 1.35;
+    else if (omen === 'long_night') mood *= 1.2;
+    else if (omen === 'plague_winds' || omen === 'great_frost') mood *= 0.8;
+    if (g.dayPhase === 'night') mood *= 1.2;
+    this.mood = mood;
+
+    /* winter rationing: stop spending food on soldiers, put it in the barn */
+    this.winterRation = season === 'winter';
+
+    /* The Frost is a bill, not a disaster: pay it. One repair crew, one
+       building at a time, whichever is most hurt. */
+    if (omen === 'great_frost' && (this.repairAt || 0) <= g.time) {
+      let worst = null, worstFrac = 0.92;
+      for (const b of this.myBuildings()) {
+        if (b.buildProgress !== undefined && b.buildProgress < 0.999) continue;
+        const f = b.hp / Math.max(1, b.maxHp);
+        if (f < worstFrac) { worstFrac = f; worst = b; }
+      }
+      if (worst) {
+        const crew = this.idleVillagers().slice(0, 2);
+        if (crew.length) {
+          g.orderRepair(crew, worst);
+          this.repairAt = g.time + 6;
+        }
+      }
+    }
   }
 
   /* ---------------- court ---------------- */
@@ -539,6 +591,12 @@ export class AIController {
   }
 
   pickUnitFor(building, age = 0) {
+    /* winter is not a season for new mouths: the AI still trains, but only
+       when the stores are deep enough to carry it to spring */
+    if (this.winterRation) {
+      const st = this.game.teams.get(this.team);
+      if (st && st.res.food < 220) return null;
+    }
     const st = this.game.teams.get(this.team);
     const options = building.def.trains.filter((t) => {
       if (isUnique(t) && this.civ.unique !== t) return false;
@@ -840,7 +898,7 @@ export class AIController {
     this.raidUnits = raid;
     this.raidGoal = goal;
     this.raidRefresh = g.time + 8;
-    this.raidTimer = Math.max(20, 58 - this.aggression * 30);
+    this.raidTimer = Math.max(18, (58 - this.aggression * 30) / Math.max(0.5, this.mood || 1));
   }
 
   /** Raiders want a worker, a wizard, or failing that a wall. */

@@ -41,7 +41,12 @@ export const STATE = {
   IDLE: 'idle', MOVE: 'move', ATTACK: 'attack', ATTACK_MOVE: 'attackmove',
   GATHER: 'gather', RETURN: 'return', BUILD: 'build', REPAIR: 'repair',
   HEAL: 'heal', CONVERT: 'convert', GARRISON: 'garrison', PATROL: 'patrol',
-  DEAD: 'dead', TRADE: 'trade', UNPACK: 'unpack'
+  DEAD: 'dead', TRADE: 'trade', UNPACK: 'unpack',
+  /* ROUT is a state, not a flag: a broken unit runs a different behaviour
+     branch entirely and the whole command layer has to be able to recognise
+     it. Keeping it in STATE means every tool that reads a unit's state --
+     contract tests, the inspector, a mod -- sees it. */
+  ROUT: 'rout'
 };
 
 /* Entity ids come from the *game*, not from a module-level counter. Two games
@@ -120,6 +125,8 @@ export class Entity {
     return before - this.hp;
   }
   heal(amount) {
+    const cal = this.game && this.game.calendar;
+    if (cal) amount *= cal.healMul();
     this.hp = Math.min(this.maxHp, this.hp + amount);
   }
   kill(attacker) {
@@ -223,6 +230,11 @@ export class Unit extends Entity {
       if (g.hasTech(team, 'scale_armor')) s.armor += 1;
     }
     if (def.classes.includes('archer') && !def.classes.includes('cavalry')) {
+      /* the Iron Sky omen: bows that reach further than they should */
+      if (g.calendar && g.calendar.omen && g.calendar.omen.archerRange) {
+        s.range += g.calendar.omen.archerRange;
+        s.attack *= g.calendar.omen.archerAttack || 1;
+      }
       if (g.hasTech(team, 'fletching')) { s.attack += 1; s.range += 1; }
       if (g.hasTech(team, 'bodkin_arrow')) { s.attack += 1; s.range += 1; }
       if (g.hasTech(team, 'chemistry')) s.attack += 1;
@@ -260,6 +272,7 @@ export class Unit extends Entity {
       s.pierceArmor += m.arm;
       s.attack *= m.atk;
     }
+    if (g.calendar) s.sight *= g.calendar.sightMul();
     if (this.def.auraRange) s.auraRange = this.def.auraRange;
     s.maxHpScale = s.maxHpScale || 1;
     this._stats = s;
@@ -498,7 +511,7 @@ export class Unit extends Entity {
       case STATE.PATROL: this.updatePatrol(dt, stats); break;
       case STATE.TRADE: this.updateTrade(dt, stats); break;
       case STATE.GARRISON: this.updateGarrisonMove(dt, stats); break;
-      case 'rout': this.updateRout(dt, stats); break;
+      case STATE.ROUT: this.updateRout(dt, stats); break;
       default: this.updateIdle(dt, stats); break;
     }
 
@@ -728,7 +741,17 @@ export class Unit extends Entity {
     dmg *= 1 + aura;
     dmg *= g.buffMul(this.team, 'attack');
     if (g.morale) dmg *= g.morale.attackMul(this);
+    if (g.calendar) dmg *= g.calendar.attackMul();
     const isRanged = this.def.range > 1.2 && def.attack > 0;
+    /* the Still Air omen: an arrow that loses its way never lands. Only
+       arrows -- a cannonball is not bothered by a still evening. */
+    if (isRanged && g.calendar && g.calendar.omen && g.calendar.omen.arrowMiss
+        && def.projectile !== 'boulder' && def.projectile !== 'cannon') {
+      if (g.rng() < g.calendar.omen.arrowMiss) {
+        g.fx.sparks(this.x + (g.rng() - 0.5) * 1.5, this.y + 1.4, this.z + (g.rng() - 0.5) * 1.5, 2, [0.75, 0.75, 0.75]);
+        return;
+      }
+    }
     // Night raids: melee strikes land harder after dark.
     if (!isRanged) dmg *= g.nightRaidMul;
     if (isRanged && def.attack > 0) {
@@ -1316,7 +1339,8 @@ export class Building extends Entity {
     const n = this.builders.size;
     const speed = (3.2 * Math.min(n, 4)) / (1 + Math.max(0, n - 1) * 0.55);
     const civ = this.game.civBonuses(this.team);
-    const bonus = (civ.buildSpeed || 1) * (this.game.hasTech(this.team, 'architecture') ? 1.3 : 1);
+    const bonus = (civ.buildSpeed || 1) * (this.game.hasTech(this.team, 'architecture') ? 1.3 : 1)
+      * (this.game.calendar ? this.game.calendar.buildMul() : 1);
     this.buildProgress = Math.min(1, this.buildProgress + (speed * dt * bonus) / 12);
     this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.012 * dt * bonus * Math.min(3, n));
     if (this.buildProgress >= 1 && !this.completedOnce) {
