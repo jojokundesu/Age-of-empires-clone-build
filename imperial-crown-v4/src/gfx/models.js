@@ -532,6 +532,10 @@ B('palissade_wall', () => {
   return { geo: g, height: 2.2 };
 });
 
+/* The gate's timber leaf is a *separate* mesh (buildGateDoor) so it can be
+   animated: it drops into the ground when the gate opens for friendly troops
+   and rises again when they have passed. Baking it into the gate meant the
+   doors were permanently shut while the gate claimed to let allies through. */
 B('stone_gate', () => {
   const g = new Geo();
   g.material(M.STONE).color(0.8, 0.78, 0.74);
@@ -540,15 +544,26 @@ B('stone_gate', () => {
     g.box(sx * 1.1, 2.95, 0, 0.9, 0.3, 1.2);
   }
   g.box(0, 3.2, 0, 3.0, 0.5, 1.0);
-  g.material(M.WOOD).color(0.4, 0.3, 0.2);
-  g.box(0, 1.2, 0.4, 2.0, 2.2, 0.12);
-  g.material(M.METAL).color(0.5, 0.48, 0.44);
-  for (let i = 0; i < 5; i++) g.box(-0.8 + i * 0.4, 1.2, 0.47, 0.06, 2.1, 0.05);
   g.material(M.STONE).color(0.88, 0.86, 0.82);
   g.battlements(0, 3.45, 0, 3.0, 1.0, 0.45);
+  /* the slot the leaf slides in and out of */
+  g.material(M.METAL).color(0.34, 0.32, 0.3);
+  g.box(0, 0.08, 0.4, 2.1, 0.14, 0.24);
   g.color(1, 1, 1);
   return { geo: g, height: 4.2 };
 });
+
+/** The gate leaf: a studded timber door, 2 m wide, that the renderer slides. */
+export function buildGateDoor() {
+  const g = new Geo();
+  g.material(M.WOOD).color(0.4, 0.3, 0.2);
+  g.box(0, 1.1, 0, 2.0, 2.2, 0.12);
+  g.material(M.METAL).color(0.5, 0.48, 0.44);
+  for (let i = 0; i < 5; i++) g.box(-0.8 + i * 0.4, 1.1, 0.07, 0.06, 2.1, 0.05);
+  for (const y of [0.55, 1.65]) g.box(0, y, 0.07, 1.9, 0.09, 0.06);
+  g.color(1, 1, 1);
+  return g.finish();
+}
 
 B('castle', () => {
   const g = new Geo();

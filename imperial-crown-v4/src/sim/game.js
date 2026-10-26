@@ -13,7 +13,7 @@ import { PathFinder } from './pathfind.js';
 import { SpatialHash } from './spatial.js';
 import { ProjectilePool } from './projectiles.js';
 import { WORLD } from './worldgen.js';
-import { clamp, lerp, dist2 } from '../core/math.js';
+import { clamp, lerp, dist2, mulberry32 } from '../core/math.js';
 
 export const TEAM_NEUTRAL = 0;
 export const TEAM_PLAYER = 1;
@@ -95,6 +95,18 @@ const DECREE_LIST = [
 
 export class Game {
   constructor(opts) {
+    /* One seeded stream for the whole simulation. Every random decision in the
+       sim -- a retry timer, an AI's wave timing, a unit's spawn facing -- draws
+       from it, so a match with a given seed and a given set of orders plays out
+       identically every time. That is what makes a bug report reproducible, and
+       it is a free replay feature. The renderer and the FX keep Math.random:
+       they are not part of the world's state. */
+    const seed = opts.seed !== undefined ? opts.seed : (opts.rand && opts.rand.seed) || 12345;
+    this.rng = typeof opts.rand === 'function' && opts.rand !== Math.random
+      ? opts.rand
+      : mulberry32((seed ^ 0x9e3779b9) >>> 0);
+    /* ids are per-game so that replays and save round-trips line up */
+    this._idCounter = 1;
     this.world = opts.world;
     this.playerBase = opts.world.playerBase;
     this.enemyBase = opts.world.enemyBase;
@@ -125,14 +137,26 @@ export class Game {
     this.resourceSpatial = new SpatialHash(8, 72);
     this.resourceSpatial.half = WORLD.half;
     this.pathFinder = new PathFinder(this.world.nav.cells, this.world.nav.cell, WORLD.half);
-    // Two nav layers: terrain (static) and building occupancy (dynamic).
+    /* Nav layers, from the bottom up:
+         terrain  -- water, cliffs, whatever the island generator decided
+         build    -- buildings and walls (block everyone)
+         gate     -- gates (block *enemies* only; allies walk through)
+       Everyone shares `navFinal`; enemies search a second combined grid with
+       the gate layer folded in. Two 65 kB grids is a cheap price for gates
+       that mean what their description says. */
     this.navTerrain = this.world.nav.blocked;
     this.navBuild = new Uint8Array(this.navTerrain.length);
+    this.navGate = new Uint8Array(this.navTerrain.length);
+    this.navCarve = new Uint8Array(this.navTerrain.length);
     this.navFinal = new Uint8Array(this.navTerrain.length);
+    this.navFinalEnemy = new Uint8Array(this.navTerrain.length);
     this.navFinal.set(this.navTerrain);
+    this.navFinalEnemy.set(this.navTerrain);
     this.navDirty = false;
     this.navTimer = 0;
     this.pathFinder.setGrid(this.navFinal, WORLD.half);
+    this.pathFinderEnemy = new PathFinder(this.world.nav.cells, this.world.nav.cell, WORLD.half);
+    this.pathFinderEnemy.setGrid(this.navFinalEnemy, WORLD.half);
 
     this.teams = new Map();
     for (const t of [TEAM_PLAYER, TEAM_ENEMY]) {
@@ -190,7 +214,6 @@ export class Game {
     this.fx = opts.fx || NULL_FX;
     this.sound = opts.sound || NULL_SOUND;
     this.onEvent = opts.onEvent || (() => {});
-    this.rng = opts.rand || Math.random;
     this.initialised = false;
     this.heightAt = (x, z) => this.world.height.sample(x, z);
     this.statsVersion = 1;          // bump to invalidate cached unit stats
@@ -198,9 +221,22 @@ export class Game {
     this._buildCostCache = new Map();
   }
 
+  nextId() {
+    return this._idCounter++;
+  }
+
+  /** Keep issuing fresh ids after a save is loaded. */
+  syncIdCounter() {
+    let max = 0;
+    for (const u of this.units) if (u.id > max) max = u.id;
+    for (const b of this.buildings) if (b.id > max) max = b.id;
+    for (const r of this.resources) if (r.id > max) max = r.id;
+    this._idCounter = max + 1;
+  }
+
   pickEnemyCiv(civ) {
     const keys = Object.keys(CIVS).filter((k) => k !== civ);
-    return keys[(Math.random() * keys.length) | 0];
+    return keys[(this.rng() * keys.length) | 0];
   }
 
   /* ==========================================================
@@ -318,7 +354,7 @@ export class Game {
     // neutral shrines become capturable buildings
     for (const p of this.world.poi || []) {
       const b = new Building(this, 'outpost_shrine', TEAM_NEUTRAL, p.x, p.z, true);
-      b.facing = Math.random() * 6.28;
+      b.facing = this.rng() * 6.28;
       this.addBuilding(b);
     }
   }
@@ -336,6 +372,11 @@ export class Game {
    * that a 2 m cell can never trap a soldier: only real water, cliffs and
    * solid buildings stop a unit.
    */
+  /** The pathfinder a unit should search with: gates block the enemy only. */
+  pfFor(unit) {
+    return unit && unit.team === 2 ? this.pathFinderEnemy : this.pathFinder;
+  }
+
   isPassable(x, z, unit) {
     if (!this.isInside(x, z)) return false;
     const h = this.world.height.sample(x, z);
@@ -346,6 +387,8 @@ export class Game {
     for (let i = 0; i < near.length; i++) {
       const b = near[i];
       if (b.dead || b.wall) continue;
+      /* a gate opens for its owner's troops, and for nobody else */
+      if (b.def.gate && unit && b.team === unit.team) continue;
       const half = (b.def.size || 3) * 0.5 - 0.05 + (unit ? unit.radius * 0.4 : 0.2);
       if (Math.abs(x - b.x) < half && Math.abs(z - b.z) < half) return false;
     }
@@ -356,23 +399,45 @@ export class Game {
    * Safety valve: relocate a wedged unit to the nearest walkable spot and let
    * it re-plan. Called rarely, so the cost of the spiral search is irrelevant.
    */
+  /**
+   * The nearest point to (x,z) a unit can actually stand on.
+   *
+   * Both tests matter. `isPassable` knows about water, cliffs and buildings;
+   * the nav grid knows about *walls*, which it stamps as 2 m cells. A point can
+   * be clear ground and still sit in a cell the pathfinder refuses -- and a
+   * move order to such a point used to produce a one-node path to a place the
+   * unit could never walk into. It then stood there, re-pathing to the same
+   * impossible spot, for as long as the order stood: the single most common
+   * "my army is frozen" report in the fuzzer, and in the real game.
+   */
+  freeSpotNear(x, z, unit, maxRing = 8) {
+    const pf = this.pfFor(unit);
+    if (this.isPassable(x, z, unit)) {
+      const [cx, cz] = pf.worldToCell(x, z);
+      if (!pf.isBlocked(cx, cz)) return [x, z];
+    }
+    let best = null, bestD = Infinity;
+    for (let ring = 1; ring <= maxRing; ring++) {
+      const r = ring * 0.85;
+      const n = 8 + ring * 4;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2 + ring * 0.37;
+        const px = x + Math.cos(a) * r;
+        const pz = z + Math.sin(a) * r;
+        if (!this.isPassable(px, pz, unit)) continue;
+        const [cx, cz] = pf.worldToCell(px, pz);
+        if (pf.isBlocked(cx, cz)) continue;
+        const d = dist2(px, pz, x, z);
+        if (d < bestD) { bestD = d; best = [px, pz]; }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
   unstick(unit) {
     const px = unit.x, pz = unit.z;
-    let best = null, bestD = 1e9;
-    for (let ring = 1; ring <= 7; ring++) {
-      const r = ring * 0.85;
-      for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2 + ring * 0.37;
-        const x = px + Math.cos(a) * r;
-        const z = pz + Math.sin(a) * r;
-        if (!this.isPassable(x, z, unit)) continue;
-        const [ncx, ncz] = this.pathFinder.worldToCell(x, z);
-        if (this.pathFinder.isBlocked(ncx, ncz)) continue;
-        const d = dist2(x, z, unit.x, unit.z);
-        if (d < bestD) { bestD = d; best = [x, z]; }
-      }
-      if (best) break;
-    }
+    const best = this.freeSpotNear(px, pz, unit, 7);
     if (best) { unit.x = best[0]; unit.z = best[1]; }
     unit.path = null;
     unit.pathIdx = 0;
@@ -383,15 +448,32 @@ export class Game {
     return !!best;
   }
 
-  /** Cheap straight-walk test used for short, direct movement. */
+  /**
+   * Cheap straight-walk test used for short, direct movement.
+   *
+   * It has to consult the nav grid as well as isPassable. isPassable ignores
+   * walls on purpose (they are nav obstacles, not physical ones), so a
+   * *straight-line* shortcut of a few metres used to walk clean through a
+   * palisade -- which made walls decorative and left the enemy inside the
+   * village. Sampling the combined grid costs a handful of array lookups per
+   * shortcut and closes that hole.
+   */
   walkableLine(x0, z0, x1, z1, unit) {
     const dx = x1 - x0, dz = z1 - z0;
     const d = Math.hypot(dx, dz);
     if (d < 0.001) return true;
+    const naval = !!(unit && unit.def && unit.def.naval);
+    const N = this.world.nav.cells, cell = this.world.nav.cell, half = WORLD.half;
+    const grid = naval ? null : this.pfFor(unit).blocked;
     const steps = Math.min(40, Math.ceil(d / 1.6));
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
-      if (!this.isPassable(x0 + dx * t, z0 + dz * t, unit)) return false;
+      const px = x0 + dx * t, pz = z0 + dz * t;
+      if (!this.isPassable(px, pz, unit)) return false;
+      if (grid) {
+        const cx = Math.floor((px + half) / cell), cz = Math.floor((pz + half) / cell);
+        if (cx >= 0 && cz >= 0 && cx < N && cz < N && grid[cz * N + cx]) return false;
+      }
     }
     return true;
   }
@@ -589,7 +671,7 @@ export class Game {
   }
 
   onGather(unit, node, amount) {
-    if (Math.random() < 0.25) {
+    if (this.rng() < 0.25) {
       if (node.resKind === 'wood') this.fx.leaves(node.x, node.y, node.z, 1);
       else if (node.resKind === 'stone' || node.resKind === 'gold') this.fx.sparks(node.x, node.y + 0.4, node.z, 1, [0.9, 0.85, 0.7]);
       else this.fx.dust(node.x, node.y, node.z, 1, 0.6);
@@ -730,7 +812,10 @@ export class Game {
     this.resourceSpatial.clear();
     this.buildingSpatialDirty = true;
     this.navBuild.fill(0);
+    this.navGate.fill(0);
+    this.navCarve.fill(0);
     this.navFinal.set(this.navTerrain);
+    this.navFinalEnemy.set(this.navTerrain);
     this.navDirty = true;
     this.selection.length = 0;
     this.selectionSet.clear();
@@ -764,7 +849,38 @@ export class Game {
     const z0 = Math.max(0, Math.floor((b.z - s + half) / cell));
     const z1 = Math.min(N - 1, Math.floor((b.z + s + half) / cell));
     const delta = blocked ? 1 : -1;
+    if (b.def.gate) {
+      /* A gate is an obstacle to the enemy and a doorway to its owner. It lives
+         in its own layer so allies path straight through; the doors are purely
+         visual (the renderer reads b.gateOpen).
+         It also *carves* its doorway out of the build layer. Without that the
+         coarse 2 m grid is fatal: a 2.8 m gate between 2 m wall segments has
+         its centre cell stamped by the wall beside it, so the gate blocks its
+         own troops -- exactly the bug this carve exists to prevent. Cells whose
+         centre is inside the gate's footprint open for the owner; every one of
+         them closes for the enemy. */
+      const ng = this.navGate, nfe = this.navFinalEnemy, t2 = this.navTerrain, nb2 = this.navBuild;
+      const nc = this.navCarve, nf2 = this.navFinal;
+      const core = (b.def.size || 2.8) * 0.5 + 0.15;
+      for (let cz = z0; cz <= z1; cz++) {
+        for (let cx = x0; cx <= x1; cx++) {
+          const i = cz * N + cx;
+          const gv = Math.max(0, ng[i] + delta);
+          ng[i] = gv;
+          /* is the cell's centre inside the doorway? */
+          const wx = (cx + 0.5) * cell - half, wz = (cz + 0.5) * cell - half;
+          const inCore = Math.abs(wx - b.x) <= core && Math.abs(wz - b.z) <= core;
+          const cv = inCore ? Math.max(0, nc[i] + delta) : nc[i];
+          nc[i] = cv;
+          nf2[i] = (t2[i] || (nb2[i] && !cv)) ? 1 : 0;
+          nfe[i] = (t2[i] || nb2[i] || gv) ? 1 : 0;
+        }
+      }
+      this.navDirty = true;
+      return;
+    }
     const t = this.navTerrain, nb = this.navBuild, nf = this.navFinal;
+    const nfe = this.navFinalEnemy, ng = this.navGate, nc = this.navCarve;
     for (let cz = z0; cz <= z1; cz++) {
       for (let cx = x0; cx <= x1; cx++) {
         const i = cz * N + cx;
@@ -772,7 +888,8 @@ export class Game {
         nb[i] = v;
         /* Patch the combined grid in place. Recombining all 65 536 cells on
            every house was a 1.2 ms spike for a change that touches ~36. */
-        nf[i] = (t[i] || v) ? 1 : 0;
+        nf[i] = (t[i] || (v && !nc[i])) ? 1 : 0;
+        nfe[i] = (t[i] || v || ng[i]) ? 1 : 0;
       }
     }
     this.navDirty = true;
@@ -781,6 +898,7 @@ export class Game {
   /** Recombine the nav layers and hand the result to the path finder. */
   refreshNav() {
     this.navDirty = false;
+    this.pathFinderEnemy.setGrid(this.navFinalEnemy, WORLD.half);
     /* navFinal is already up to date (markBuildingFootprint patches it), so
        this is just a byte copy into the pathfinder + a version bump. A full
        recombine is only needed when the terrain layer itself changes. */
@@ -1088,8 +1206,8 @@ export class Game {
     }
     unit.garrisoned = false;
     unit.garrisonTarget = null;
-    unit.x = (b ? b.x : unit.x) + (Math.random() - 0.5) * 4;
-    unit.z = (b ? b.z : unit.z) + (Math.random() - 0.5) * 4;
+    unit.x = (b ? b.x : unit.x) + (this.rng() - 0.5) * 4;
+    unit.z = (b ? b.z : unit.z) + (this.rng() - 0.5) * 4;
     unit.state = STATE.IDLE;
   }
 
@@ -1296,6 +1414,7 @@ export class Game {
 
     // bound the cost of a pathological tick: at most N fresh searches
     this.pathFinder.beginTick();
+    this.pathFinderEnemy.beginTick();
     // rebuild the unit hash once per tick
     this.spatial.clear();
     this.spatial.insertAll(this.units);
@@ -1678,6 +1797,18 @@ export class Game {
     }
   }
 
+  /**
+   * Send a crew down a run of foundations, round-robin, one villager per
+   * segment to start. Three villagers sent to a ten-segment wall should spread
+   * along it and raise it in parallel -- dumping all three on the first segment
+   * makes a wall take five times as long as it has to.
+   */
+  orderBuildMany(units, buildings) {
+    const crew = units.filter((u) => u && !u.dead && u.type === 'villager');
+    if (!crew.length || !buildings.length) return;
+    for (let i = 0; i < crew.length; i++) this.orderBuild([crew[i]], buildings[i % buildings.length]);
+  }
+
   orderRepair(units, building) {
     for (const u of units) {
       if (u.dead || u.type !== 'villager') continue;
@@ -1773,6 +1904,91 @@ export class Game {
       }
     }
     return { ok: true, reason: '' };
+  }
+
+  /* ---------------------------------------------------------------
+     walls
+     --------------------------------------------------------------- */
+
+  /**
+   * Plan a run of wall segments between two ground points.
+   *
+   * Walls are the one building you never place one at a time -- dragging a line
+   * is how you enclose a town, and doing it tap by tap is the difference
+   * between "walled base" and "gave up". The run snaps to the segment lattice
+   * so pieces touch instead of overlapping by 40 cm, takes the dominant axis
+   * first and then turns the corner (drag a rectangle's two corners and you get
+   * an L, exactly like the original), and stops at the first cell it cannot
+   * build on so you can see *where* the line broke.
+   *
+   * Returns one record per cell: { x, z, ok, reason, cost, afford }.
+   */
+  planWallLine(type, x0, z0, x1, z1, team = TEAM_PLAYER, limit = 48) {
+    const def = BUILDING_DEFS[type];
+    if (!def) return [];
+    const size = def.size || 2;
+    const edge = WORLD.half - size;
+    const step = (v) => clamp(Math.round(v / size), -Math.round(edge / size), Math.round(edge / size));
+    const i0 = step(x0), j0 = step(z0), i1 = step(x1), j1 = step(z1);
+    const cost = this.buildingCost(type, team);
+    const st = this.teams.get(team);
+    let purse = st ? { ...st.res } : null;
+
+    const cells = [];
+    const di = Math.sign(i1 - i0), dj = Math.sign(j1 - j0);
+    const spanI = Math.abs(i1 - i0), spanJ = Math.abs(j1 - j0);
+    const xFirst = spanI >= spanJ;
+    let i = i0, j = j0, broken = false;
+    for (let n = 0; n <= spanI + spanJ && cells.length < limit; n++) {
+      const x = i * size, z = j * size;
+      const spot = broken ? { ok: false, reason: 'blocked' } : this.canPlaceAt(type, team, x, z);
+      let ok = spot.ok, reason = spot.reason;
+      /* a wall may not grow through a forest: canPlaceAt waves resources
+         through for walls, which is right for a lone segment dropped in a
+         yard and wrong for a run that would thread a spruce */
+      if (ok && this.resourceSpatial) {
+        const half = size * 0.5;
+        const near = this.resourceSpatial.query(x, z, half + 3);
+        for (let k = 0; k < near.length; k++) {
+          const r = near[k];
+          if (r.dead) continue;
+          if (dist2(r.x, r.z, x, z) < (half + r.radius * r.scale * 0.75) ** 2) { ok = false; reason = 'resource'; break; }
+        }
+      }
+      let afford = ok;
+      if (ok && purse) {
+        for (const k of Object.keys(cost)) {
+          if ((purse[k] || 0) < (cost[k] || 0)) { afford = false; break; }
+        }
+        if (afford) for (const k of Object.keys(cost)) purse[k] -= cost[k] || 0;
+      }
+      cells.push({ x, z, ok, reason, cost, afford });
+      if (!ok) broken = true;
+      if (n === spanI + spanJ) break;
+      if (xFirst) { if (i !== i1) i += di; else j += dj; }
+      else { if (j !== j1) j += dj; else i += di; }
+    }
+    return cells;
+  }
+
+  /**
+   * Place a planned run. Stops at the first illegal cell and the first one the
+   * treasury cannot cover -- a wall line must never silently eat the whole
+   * stockpile or leave a gap in the middle of a run.
+   */
+  placeWallLine(type, team, cells, opts = {}) {
+    const out = [];
+    let stopped = 'end';
+    for (const c of cells) {
+      if (!c.ok) { stopped = c.reason || 'blocked'; break; }
+      const spot = this.canPlaceAt(type, team, c.x, c.z);
+      if (!spot.ok) { stopped = spot.reason || 'blocked'; break; }
+      if (!opts.free && !this.canAfford(team, this.buildingCost(type, team))) { stopped = 'resources'; break; }
+      const b = this.placeBuilding(type, team, c.x, c.z, { instant: opts.instant, free: opts.free, facing: opts.facing });
+      if (!b) { stopped = 'resources'; break; }
+      out.push(b);
+    }
+    return { placed: out, stopped };
   }
 
   /** Everything the HUD needs about a selection. */

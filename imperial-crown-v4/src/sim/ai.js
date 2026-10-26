@@ -40,10 +40,13 @@ const TECH_PRIORITY = [
 export class AIController {
   constructor(game, team, opts = {}) {
     this.game = game;
+    /* The AI draws from the simulation's stream, never Math.random: an AI that
+       rolls its own dice makes the whole match unreproducible. */
+    this.rng = () => (game && game.rng ? game.rng() : Math.random());
     this.team = team;
     this.diff = game.difficulty;
     this.aggression = this.diff.aggression;
-    this.timer = 0.6 + Math.random() * 0.4;
+    this.timer = 0.6 + this.rng() * 0.4;
     this.econTimer = 0;
     this.buildTimer = 0;
     this.attackTimer = this.diff.firstWave;
@@ -405,7 +408,7 @@ export class AIController {
     for (let ring = 0; ring < 9; ring++) {
       const radius = ringStart + ring * 4.2;
       const steps = Math.min(24, 8 + ring * 3);
-      const phase = Math.random() * Math.PI * 2;
+      const phase = this.rng() * Math.PI * 2;
       for (let i = 0; i < steps; i++) {
         const a = phase + (i / steps) * Math.PI * 2;
         const x = cx + Math.cos(a) * radius;
@@ -605,7 +608,7 @@ export class AIController {
         if (u.state === STATE.ATTACK && u.target && !u.target.dead) continue;
         u.state = STATE.ATTACK_MOVE;
         u.target = null;
-        u.moveTo(targetX + (Math.random() - 0.5) * 16, targetZ + (Math.random() - 0.5) * 16, true);
+        u.moveTo(targetX + (this.rng() - 0.5) * 16, targetZ + (this.rng() - 0.5) * 16, true);
       }
       return;
     }
@@ -626,7 +629,7 @@ export class AIController {
           for (const u of army) {
             if (u.state === STATE.IDLE) {
               u.state = STATE.ATTACK_MOVE;
-              u.moveTo(enemyBase.x + (Math.random() - 0.5) * 14, enemyBase.z + (Math.random() - 0.5) * 14, true);
+              u.moveTo(enemyBase.x + (this.rng() - 0.5) * 14, enemyBase.z + (this.rng() - 0.5) * 14, true);
             }
           }
         }
@@ -638,8 +641,8 @@ export class AIController {
     if (army.length) {
       for (const u of army) {
         if (u.state === STATE.IDLE) {
-          const a = Math.random() * Math.PI * 2;
-          const r = 6 + Math.random() * 7;
+          const a = this.rng() * Math.PI * 2;
+          const r = 6 + this.rng() * 7;
           u.state = STATE.MOVE;
           u.moveTo(base.x + Math.cos(a) * r, base.z + Math.sin(a) * r, true);
         }

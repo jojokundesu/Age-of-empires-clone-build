@@ -23,6 +23,8 @@ const SUITES = [
   ['pacing', 'tests/pacing.test.mjs'],
   ['ai', 'tests/ai.test.mjs', '240'],
   ['logistics', 'tests/logistics.mjs'],
+  ['wallgate', 'tests/wallgate.mjs'],
+  ['fuzz', 'tests/fuzz.mjs', ['--seconds', '90', '--seeds', '3', '--orders', '4']],
   ['hud', 'tests/ui.test.mjs'],
   ['application', 'tests/app.test.mjs'],
   ['bundle', 'tests/dist.test.mjs', true]

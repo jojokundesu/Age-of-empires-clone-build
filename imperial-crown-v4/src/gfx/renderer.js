@@ -35,7 +35,7 @@ import {
 import { InstanceBatch, QuadBatch } from './batch.js';
 import { buildTextures, uploadBaked, MAT, SPRITE } from './textures.js';
 import { bakeTerrain } from './bake.js';
-import { buildBuilding, buildUnit, buildProp, BUILDING_TYPES, UNIT_TYPES } from './models.js';
+import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
 import { extractPlanes, sphereInFrustum } from './camera.js';
 import { BUILDING_DEFS } from '../sim/data.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
@@ -149,7 +149,7 @@ export class Renderer {
     this.fogEnabled = false;
     this.playerTeam = 1;
     // scratch
-    this._mB = mat4(); this._mR = mat4(); this._mOut = mat4(); this._mS = mat4();
+    this._mB = mat4(); this._mR = mat4(); this._mOut = mat4(); this._mS = mat4(); this._mDoor = mat4();
     this._propCam = { x: 1e9, z: 1e9, t: 0 };
     this._activeProps = [];
     this._activeBatches = [];
@@ -213,6 +213,9 @@ export class Renderer {
         radius: (def.size || 3) * 0.72
       });
     }
+    /* gate leaves are animated, so they get their own tiny batch */
+    this.gateDoorBatch = new InstanceBatch(gl, buildGateDoor(), 40);
+    this.gateDoorBatch.cull = true;
 
     onProgress('Assembling armies…', 0.8);
     await frame();
@@ -897,6 +900,7 @@ export class Renderer {
 
     // ---------- buildings ----------
     for (const b of this.buildingBatches.values()) b.begin();
+    this.gateDoorBatch.begin();
     const bCull = this.quality.buildingCull;
     const bCull2 = bCull * bCull;
     for (let i = 0; i < game.buildings.length; i++) {
@@ -920,6 +924,13 @@ export class Renderer {
       const m = m4trs(this._mB, b.x, b.y - 0.04, b.z, b.facing || 0, scale, scale, scale);
       batch.push(m, tc[0], tc[1], tc[2], prog, dmg, 1, (b.team || 0) * 0.13,
         0, 0, 0, 0, 0, 0, wear, NO_SWAY.has(b.type) ? 0 : 0.35);
+      if (b.def && b.def.gate) {
+        /* the leaf drops 2.1 m when open; 0.02 keeps it hidden, not z-fighting */
+        const open = clamp(b.gateOpen || 0, 0, 1);
+        const gm = m4trs(this._mDoor, b.x, b.y - 0.04 - open * 2.16, b.z, b.facing || 0, scale, scale, scale);
+        this.gateDoorBatch.push(gm, tc[0], tc[1], tc[2], prog, dmg, 1, (b.team || 0) * 0.13,
+          0, 0, 0, 0, 0, 0, wear, 0);
+      }
     }
     for (const b of this.buildingBatches.values()) {
       if (!b.count) continue;
@@ -927,6 +938,12 @@ export class Renderer {
       active.push(b);
       st.tris += b.triCount * b.count;
       st.instances += b.count;
+    }
+    if (this.gateDoorBatch.count) {
+      this.gateDoorBatch.flush();
+      active.push(this.gateDoorBatch);
+      st.tris += this.gateDoorBatch.triCount * this.gateDoorBatch.count;
+      st.instances += this.gateDoorBatch.count;
     }
 
     // ---------- units ----------
@@ -1320,10 +1337,26 @@ export class Renderer {
     }
     if (game.placing) {
       const p = game.placing;
-      const col = p.valid ? [0.4, 1, 0.55] : [1, 0.3, 0.26];
-      const r = p.footprint || 3;
-      d.push(p.x, (p.y || 0) + 0.09, p.z, r * 0.72, col[0], col[1], col[2], 0.5, p.facing || 0, 2, 0, 0);
-      d.push(p.x, (p.y || 0) + 0.1, p.z, r * 0.74, col[0], col[1], col[2], 0.8, 0, 1, 0, 0);
+      if (p.line && p.cells && p.cells.length) {
+        /* one tile per planned segment: green where the run can go, red where
+           it stops, dim where the treasury runs out */
+        for (let i = 0; i < p.cells.length; i++) {
+          const c = p.cells[i];
+          const y = game.heightAt(c.x, c.z);
+          const good = c.ok && c.afford !== false;
+          const r = good ? (c.ok ? 0.4 : 1) : 1;
+          const g2 = good ? 1 : 0.55;
+          const b2 = good ? 0.55 : 0.26;
+          const a = good ? 0.55 : 0.4;
+          d.push(c.x, y + 0.09, c.z, (p.footprint || 2) * 0.38, r, g2, b2, a, 0, 2, 0, 0);
+          d.push(c.x, y + 0.1, c.z, (p.footprint || 2) * 0.4, r, g2, b2, a + 0.25, 0, 1, 0, 0);
+        }
+      } else {
+        const col = p.valid ? [0.4, 1, 0.55] : [1, 0.3, 0.26];
+        const r = p.footprint || 3;
+        d.push(p.x, (p.y || 0) + 0.09, p.z, r * 0.72, col[0], col[1], col[2], 0.5, p.facing || 0, 2, 0, 0);
+        d.push(p.x, (p.y || 0) + 0.1, p.z, r * 0.74, col[0], col[1], col[2], 0.8, 0, 1, 0, 0);
+      }
     }
     for (let i = 0; i < game.buildings.length; i++) {
       const b = game.buildings[i];
@@ -1514,6 +1547,7 @@ export class Renderer {
     for (const b of this.unitBatches.values()) b.dispose();
     for (const b of this.propBatches.values()) b.dispose();
     if (this.fireBatch) { this.fireBatch.dispose(); this.fireBatch = null; }
+    if (this.gateDoorBatch) { this.gateDoorBatch.dispose(); this.gateDoorBatch = null; }
     for (const b of this.resBatches.values()) b.dispose();
     for (const c of this.chunks) c.mesh.dispose();
     if (this.waterMesh) this.waterMesh.dispose();

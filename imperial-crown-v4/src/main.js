@@ -13,7 +13,7 @@ import { Audio } from './game/audio.js';
 import { Menu } from './game/menu.js';
 import { Input } from './game/input.js';
 import { UI } from './game/ui.js';
-import { AGES, CIVS, DIFFICULTY, GAME_MODES } from './sim/data.js';
+import { AGES, CIVS, DIFFICULTY, GAME_MODES, BUILDING_DEFS, UNIT_DEFS } from './sim/data.js';
 import { clamp } from './core/math.js';
 import { Governor, pickInitialTier, TIER_ORDER } from './gfx/quality.js';
 
@@ -628,6 +628,7 @@ class App {
         if (map.has(k)) { r.amount = map.get(k); if (r.amount <= 0) { r.dead = true; r.deadT = 9; } }
       }
     }
+    game.syncIdCounter();
     game.spawnUnit && game.recomputePop();
     game.buildingSpatialDirty = true;
     game.refreshNav();
@@ -772,6 +773,14 @@ class App {
 /* ================= boot ================= */
 export { App };
 const app = new App();
+/* What exists, for the tooling: the play-test, the tour and the balance
+   report all need the catalogue, and the built bundle does not export it.
+   Read-only, and not on any hot path. */
+app.catalogue = {
+  buildings: Object.keys(BUILDING_DEFS),
+  units: Object.keys(UNIT_DEFS),
+  ages: AGES.length
+};
 window.__imperial = app;
 
 window.addEventListener('error', (e) => {

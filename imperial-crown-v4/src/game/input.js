@@ -199,6 +199,17 @@ export class Input {
     if (this.pointers.size === 1) {
       this.dragMoved = 0;
       this.tapValid = true;
+      /* In wall-placement mode a one-finger drag draws the wall, it does not
+         pan. The map is still pannable with two fingers, so a long run across
+         a big enclave can be drawn in stages. */
+      const p = this.game && this.game.placing;
+      if (p && p.line) {
+        const g = this.groundAt(e.clientX, e.clientY, [0, 0, 0]);
+        p.anchorX = g[0]; p.anchorZ = g[2];
+        p.x = g[0]; p.z = g[2];
+        p.cells = this.game.planWallLine(p.type, p.anchorX, p.anchorZ, g[0], g[2]);
+        p.valid = true;
+      }
       this.tapStart.x = e.clientX;
       this.tapStart.y = e.clientY;
       this.tapStart.t = performance.now();
@@ -277,6 +288,14 @@ export class Input {
       }
       return;
     }
+    if ((this.mode === 'pan' || this.mode === 'maybePan') && this._wallDrawing()) {
+      if (moved > TAP_MOVE_PX) {
+        this.mode = 'wallDraw';
+        this._updateWall(e.clientX, e.clientY);
+      }
+      return;
+    }
+    if (this.mode === 'wallDraw') { this._updateWall(e.clientX, e.clientY); return; }
     if (this.mode === 'pan' || this.mode === 'maybePan') {
       if (moved > 3) this.mode = 'pan';
       if (this.mode === 'pan') {
@@ -313,6 +332,11 @@ export class Input {
     }
 
     if (this.pointers.size === 0) {
+      if (this.mode === 'wallDraw') {
+        this._commitWall();
+        this.mode = 'idle';
+        return;
+      }
       if (this.mode === 'box' && this.box) {
         this.commitBox(this.box);
         this.ui?.hideSelBox();
@@ -341,8 +365,62 @@ export class Input {
     this.pointers.delete(e.pointerId);
     this.clearLongPress();
     this.ui?.hideSelBox();
+    if (this.game && this.game.placing) this.game.placing.cells = null;
     this.mode = 'idle';
     this.pinch = null;
+  }
+
+  /* ---------------- wall line ---------------- */
+  _wallDrawing() {
+    const p = this.game && this.game.placing;
+    return !!(p && p.line);
+  }
+
+  /** Recompute the ghosted run under the finger. Cheap: one lattice walk. */
+  _updateWall(cx, cy) {
+    const p = this.game.placing;
+    if (!p) return;
+    const g = this.groundAt(cx, cy, [0, 0, 0]);
+    p.x = g[0]; p.z = g[2];
+    const cells = this.game.planWallLine(p.type, p.anchorX, p.anchorZ, g[0], g[2]);
+    p.cells = cells;
+    const last = cells[cells.length - 1];
+    p.valid = !!(last && last.ok);
+    this._wallLen = cells.filter((c) => c.ok).length;
+  }
+
+  _commitWall() {
+    const game = this.game;
+    const p = game.placing;
+    if (!p || !p.cells || !p.cells.length) return;
+    const run = p.cells;
+    const { placed, stopped } = game.placeWallLine(p.type, 1, run, { instant: false });
+    if (!placed.length) {
+      const why = stopped === 'resources' ? 'Not enough resources for another segment'
+        : stopped === 'water' ? 'The line runs into the water'
+        : stopped === 'slope' ? 'The ground is too steep there'
+        : stopped === 'resource' ? 'The line runs into a forest or a mine'
+        : 'Cannot build there';
+      this.ui?.toast(why, 'warn');
+      this.audio?.play('warn');
+      p.cells = null;
+      return;
+    }
+    /* the crew that opened the build menu, or the selected villagers, walk the
+       line: orderBuild appends, so a crew of three builds the run from end to
+       end instead of three villagers fighting over one segment */
+    const crew = (p.builders && p.builders.length ? p.builders : game.selectionOfTeam(1))
+      .filter((u) => u && !u.dead && u.type === 'villager');
+    if (crew.length) game.orderBuildMany(crew, placed);
+    const cost = game.buildingCost(p.type, 1);
+    const each = Object.entries(cost).map(([k, v]) => `${v * placed.length} ${k}`).join(' + ');
+    const name = placed.length === 1 ? 'segment' : 'segments';
+    this.ui?.toast(`${placed.length} wall ${name} · ${each}`, stopped === 'end' ? 'good' : 'warn');
+    this.audio?.play('build');
+    navigator.vibrate?.(14);
+    p.cells = null;
+    p.anchorX = p.x; p.anchorZ = p.z;
+    this.ui?.refreshCommands(true);
   }
 
   wheel(e) {

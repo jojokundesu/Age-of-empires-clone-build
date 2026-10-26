@@ -7,7 +7,12 @@
 import { UNIT_DEFS, BUILDING_DEFS, AGES, TECH_DEFS } from './data.js';
 import { clamp, lerp, angleLerp } from '../core/math.js';
 
-const randRange = (a, b) => a + Math.random() * (b - a);
+/* Sim-owned randomness. `rngOf(e)` is the entity's game stream; a handful of
+   call sites are in the Building and Resource classes, which also hold `game`.
+   Anything visual (fx.dust jitter) can stay on the entity stream too: it is
+   deterministic, and it costs nothing. */
+const rngOf = (e) => (e && e.game && e.game.rng ? e.game.rng : Math.random);
+const randRange = (a, b, rng = Math.random) => a + rng() * (b - a);
 
 /** Distance from an entity to a building's footprint (0 when overlapping). */
 function rectDist(e, b) {
@@ -39,19 +44,24 @@ export const STATE = {
   DEAD: 'dead', TRADE: 'trade', UNPACK: 'unpack'
 };
 
+/* Entity ids come from the *game*, not from a module-level counter. Two games
+   built from the same seed therefore number their units identically, which is
+   what makes a replay byte-for-byte reproducible; and a save can restore the
+   counter alongside the entities. The fallback keeps entities creatable before
+   a game exists (tools, previews). */
 let idCounter = 1;
 export const nextEntityId = () => idCounter++;
 
 export class Entity {
   constructor(game, type, team, x, z) {
     this.game = game;
-    this.id = nextEntityId();
+    this.id = game && game.nextId ? game.nextId() : nextEntityId();
     this.type = type;
     this.team = team;
     this.x = x;
     this.z = z;
     this.y = game.heightAt(x, z);
-    this.facing = Math.random() * Math.PI * 2;
+    this.facing = (this.game ? this.game.rng() : Math.random()) * Math.PI * 2;
     this.dead = false;
     this.deadT = 0;
     this.hp = 1;
@@ -142,11 +152,11 @@ export class Unit extends Entity {
     this.carry = { kind: null, amount: 0 };
     this.carryCap = 10;
     this.gatherCooldown = 0;
-    this.attackCooldown = Math.random() * 0.3;
+    this.attackCooldown = (this.game ? this.game.rng() : Math.random()) * 0.3;
     this.stance = 'aggressive';
     this.garrisoned = false;
     this.garrisonTarget = null;
-    this.anim = { phase: Math.random() * 6.28, speed: 0, attack: 0, spin: 0, mount: 0 };
+    this.anim = { phase: (this.game ? this.game.rng() : Math.random()) * 6.28, speed: 0, attack: 0, spin: 0, mount: 0 };
     this.speedMul = 1;
     this.attackAnimT = 0;
     this.chargeTimer = 0;
@@ -236,7 +246,16 @@ export class Unit extends Entity {
 
   setPath(destX, destZ, force = false) {
     if (!this.def.naval && !this.game.pathFinder) return;
-    const pf = this.game.pathFinder;
+    /* enemies search a grid where gates are shut; allies walk through them */
+    const pf = this.game.pfFor ? this.game.pfFor(this) : this.game.pathFinder;
+    /* Aim at somewhere the unit can actually reach. Orders land inside wall
+       cells and building edges all the time -- a finger on a phone is 40 px
+       wide -- and a path to an unreachable point is a unit that never arrives. */
+    if (!this.def.naval && this.game.freeSpotNear) {
+      const spot = this.game.freeSpotNear(destX, destZ, this, 5);
+      if (spot) { destX = spot[0]; destZ = spot[1]; }
+      this._exactGoal = spot ? Math.hypot(spot[0] - this.x, spot[1] - this.z) : Infinity;
+    }
     this.destX = destX;
     this.destZ = destZ;
     if (!force && this.path && this.pathIdx < this.path.length) {
@@ -284,6 +303,22 @@ export class Unit extends Entity {
          forever from the same spot. */
       const tail = p[p.length - 1];
       this.partialPath = !hop && Math.hypot(tail[0] - destX, tail[1] - destZ) > 2.5;
+    } else if (pf.lastUnreachable) {
+      /* There is no way through: this unit is walled off from where it was
+         told to go. Cancel the order instead of grinding against the wall --
+         and tell the player why, once, so a walled-in town is diagnosable. */
+      this.path = null;
+      this.pathIdx = 0;
+      this.targetPos = null;
+      this.destX = null;
+      this.destZ = null;
+      this.unreachable = true;
+      this.state = STATE.IDLE;
+      this.moving = false;
+      if (this.team === 1 && !this._unreachNotified) {
+        this._unreachNotified = this.game.time;
+        this.game.notify('Cannot reach that place', 'warn');
+      }
     } else if (pf.lastWasSkip) {
       // the pathfinder ran out of budget this tick: try again next tick
       this.path = null;
@@ -349,7 +384,7 @@ export class Unit extends Entity {
        of metres short, which is how villagers ended up circling their own
        drop-off with a full load. Every candidate is now checked against both
        the walk test and the nav cell. */
-    const pf = g.pathFinder;
+    const pf = g.pfFor ? g.pfFor(this) : g.pathFinder;
     const free = (x, z) => {
       if (!g.isPassable(x, z, this)) return false;
       if (!pf) return true;
@@ -810,7 +845,7 @@ export class Unit extends Entity {
     this.desiredFacing = Math.atan2(target.x - this.x, target.z - this.z);
     target.addBuilder(this, dt);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 7) * 0.5 + 0.35);
-    if (Math.random() < dt * 2.2) g.fx.dust(target.x + randRange(-1, 1), target.y + 0.2, target.z + randRange(-1, 1), 1, 0.8);
+    if (g.rng() < dt * 2.2) g.fx.dust(target.x + randRange(-1, 1, g.rng), target.y + 0.2, target.z + randRange(-1, 1, g.rng), 1, 0.8);
     if (target.buildProgress >= 1) {
       this.buildTarget = null;
       this._clearNear();
@@ -870,7 +905,7 @@ export class Unit extends Entity {
     const heal = (this.def.heal || 10) * dt * (g.civBonuses(this.team).monkHeal || 1);
     target.heal(heal);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 3) * 0.35 + 0.3);
-    if (Math.random() < dt * 3) g.fx.heal(target.x, target.y, target.z, 1);
+    if (g.rng() < dt * 3) g.fx.heal(target.x, target.y, target.z, 1);
   }
 
   updateConvert(dt, stats) {
@@ -888,7 +923,7 @@ export class Unit extends Entity {
     this.moving = false;
     this.path = null;
     this.convertProgress += dt * (1 + (g.hasTech(this.team, 'illumination') ? 0.3 : 0));
-    if (Math.random() < dt * 6) g.fx.glowPulse(target.x, target.y + 0.8, target.z, 0.5, 0.75, 1);
+    if (g.rng() < dt * 6) g.fx.glowPulse(target.x, target.y + 0.8, target.z, 0.5, 0.75, 1);
     if (this.convertProgress >= 1) {
       this.convertProgress = 0;
       g.convertUnit(target, this.team);
@@ -996,7 +1031,9 @@ export class Unit extends Entity {
         if (fz) this.z = nz;
         this.repathTimer -= dt;
         if (this.repathTimer <= 0 && this.targetPos) {
-          this.repathTimer = 0.32 + Math.random() * 0.24;
+          /* a jittered retry, but jittered on the *world's* stream, so two
+             runs of the same seed unstick the same villagers at the same tick */
+          this.repathTimer = 0.32 + g.rng() * 0.24;
           this.setPath(this.targetPos[0], this.targetPos[1], true);
           if (!this.path) { this.moving = false; return true; }
           return false;
@@ -1051,7 +1088,7 @@ export class Unit extends Entity {
           else if (g.isPassable(this.x, pz, this)) this.z = pz;
         }
       }
-      if (Math.random() < dt * 0.35 && !this.def.naval && !this.def.siege && (this.type === 'knight' || this.type === 'war_elephant' || this.type === 'scout_cavalry' || this.type === 'cataphract' || this.type === 'hero_general')) {
+      if (g.rng() < dt * 0.35 && !this.def.naval && !this.def.siege && (this.type === 'knight' || this.type === 'war_elephant' || this.type === 'scout_cavalry' || this.type === 'cataphract' || this.type === 'hero_general')) {
         g.fx.dust(this.x, this.y, this.z, 1, 0.7);
       }
       const wpd = Math.hypot(wp[0] - this.x, wp[1] - this.z);
@@ -1085,9 +1122,9 @@ export class Building extends Entity {
     this.rally = null;
     this.garrison = [];
     this.builders = new Map();
-    this.attackCooldown = Math.random();
+    this.attackCooldown = this.game ? this.game.rng() : Math.random();
     this.target = null;
-    this.facing = def.water ? Math.PI : Math.random() * 0.2 - 0.1;
+    this.facing = def.water ? Math.PI : ((this.game ? this.game.rng() : Math.random()) * 0.2 - 0.1);
     this.trainProgress = 0;
     this.relics = 0;
     this.wonderTimer = 0;
@@ -1109,9 +1146,9 @@ export class Building extends Entity {
     g.fx.smoke(this.x, this.y + 1.5, this.z, 12, 1.8, 0.8);
     for (let i = 0; i < 14; i++) {
       g.fx.spawn({
-        x: this.x + (Math.random() - 0.5) * this.size, y: this.y + Math.random() * 2, z: this.z + (Math.random() - 0.5) * this.size,
-        vx: (Math.random() - 0.5) * 4, vy: 2 + Math.random() * 4, vz: (Math.random() - 0.5) * 4,
-        life: 1.2 + Math.random(), size: 0.2 + Math.random() * 0.2,
+        x: this.x + (g.rng() - 0.5) * this.size, y: this.y + g.rng() * 2, z: this.z + (g.rng() - 0.5) * this.size,
+        vx: (g.rng() - 0.5) * 4, vy: 2 + g.rng() * 4, vz: (g.rng() - 0.5) * 4,
+        life: 1.2 + g.rng(), size: 0.2 + g.rng() * 0.2,
         r: 0.5, g: 0.45, b: 0.4, sprite: 12, gravity: 12, drag: 0.98
       });
     }
@@ -1120,8 +1157,8 @@ export class Building extends Entity {
         g.units.push(u);
         u.garrisoned = false;
         u.garrisonTarget = null;
-        u.x = this.x + randRange(-2, 2);
-        u.z = this.z + randRange(-2, 2);
+        u.x = this.x + randRange(-2, 2, rngOf(this));
+        u.z = this.z + randRange(-2, 2, rngOf(this));
         u.hp = Math.max(1, u.hp);
         u.state = STATE.IDLE;
       }
@@ -1197,8 +1234,8 @@ export class Building extends Entity {
     for (const u of this.garrison) {
       u.garrisoned = false;
       u.garrisonTarget = null;
-      u.x = this.x + randRange(-this.size, this.size);
-      u.z = this.z + randRange(-this.size, this.size);
+      u.x = this.x + randRange(-this.size, this.size, rngOf(this));
+      u.z = this.z + randRange(-this.size, this.size, rngOf(this));
       u.state = STATE.IDLE;
     }
     this.garrison.length = 0;
@@ -1239,6 +1276,27 @@ export class Building extends Entity {
       }
     }
     // defensive fire
+    /* Gates: a leaf rises for the owner's troops and settles again once they
+       have gone through. Checked a few times a second, not every tick -- a
+       walled town can have a dozen gates and the query is not free. */
+    if (def.gate) {
+      this.gateTimer = (this.gateTimer || 0) - dt;
+      if (this.gateTimer <= 0) {
+        this.gateTimer = 0.2;
+        let want = false;
+        const near = g.spatial.query(this.x, this.z, (def.size || 2.8) * 0.5 + 3.4);
+        for (let i = 0; i < near.length; i++) {
+          const u = near[i];
+          if (u.dead || u.garrisoned || u.team !== this.team || (u.def && u.def.naval)) continue;
+          if (Math.abs(u.x - this.x) < (def.size || 2.8) * 0.5 + 2.2 && Math.abs(u.z - this.z) < (def.size || 2.8) * 0.5 + 2.2) { want = true; break; }
+        }
+        this.gateWant = want;
+      }
+      const speed = this.gateWant ? 4.5 : 1.6;
+      const target = this.gateWant ? 1 : 0;
+      this.gateOpen = clamp((this.gateOpen || 0) + Math.sign(target - this.gateOpen) * speed * dt, 0, 1);
+      if (this.gateOpen !== target && Math.abs(this.gateOpen - target) < 0.01) this.gateOpen = target;
+    }
     if (def.attack > 0) {
       this.attackCooldown -= dt;
       const range = def.range || 8;
@@ -1271,11 +1329,11 @@ export class Building extends Entity {
     if (this.hp / this.maxHp < 0.55) {
       this.smokeT -= dt;
       if (this.smokeT <= 0) {
-        this.smokeT = 0.25 + Math.random() * 0.4;
-        g.fx.smoke(this.x + randRange(-1, 1), this.y + this.height * 0.7, this.z + randRange(-1, 1), 1, 1, 0.6);
+        this.smokeT = 0.25 + g.rng() * 0.4;
+        g.fx.smoke(this.x + randRange(-1, 1, g.rng), this.y + this.height * 0.7, this.z + randRange(-1, 1, g.rng), 1, 1, 0.6);
       }
       if (this.hp / this.maxHp < 0.3) {
-        if (Math.random() < dt * 8) g.fx.fire(this.x + randRange(-1.2, 1.2), this.y + this.height * 0.55, this.z + randRange(-1.2, 1.2), 1, 0.9);
+        if (g.rng() < dt * 8) g.fx.fire(this.x + randRange(-1.2, 1.2, g.rng), this.y + this.height * 0.55, this.z + randRange(-1.2, 1.2, g.rng), 1, 0.9);
       }
     }
     /* Wonder Race: the clock only runs on a *finished* wonder, and any
@@ -1290,7 +1348,7 @@ export class Building extends Entity {
       }
     }
     // town centre auto-rally spawn
-    if (def.dropoff && Math.random() < dt * 0.5) {
+    if (def.dropoff && g.rng() < dt * 0.5) {
       // chimney smoke
       if (this.type === 'town_center' || this.type === 'house' || this.type === 'monastery') {
         g.fx.smoke(this.x + (this.type === 'house' ? 0.55 : 1.2), this.y + this.height * 0.85, this.z, 1, 0.7, 0.8);
@@ -1312,7 +1370,7 @@ export class ResourceNode extends Entity {
     this.radius = opts.radius || 1.0;
     this.scale = opts.scale || 1;
     this.variant = opts.variant || 0;
-    this.facing = opts.facing || Math.random() * 6.28;
+    this.facing = opts.facing !== undefined ? opts.facing : (this.game ? this.game.rng() : Math.random()) * 6.28;
     this.yOff = opts.yOff || 0;
     this.herd = !!opts.herd;
     this.workers = 0;
@@ -1337,7 +1395,7 @@ export class ResourceNode extends Entity {
       this.wander = (this.wander || 0) + dt;
       if (this.wander > 3.5) {
         this.wander = 0;
-        this.wanderDir = Math.random() * 6.28;
+        this.wanderDir = this.game.rng() * 6.28;
         this.moving = true;
         this.moveT = 1.2;
       }

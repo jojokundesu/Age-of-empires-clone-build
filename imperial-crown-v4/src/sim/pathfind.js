@@ -395,6 +395,7 @@ export class PathFinder {
       return null;
     }
     this.lastWasSkip = false;
+    this.lastUnreachable = false;
     this.budget--;
     this.searchBudget--;
 
@@ -526,9 +527,15 @@ export class PathFinder {
       }
     }
     if (!found) {
-      // Nothing explored at all (we are in a pocket): hand back a straight line
-      // and let local avoidance deal with it rather than freezing the unit.
-      if (bestNode === start) return [[gx, gz]];
+      /* Nothing explored at all: the unit is sealed in. Handing back a straight
+         line at the goal -- the old behaviour -- makes it walk into the wall,
+         slide, re-path, and repeat for as long as the order stands, which is
+         exactly the "my army is frozen against a palisade" bug. Say so
+         instead: the caller cancels the order and the unit stands still. */
+      if (bestNode === start) {
+        this.lastUnreachable = true;
+        return null;
+      }
       goal = bestNode; // partial path to the closest explored cell
     }
 

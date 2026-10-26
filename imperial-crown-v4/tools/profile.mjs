@@ -73,8 +73,19 @@ canvas.getContext = () => gl;
 const fx = new FX();
 const r = new Renderer(canvas, { quality: QUALITY });
 const timings = {};
+/* the boot screen shows labels, so the labels are the phases we profile */
+const phases = [];
+let phaseT = performance.now();
+let phaseLabel = 'start';
 const origInit = r.init.bind(r);
-await time('renderer.init (textures/models/shaders)', () => origInit(() => {}));
+await time('renderer.init (textures/models/shaders)', () => origInit((label) => {
+  const now = performance.now();
+  phases.push([phaseLabel, now - phaseT]);
+  phaseLabel = label;
+  phaseT = now;
+}));
+phases.push([phaseLabel, performance.now() - phaseT]);
+for (const [label, ms] of phases) console.log(`     ${label.padEnd(44)} ${ms.toFixed(0)} ms`);
 await time('renderer.buildWorld', () => r.buildWorld(world));
 
 const game = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'hard', fx });
