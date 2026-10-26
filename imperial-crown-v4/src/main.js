@@ -235,6 +235,10 @@ class App {
     }
     const portrait = window.innerHeight > window.innerWidth * 1.1;
     document.getElementById('rotateHint')?.classList.toggle('hidden', !portrait || !this.running);
+    /* the HUD's own layout shifts with the viewport: the top bar is one row
+       of chips in portrait and three in landscape, and the strips below it
+       are placed from its measured height */
+    this.ui?.layoutTopBar?.();
   }
 
   applySettings(state) {

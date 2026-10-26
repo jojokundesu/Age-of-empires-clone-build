@@ -135,10 +135,14 @@
       </div>
     </header>
 
-    <div id="alertStrip"></div>
-
-    <!-- the crowns of a War of Crowns: one pill per kingdom, only in that mode -->
-    <div id="crownStrip" class="hidden"></div>
+    <!-- the top-centre stack: the alert pill and, in a War of Crowns, one
+         pill per kingdom. They used to be two independent absolutely
+         positioned strips at the same y, which put them both underneath the
+         Age card and on top of each other. -->
+    <div id="topStack">
+      <div id="crownStrip" class="hidden"></div>
+      <div id="alertStrip"></div>
+    </div>
 
     <!-- mod session strip: only ever populated in a Mod Workshop match -->
     <div id="modHud" class="hidden"></div>

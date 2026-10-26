@@ -179,8 +179,27 @@ export class UI {
   }
 
   /* ---------------- lifecycle ---------------- */
-  show() { this.root?.classList.remove('hidden'); }
+  show() { this.root?.classList.remove('hidden'); requestAnimationFrame(() => this.layoutTopBar()); }
   hide() { this.root?.classList.add('hidden'); }
+
+  /**
+   * Publish the real height of the top bar as `--topbar-h`.
+   *
+   * The bar is a flex row whose height depends on the layout: one row of
+   * resource chips in portrait, three rows of clock and season chips in
+   * landscape. Anything anchored under it (the crown strip, the alert pill)
+   * has to know that number, and guessing it is how the fourth crown of a
+   * four-crown war ended up behind the Age card.
+   */
+  layoutTopBar() {
+    const bar = document.querySelector('#topBar');
+    if (!bar) return;
+    const h = Math.round(bar.getBoundingClientRect().height);
+    if (h && h !== this._topBarH) {
+      this._topBarH = h;
+      document.documentElement.style.setProperty('--topbar-h', `${h + 10}px`);
+    }
+  }
 
   setGame(game) {
     this.game = game;
@@ -992,7 +1011,8 @@ export class UI {
     }
     if (this.tAcc >= 1 / CMD_HZ) {
       this.tAcc = 0;
-      this.updateText();
+      this.updateText(dt);
+      if ((this._barTick = (this._barTick || 0) + 1) % 30 === 0) this.layoutTopBar();
       this.updateInspector();
       this.updateModHud();
       /* An open build menu is modal. This used to overwrite it with the
@@ -1098,7 +1118,7 @@ export class UI {
     el.replaceChildren(frag);
   }
 
-  updateText() {
+  updateText(dt = 0) {
     const g = this.game;
     const t = g.teams.get(1);
     const el = this.el, last = this.last;

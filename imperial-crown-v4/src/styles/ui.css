@@ -184,10 +184,23 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .iconBtn .badge.favor { background: #4a2a6b; }
 .iconBtn .badge.zero { display: none; }
 
-#crownStrip {
-  position: absolute; top: calc(48px + var(--safe-top)); left: 50%; transform: translateX(-50%);
-  display: flex; gap: 4px; pointer-events: none; z-index: 3;
+/* ---- the top-centre stack ----
+   The alert pill and the crowns sit under the top bar, centred, in one
+   column. The old rules pinned both to `top: 48px`, which is inside the Age
+   card in landscape: the fourth crown of a war was drawn behind the card and
+   the alert pill was drawn over it. The stack is placed from a measured
+   --topbar-h (see UIRoot.layoutTopBar), so it clears the bar in any layout,
+   portrait or landscape, and the two strips can never collide again. */
+#topStack {
+  position: absolute; top: calc(var(--topbar-h, 84px) + var(--safe-top));
+  left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  pointer-events: none; z-index: 4; max-width: min(94vw, 660px);
 }
+#crownStrip {
+  position: static; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px;
+}
+#crownStrip.hidden { display: none; }
 #crownStrip .crown {
   display: inline-flex; align-items: center; gap: 4px;
   font-size: 8.5px; letter-spacing: 0.4px; padding: 2px 6px; border-radius: 7px;
@@ -200,9 +213,9 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 #crownStrip .crown.fallen { opacity: 0.42; text-decoration: line-through; }
 
 #alertStrip {
-  position: absolute; top: calc(48px + var(--safe-top)); left: 50%; transform: translateX(-50%);
+  position: static;
   display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none;
-  width: min(74vw, 560px); z-index: 4;
+  max-width: min(74vw, 560px);
 }
 .alert {
   font-size: 10.5px; letter-spacing: 0.5px; padding: 4px 12px; border-radius: 20px;
