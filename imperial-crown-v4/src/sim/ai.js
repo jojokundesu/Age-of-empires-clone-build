@@ -1062,6 +1062,7 @@ export class AIController {
         let man = null, md = 7 * 7;
         for (const e of g.units) {
           if (e.dead || e.garrisoned || !e.def || e.def.attack <= 0) continue;
+          if (e.def.classes.includes('villager')) continue;  // a siege is not a peasant hunt
           if (!g.isHostile(this.team, e.team)) continue;
           const d = (e.x - u.x) ** 2 + (e.z - u.z) ** 2;
           if (d < md) { md = d; man = e; }

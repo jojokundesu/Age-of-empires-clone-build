@@ -1698,6 +1698,22 @@ export class UI {
       ['Resources gathered', Math.floor(t.gathered || 0)],
       ['Age reached', AGES[t.age].name]
     ];
+    /* the chronicle: in a war of crowns the map itself is the story, and a
+       player who took three thrones should be able to read which of them
+       fell to whom, and in what order */
+    if (crowns > 2) {
+      const chron = (g.chronicle || []).filter((c) => c.team !== 1);
+      const nameOf = (id) => {
+        const row = g.scoreboard ? g.scoreboard().find((r) => r.team === id) : null;
+        return row ? row.name.split(' ')[0] : (id ? `Crown ${id}` : 'no one');
+      };
+      if (chron.length) {
+        const order = chron.map((c) => `${nameOf(c.team)} → ${nameOf(c.heir)}`).join(' · ');
+        metrics.push(['Crowns fallen', order]);
+      } else {
+        metrics.push(['Crowns standing', `${g.teamIds.filter((t) => t === 1 || (g.aliveTeam(t))).length} of ${g.teamIds.length}`]);
+      }
+    }
     const stats = document.getElementById('endStats');
     if (stats) stats.innerHTML = metrics.map(([k, v]) => `<div class="endStat"><span>${k}</span><b>${v}</b></div>`).join('');
     const k = document.getElementById('endKicker');

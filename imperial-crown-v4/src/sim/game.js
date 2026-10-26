@@ -365,6 +365,10 @@ export class Game {
     this.spawnResources();
     for (const t of this.teamIds) this.setupTeam(t, this.baseOf(t), this.civForTeam(t));
     this.fallenTeams = new Set();
+    /* the short history of the war: which crown fell, to whom, and when.
+       The end screen reads it, so a player who wins a war of four crowns
+       can see exactly how the map became theirs. */
+    this.chronicle = [];
     /* who last drew blood on whom: the crown that breaks a rival inherits
        it, so the map has to exist before the first blow, not after it */
     this.lastBlood = new Map();
@@ -2138,6 +2142,8 @@ export class Game {
     if (!this.fallenTeams) this.fallenTeams = new Set();
     if (this.fallenTeams.has(team)) return { ok: false };
     this.fallenTeams.add(team);
+    if (!this.chronicle) this.chronicle = [];
+    this.chronicle.push({ team, heir: heir && heir !== team ? heir : null, time: this.time });
     const loser = this.teams.get(team);
     const spoils = { heir, resources: null, techs: [], units: 0, favor: 0, buffs: 0 };
     const target = heir && heir !== team && this.teams.has(heir) ? heir : null;
