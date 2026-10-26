@@ -1,0 +1,13 @@
+import { Camera } from '../src/gfx/camera.js';
+const cam = new Camera({ yaw: 0.7, pitch: 0.62, dist: 46 });
+cam.setAspect(900/420); cam.setViewport(900,420); cam.heightAt = () => 0;
+cam.setTarget(0,0,true); cam.snap(); cam.update(1/60,{instant:true});
+const J = cam._panJacobian(cam.target);
+console.log('J', J);
+const p0 = cam.project(0,0,0,[0,0,0]);
+const t0 = cam.target.slice();
+cam.panPixels(60, 0);
+console.log('target', Array.from(t0), '->', Array.from(cam.desired));
+cam.update(1/60,{instant:true});
+const p1 = cam.project(0,0,0,[0,0,0]);
+console.log('ndc', p0, '->', p1, 'px', (p1[0]-p0[0])*0.5*900, (p1[1]-p0[1])*-0.5*420);

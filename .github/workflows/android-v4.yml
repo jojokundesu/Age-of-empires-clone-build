@@ -1,0 +1,335 @@
+name: Build Android APK (v4)
+
+# v4 is the performance rework: the same game and the same UI as v3, with a
+# pixel-budget renderer and a frame governor that keeps the Realme 9i above the
+# frame budget. It lives in imperial-crown-v4/ so the shipped 2.0.1 and v3
+# releases and their sources are untouched.
+#
+# Everything runs with working-directory: imperial-crown-v4, so the paths in
+# scripts/build-apk.sh, tests/ and dist/ are the ones v4 was developed against.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish / update the GitHub release with this APK'
+        type: boolean
+        default: true
+  push:
+    branches: [main, 'arena/**']
+    paths:
+      - 'imperial-crown-v4/**'
+      - '.github/workflows/android-v4.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'imperial-crown-v4/**'
+      - '.github/workflows/android-v4.yml'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: apk-v4-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: imperial-crown-v4
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_HOME: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: imperial-crown-v4/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android build-tools
+        working-directory: .
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          ls "$ANDROID_HOME/build-tools"
+          echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0" >> "$GITHUB_ENV"
+          echo "PLATFORM=$ANDROID_HOME/platforms/android-34" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # 19 suites: shell, contract, geometry, audio, shaders, sim, survey,
+      # combat, day/night, quality/governor, renderer, perf budgets, input
+      # direction, pacing, AI, logistics, HUD, application, bundle.
+      - name: Unit + integration tests
+        run: |
+          set -o pipefail
+          npm run test:ci 2>&1 | tee ci-test.log
+
+      - name: Build web bundle
+        run: npm run build
+
+      - name: Bundle contract test
+        run: |
+          set -o pipefail
+          node tests/dist.test.mjs 2>&1 | tee -a ci-test.log
+
+      - name: Browser smoke test (real headless Chrome)
+        id: browser
+        continue-on-error: true
+        run: |
+          (npm ls puppeteer-core >/dev/null 2>&1 || npm i --no-save puppeteer-core@23 @sparticuz/chromium@131) 2>&1 | tee -a browser-test.log
+          node tests/browser.mjs --seconds 8 --dpr 1.5 --out ci/screenshots 2>&1 | tee -a browser-test.log
+
+      # 260-entity battle on the phone profile: heap after forced GC, tick cost,
+      # draw calls, DOM size.
+      - name: Soak test (phone profile)
+        id: soak
+        continue-on-error: true
+        run: |
+          node tests/soak.mjs --seconds 40 --units 260 2>&1 | tee -a soak.log
+
+      - name: Play test (a whole session in Chrome)
+        id: playtest
+        continue-on-error: true
+        run: |
+          node tests/playtest.mjs --out ci/screenshots 2>&1 | tee -a playtest.log
+
+      # The measurement that decides whether this build is actually usable on a
+      # phone: the same scene at every pixel budget, in a real browser at the
+      # phone's geometry. Informational, so a slow shared runner cannot block a
+      # release, but the numbers are published with every build.
+      - name: Frame-rate profile at phone geometry
+        id: fps
+        continue-on-error: true
+        run: |
+          node tools/fps.mjs --seconds 4 --out ci/fps 2>&1 | tee -a fps.log
+
+      - name: Publish browser diagnostics
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo '### Browser diagnostics (v4)'
+            echo
+            echo "browser: \`${{ steps.browser.outcome }}\` · playtest: \`${{ steps.playtest.outcome }}\` · soak: \`${{ steps.soak.outcome }}\` · fps: \`${{ steps.fps.outcome }}\`"
+            echo
+            echo '```'
+            tail -n 60 browser-test.log 2>/dev/null || echo 'no log written'
+            echo '```'
+            echo
+            cat ci/browser-report.md 2>/dev/null || echo '_no report written_'
+            echo
+            cat ci/playtest-report.md 2>/dev/null || echo '_no play test report written_'
+            echo
+            cat ci/soak-report.md 2>/dev/null || echo '_no soak report written_'
+            echo
+            echo '```'
+            tail -n 24 fps.log 2>/dev/null || echo 'no fps log'
+            echo '```'
+          } > ci/browser-diagnostics.md
+          cat ci/browser-diagnostics.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr comment "$PR_NUMBER" --body-file ci/browser-diagnostics.md
+          fi
+
+      - name: Check the browser run actually reported
+        run: |
+          test -s ci/browser-report.md || { echo "::error::ci/browser-report.md missing or empty"; exit 1; }
+          test -d ci/screenshots || { echo "::error::no screenshots written"; exit 1; }
+          ls -la ci/screenshots | head -20
+          grep -qi "all browser checks passed" ci/browser-report.md || { echo "::error::browser checks did not pass"; cat ci/browser-report.md; exit 1; }
+
+      - name: Check the play test passed
+        run: |
+          test -s ci/playtest-report.md || { echo "::error::ci/playtest-report.md missing"; exit 1; }
+          grep -qi "PLAYTEST PASSED" ci/playtest-report.md || {
+            echo "::error::the play test did not pass"; cat ci/playtest-report.md; exit 1; }
+          grep -c '✅' ci/playtest-report.md
+
+      - name: Check the soak actually passed
+        run: |
+          test -s ci/soak-report.md || { echo "::error::ci/soak-report.md missing"; exit 1; }
+          grep -qi "soak passed" ci/soak-report.md || { echo "::error::soak checks did not pass"; cat ci/soak-report.md; exit 1; }
+
+      - name: Upload screenshots + browser report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v4-browser-screenshots
+          path: |
+            imperial-crown-v4/ci/screenshots
+            imperial-crown-v4/ci/fps
+            imperial-crown-v4/ci/browser-report.md
+            imperial-crown-v4/ci/playtest-report.md
+            imperial-crown-v4/ci/soak-report.md
+            imperial-crown-v4/browser-test.log
+            imperial-crown-v4/playtest.log
+            imperial-crown-v4/soak.log
+            imperial-crown-v4/fps.log
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Build APK
+        run: |
+          chmod +x scripts/build-apk.sh
+          set -o pipefail
+          ./scripts/build-apk.sh 2>&1 | tee apk-build.log
+
+      - name: Post APK build log on failure
+        if: failure()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          {
+            echo '### APK build failed (v4)'
+            echo
+            echo '```'
+            tail -n 80 apk-build.log 2>/dev/null || echo 'no apk-build.log'
+            echo '```'
+          } > apk-failure.md
+          cat apk-failure.md >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$PR_NUMBER" ]; then
+            PR_NUMBER=$(gh pr list --head "$GITHUB_REF_NAME" --json number -q '.[0].number' 2>/dev/null || true)
+          fi
+          if [ -n "$PR_NUMBER" ]; then gh pr comment "$PR_NUMBER" --body-file apk-failure.md; fi
+          tail -n 60 apk-build.log 2>/dev/null | sed 's/^/::error::/' || true
+
+      - name: Verify APK
+        run: |
+          APK=$(ls build/imperial-crown-*.apk | head -1)
+          echo "APK=$APK" >> "$GITHUB_ENV"
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK" | tee apk-verify.txt
+          grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" apk-verify.txt
+          grep "Signer #1 certificate SHA-256" apk-verify.txt
+          "$BUILD_TOOLS/zipalign" -c -p 4 "$APK"
+          unzip -l "$APK" | grep -q "classes.dex" || { echo "::error::APK contains no classes.dex"; exit 1; }
+          unzip -l "$APK" | grep -q "assets/www/index.html" || { echo "::error::APK contains no game"; exit 1; }
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | head -12
+          cp "$APK" imperial-crown-3d-v4.apk
+          ls -lh imperial-crown-3d-v4.apk
+          sha256sum imperial-crown-3d-v4.apk | tee apk-sha256.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: imperial-crown-3d-v4-apk
+          path: |
+            imperial-crown-v4/imperial-crown-3d-v4.apk
+            imperial-crown-v4/apk-sha256.txt
+          retention-days: 90
+
+      # Publishing is deliberately narrow: an explicit v4 tag, or a manual
+      # dispatch that asks for it. A branch push only updates the dev pre-release
+      # below, so the numbered 2.0.x / 3.0.x releases can never be clobbered.
+      - name: Publish release
+        if: ${{ startsWith(github.ref, 'refs/tags/v4') || (github.event_name == 'workflow_dispatch' && inputs.release) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v$(node -p "require('./package.json').version")-mobile"
+          NOTES="Imperial Crown 3D — mobile build (v4 performance rework).
+
+          * Same game, same UI; the renderer now draws at a **pixel budget**
+            instead of `css × devicePixelRatio`, which on a DPR-3 phone asked
+            for 2.6 Mpx it could never shade. Balanced is 0.82 Mpx: ~3x fewer
+            pixels, and the frame is entirely fill-rate bound.
+          * A frame governor holds the frame rate: resolution first, then the
+            detail tier, then the refresh divisor (90/45/30 on a 90 Hz panel),
+            and it only spends headroom after probing for it, so the picture
+            settles instead of pulsing.
+          * Drag the map with a finger: the world follows the finger (verified
+            with real touch events in the play test).
+          * Fully offline: the entire game ships inside the APK.
+          * Install over an older build with \`adb install -r imperial-crown-3d-v4.apk\`.
+          * The 2.0.x and 3.0.x releases are untouched and still available.
+
+          Built from \`${GITHUB_SHA::7}\` on $(date -u +%Y-%m-%d)."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" imperial-crown-3d-v4.apk apk-sha256.txt --clobber
+            gh release edit "$TAG" --notes "$NOTES"
+          else
+            gh release create "$TAG" imperial-crown-3d-v4.apk apk-sha256.txt \
+              --target "$GITHUB_SHA" \
+              --title "Imperial Crown 3D — $TAG" --notes "$NOTES"
+          fi
+          gh release view "$TAG" --json assets,url -q '.url, .assets[].url'
+
+      # A moving pre-release for branch builds, so the phone can install straight
+      # from a stable URL:
+      #   .../releases/download/v4-dev-mobile/imperial-crown-3d-v4.apk
+      - name: Publish dev build
+        if: ${{ startsWith(github.ref, 'refs/heads/arena/') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v4-dev-mobile"
+          NOTES="Current v4 branch build — **not a stable release**.
+
+          * engine $(node -p "require('./package.json').version"), commit \`${GITHUB_SHA::7}\`
+          * built $(date -u +%Y-%m-%d) from \`${GITHUB_REF_NAME}\`
+          * install with \`adb install -r imperial-crown-3d-v4.apk\`, or open the
+            .apk link on the phone and allow install from this browser."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" imperial-crown-3d-v4.apk apk-sha256.txt --clobber
+            gh release edit "$TAG" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" imperial-crown-3d-v4.apk apk-sha256.txt \
+              --target "$GITHUB_SHA" --prerelease \
+              --title "Imperial Crown 3D — v4 dev build" --notes "$NOTES"
+          fi
+          gh release view "$TAG" --json assets,url -q '.url, .assets[].url'
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v4-build-logs
+          path: |
+            imperial-crown-v4/ci-test.log
+            imperial-crown-v4/apk-build.log
+            imperial-crown-v4/apk-sha256.txt
+            imperial-crown-v4/fps.log
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Job summary
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "### Imperial Crown 3D v4 build"
+            echo '```'
+            echo "sha:    $GITHUB_SHA"
+            echo "branch: $GITHUB_REF_NAME"
+            echo
+            echo "== tests =="
+            tail -12 ci-test.log 2>/dev/null || echo "(no test log)"
+            echo
+            echo "== frame rate =="
+            tail -10 fps.log 2>/dev/null || echo "(no fps log)"
+            echo
+            echo "== apk =="
+            tail -22 apk-build.log 2>/dev/null || echo "(no apk log)"
+            cat apk-sha256.txt 2>/dev/null || true
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
