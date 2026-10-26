@@ -447,8 +447,18 @@ export class PathFinder {
       if (!found) return null;
     }
 
-    // A straight, clear line needs no search at all.
-    if (this.lineClear(sx, sz, gx, gz)) {
+    /* A straight, clear line needs no search at all -- but "clear" has to mean
+       clear for a *body*, not clear for a 2 m cell. A house is 2.8 m and the
+       grid rounds it to whole cells by centre containment, so the inside of
+       its front face is open ground to the grid and a solid wall to
+       isPassable(). This shortcut used to return a straight line through it;
+       the unit then walked into the face, found the step blocked, slid along
+       it, re-pathed, got the same straight line, and repeated until the match
+       ended -- the "soldier frozen against a house" report, reproduced in a
+       twenty-minute four-crown war. The fine test is the same one
+       `_smooth()` uses, so a shortcut is now exactly as safe as a smoothed
+       path. */
+    if (this.lineClear(sx, sz, gx, gz) && !(this.lineBlocked && this.lineBlocked(sx, sz, gx, gz))) {
       this.stats.hits++;
       return [[sx, sz], [gx, gz]];
     }
@@ -474,6 +484,17 @@ export class PathFinder {
     const cached = this.cache.get(cacheKey);
     if (cached && cached.version === this.version) {
       this.stats.hits++;
+      /* The cached route begins at the exact spot of the *first* caller in
+         this start cell. Handing that straight back gives a unit a first
+         waypoint that may be a metre behind it, and a unit already walking
+         turns round to touch it -- two men in a doorway can then spell each
+         other for half a minute. Re-anchor the first node on the caller. */
+      const p0 = cached.path[0];
+      if ((p0[0] - sx) ** 2 + (p0[1] - sz) ** 2 > 0.09) {
+        const out = cached.path.slice();
+        out[0] = [sx, sz];
+        return out;
+      }
       return cached.path;
     }
 

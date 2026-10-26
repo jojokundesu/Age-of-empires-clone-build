@@ -107,11 +107,61 @@ function checkPop(game, tag) {
     if (st.popUsed > st.popCap && st.popUsed > 0) {
       const over = game.units.filter((u) => !u.dead && u.team === t);
       const per = over.reduce((n, u) => n + (u.def.pop || 1), 0);
-      if (per === st.popUsed && st.popCap > 0) {
+      /* Over the cap is not automatically a leak: burn a kingdom's houses and
+         the men standing in the rubble outnumber the roofs that feed them.
+         Every RTS shows that in red until the ranks thin out, and nothing can
+         be trained meanwhile. What must never happen is a *spawn* that pushes
+         a team over its own cap, so only a team whose cap did not just fall
+         is accused. */
+      const seen = game.__popCapSeen || (game.__popCapSeen = new Map());
+      const lastCap = seen.get(t);
+      seen.set(t, st.popCap);
+      const housingLost = lastCap != null && st.popCap < lastCap;
+      if (per === st.popUsed && st.popCap > 0 && !housingLost) {
         throw new Error(`${tag}: team ${t} fields ${st.popUsed} men over a cap of ${st.popCap}`);
       }
+      continue;
     }
+    const seen2 = game.__popCapSeen || (game.__popCapSeen = new Map());
+    seen2.set(t, st.popCap);
   }
+}
+
+/**
+ * Nobody may be standing inside a blocked nav cell.
+ *
+ * isPassable() deliberately ignores walls (they are nav obstacles, not
+ * physical ones), so a unit that ends up inside one neither bounces off nor
+ * stops -- it slides about inside the obstacle, and the "walking nowhere"
+ * check below never fires because the slide counts as movement. That is how a
+ * villager carried a load around inside a wall for thirty seconds in a
+ * twenty-minute four-crown war: 1.5 m of jitter each way, stall timer reset,
+ * forever.
+ */
+const insideSince = new Map();
+function checkInsideWalls(game, tag) {
+  const bad = [];
+  for (const u of game.units) {
+    if (u.dead || u.garrisoned || !u.def || u.def.naval) continue;
+    const pf = game.pfFor(u);
+    const [cx, cz] = pf.worldToCell(u.x, u.z);
+    /* Being in a *blocked cell* is not the same as being inside a wall. The
+       grid stamps a building by which cell its centre falls in, so a 2.8 m
+       house claims two cells and leaves the sliver of its face in a third,
+       which reads as open ground. And a man on the free half of a cell a hut
+       happens to occupy is not trapped at all. So the test is the same union
+       the rescue uses: the body must be inside something solid, or the cell
+       must be a wall cell. */
+    const N = game.navN || 256;
+    const wallCell = game.navWall ? game.navWall[cz * N + cx] > 0 : pf.isBlocked(cx, cz);
+    const bodyIn = !game.isPassable(u.x, u.z, u);
+    if (!wallCell && !bodyIn) { insideSince.delete(u.id); continue; }
+    /* a rescue is allowed half a second to notice and lift him out */
+    const since = insideSince.has(u.id) ? insideSince.get(u.id) : game.time;
+    insideSince.set(u.id, since);
+    if (game.time - since > 3) bad.push(`${u.type}#${u.id} (T${u.team}) inside a wall at ${u.x.toFixed(1)},${u.z.toFixed(1)} for ${(game.time - since).toFixed(0)} s`);
+  }
+  if (bad.length) throw new Error(`${tag}: ${bad.slice(0, 4).join(' | ')}`);
 }
 
 function checkOrders(game, tag, stuck) {
@@ -173,6 +223,7 @@ function runSeed(seed) {
       const tag = `seed ${seed} t=${game.time.toFixed(0)}s`;
       checkWorld(game, tag);
       checkOrders(game, tag, stuck);
+      checkInsideWalls(game, tag);
       checkInheritance(game, tag);
       peakMen = Math.max(peakMen, game.units.filter((u) => !u.dead).length);
       peakRoofs = Math.max(peakRoofs, game.buildings.filter((b) => !b.dead).length);

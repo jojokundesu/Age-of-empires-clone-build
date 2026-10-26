@@ -472,6 +472,24 @@ export class Unit extends Entity {
     this.moveTo(_edge[0], _edge[1], true);
   }
 
+  /**
+   * Which way round an obstacle to go when the waypoint points straight at
+   * the wall it is hiding behind. The answer is whichever side has more open
+   * ground within a couple of metres, and it is remembered for the slide so a
+   * man does not dither at the corner.
+   */
+  _pickSlideSide(dx, dz, step) {
+    const g = this.game;
+    const probe = Math.max(1.2, step * 6);
+    const opts = Math.abs(dx) >= Math.abs(dz) ? [1, -1] : [1, -1];
+    for (const s of opts) {
+      const x = this.x + (Math.abs(dx) >= Math.abs(dz) ? 0 : s * probe);
+      const z = this.z + (Math.abs(dx) >= Math.abs(dz) ? s * probe : 0);
+      if (g.isPassable(x, z, this)) { this._slideSign = s; return s; }
+    }
+    return 0;
+  }
+
   stop() {
     this.state = STATE.IDLE;
     this.path = null;
@@ -537,7 +555,19 @@ export class Unit extends Entity {
       this.chkTimer = 0;
       const px = this.chkX ?? this.x, pz = this.chkZ ?? this.z;
       const net = Math.hypot(this.x - px, this.z - pz);
-      if ((this.path || this.targetPos) && net < 0.8) this.stuckScore = (this.stuckScore || 0) + 1;
+      /* "Has somewhere to be" is a property of the *order*, not of the two
+         fields that implement it. A unit whose re-path fails for one tick has
+         `path` and `targetPos` both null for that tick, so a rule keyed on
+         them reset the counter every time -- and a man sliding up and down
+         against the face of a house, re-pathing every half second, was
+         declared healthy for thirty seconds at a time. A travelling state is
+         the honest test; working states (gather, build, repair) stand still
+         on purpose and are not travelling. */
+      const travelling = this.state === STATE.MOVE || this.state === STATE.ATTACK_MOVE
+        || this.state === STATE.PATROL || this.state === STATE.RETURN
+        || this.state === STATE.GARRISON;
+      if (!travelling) this.stuckScore = 0;
+      else if (net < 0.8) this.stuckScore = (this.stuckScore || 0) + 1;
       else this.stuckScore = 0;
       this.chkX = this.x;
       this.chkZ = this.z;
@@ -658,6 +688,10 @@ export class Unit extends Entity {
        Both cases re-issue the path -- otherwise the unit walks in the state
        machine forever without moving, which is the worst bug in an RTS. */
     if (!this.targetPos || !this.path) {
+      /* nothing to walk to at all: the order is over. Without this a unit
+         whose destination was cleared elsewhere sat in state `move` for ever
+         -- the state machine's worst failure mode, and invisible in the HUD. */
+      if (this.destX == null && this.destZ == null) { this.state = STATE.IDLE; this.moving = false; return; }
       this.repathTimer -= dt;
       if (this.destX != null && this.repathTimer <= 0) {
         this.repathTimer = 0.45;
@@ -1257,6 +1291,7 @@ export class Unit extends Entity {
     const speedBase = stats.speed * (this.speedMul || 1) * g.speedMulOnStep(this);
     let remaining = speedBase * dt;
     this.moving = true;
+
     let guard = 0;
     while (remaining > 0 && guard++ < 6) {
       const wp = this.path[this.pathIdx];
@@ -1326,40 +1361,86 @@ export class Unit extends Entity {
           }
           continue;
         }
-        // slide along the obstacle on whichever axis is free
-        const fx = g.isPassable(nx, this.z, this);
-        const fz = g.isPassable(this.x, nz, this);
-        if (fx) this.x = nx;
-        if (fz) this.z = nz;
-        this.repathTimer -= dt;
-        if (this.repathTimer <= 0 && this.targetPos) {
-          /* a jittered retry, but jittered on the *world's* stream, so two
-             runs of the same seed unstick the same villagers at the same tick */
-          this.repathTimer = 0.32 + g.rng() * 0.24;
-          this.setPath(this.targetPos[0], this.targetPos[1], true);
-          if (!this.path) { this.moving = false; return true; }
-          return false;
+        /* Slide along the obstacle. Sliding is a detour, so it keeps a
+           walking pace: the old code advanced the man by the waypoint's
+           *smaller* component, which for a house three metres to the side of
+           a four-metre march is two centimetres a tick. He crept, something
+           nudged him back, and he spent half a minute on the same square
+           metre of a house's face while every watchdog read "moving". */
+        const sgnX = Math.abs(dx) > 1e-4 ? Math.sign(dx) : 0;
+        const sgnZ = Math.abs(dz) > 1e-4 ? Math.sign(dz) : 0;
+        const slide = Math.min(step, 0.45);
+        let slid = false;
+        const trySlide = (tx, tz) => {
+          if (!tx && !tz) return false;
+          const px = this.x + tx * slide, pz = this.z + tz * slide;
+          if (!g.isPassable(px, pz, this)) return false;
+          this.x = px; this.z = pz;
+          return true;
+        };
+        /* One free axis: take it. Two free axes with a solid corner between
+           them is *not* two free axes -- stepping on both is how a man walks
+           into the front face of a house and wedges there. */
+        const order = Math.abs(dx) >= Math.abs(dz)
+          ? [[sgnX, 0], [0, sgnZ]]
+          : [[0, sgnZ], [sgnX, 0]];
+        for (const [tx, tz] of order) if (trySlide(tx, tz)) { slid = true; break; }
+        if (!slid) {
+          /* Both faces are solid: round the corner with a sidestep, on the
+             side the man was already going (or the side with more ground). */
+          const side = this._slideSign || this._pickSlideSide(dx, dz, step) || 1;
+          const cands = [[-sgnZ * side, sgnX * side], [sgnZ * side, -sgnX * side], [sgnX, 0], [0, sgnZ]];
+          for (const [tx, tz] of cands) if (trySlide(tx, tz)) { slid = true; break; }
         }
-        if (!fx && !fz) {
-          // fully wedged: sidestep perpendicular for a moment, then re-path
-          this.wedgeT = (this.wedgeT || 0) + dt;
-          if (this.wedgeT > 0.25) {
-            this.wedgeT = 0;
-            const side = (this._wedgeDir = -(this._wedgeDir || 1));
-            const px = this.x + (-dz) * 1.6 * side;
-            const pz = this.z + dx * 1.6 * side;
-            if (g.isPassable(px, pz, this)) {
-              this.path = [[px, pz]];
-              this.pathIdx = 0;
-              this.targetPos = this.targetPos || [px, pz];
-              this.repathTimer = 0.5;
-              return false;
-            }
+        if (slid) {
+          this._passKey = -1;
+          /* still a detour: keep the clock running so the order re-plans from
+             the new ground rather than trusting the plan that walked him into
+             the wall */
+          this.repathTimer -= dt;
+          if (this.repathTimer <= 0 && this.targetPos) {
+            this.repathTimer = 0.32 + g.rng() * 0.24;
+            this.setPath(this.targetPos[0], this.targetPos[1], true);
+            if (!this.path) { this.moving = false; return true; }
           }
-          this.repathTimer = Math.min(this.repathTimer, 0.12);
-          this.moving = false;
-          return false;
+          this.wedgeT = 0;
+          this.desiredFacing = Math.atan2(dx, dz);
+          remaining -= slide;
+          continue;
         }
+        /* nothing free at all: the waypoint belongs to a stale grid, or the
+           man is inside geometry. Abandon the waypoint after a beat, and
+           sidestep for a moment before that to break the symmetry. */
+        this.wedgeT = (this.wedgeT || 0) + dt;
+        if (this.wedgeT > 0.25) {
+          this.wedgeT = 0;
+          const side = (this._wedgeDir = -(this._wedgeDir || 1));
+          const px = this.x + (-dz) * 1.6 * side;
+          const pz = this.z + dx * 1.6 * side;
+          if (g.isPassable(px, pz, this)) {
+            this.path = [[px, pz]];
+            this.pathIdx = 0;
+            this.targetPos = this.targetPos || [px, pz];
+            this.repathTimer = 0.5;
+            return false;
+          }
+        }
+        if (this._wpBlock > 1.2) {
+          this._wpBlock = 0;
+          this.pathIdx++;
+          if (this.pathIdx >= this.path.length) {
+            /* the whole path is blocked: report arrival so the caller can
+               decide whether to re-path or give up */
+            this.moving = false;
+            this.path = null;
+            this.pathIdx = 0;
+            return true;
+          }
+          continue;
+        }
+        this.repathTimer = Math.min(this.repathTimer, 0.12);
+        this.moving = false;
+        return false;
       }
       this.desiredFacing = Math.atan2(dx, dz);
       remaining -= step;

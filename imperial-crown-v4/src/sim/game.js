@@ -214,6 +214,16 @@ export class Game {
        around walls, houses and gates -- and nowhere else. A count, not a
        flag, because two huts may share a ring cell. */
     this.navHaz = new Uint8Array(this.navTerrain.length);
+    /* Which blocked cells are *wall* cells. A house edge cuts a cell without
+       claiming it (the grid stamps by centre containment), so a man standing
+       in the sliver of a house is on open ground as far as the grid is
+       concerned -- the body test catches him. A wall is 2 m on a 2 m grid and
+       claims exactly the cell it stands in, but isPassable() ignores walls
+       (they are a grid feature, not a geometric one), so the cell test is the
+       only thing that can catch a man inside a wall. The stray rescue and the
+       crash-test both have to ask the union of the two questions, and this
+       layer is what lets them. */
+    this.navWall = new Uint8Array(this.navTerrain.length);
     this.navGateTeam = new Int16Array(this.navTerrain.length);   // 0 = no gate, else owner
     this.navGateCount = 0;
     this._teamPf = new Map();          // team -> { pf, grid }
@@ -588,6 +598,71 @@ export class Game {
    * Safety valve: relocate a wedged unit to the nearest walkable spot and let
    * it re-plan. Called rarely, so the cost of the spiral search is irrelevant.
    */
+  /**
+   * Lift anybody standing inside a blocked nav cell back onto open ground.
+   *
+   * isPassable() deliberately ignores walls: they are nav obstacles, not
+   * physical ones, and that is what keeps a 2 m grid from trapping a soldier.
+   * The cost is that a man a wall was raised *over* -- or one a building was
+   * dropped on -- does not bounce off and does not stop. He slides about
+   * inside the obstacle, jitters a metre either way, and the movement
+   * watchdog never fires because he is, technically, moving. A twenty-minute
+   * four-crown war produced a villager who carried a load around inside a
+   * wall for thirty seconds and then did it again.
+   *
+   * The sweep is a single array lookup per man per half second, and the
+   * rescue itself is a ring search that almost never runs.
+   */
+  rescueStrays() {
+    for (let i = 0; i < this.units.length; i++) {
+      const u = this.units[i];
+      if (u.dead || u.garrisoned || !u.def || u.def.naval || !u.def.hp) continue;
+      const pf = this.pfFor(u);
+      const [cx, cz] = pf.worldToCell(u.x, u.z);
+      /* Two ways to be a stray: inside a cell the nav grid calls solid, or
+         simply overlapping something solid. The grid stamps buildings by
+         which cell their *centre* falls in, so a 2.8 m house whose front
+         face cuts a cell is "open ground" to the grid while a man standing
+         in that sliver is inside the house. A stray of the second kind
+         cannot walk out -- every step away is a step he cannot take -- so he
+         is lifted out too, but only after he has been overlapping for a
+         moment, so a man brushing past a corner is not flung across the
+         yard. */
+      const N = this.navN || (this.world.nav && this.world.nav.cells) || 256;
+      const wallBad = this.navWall ? this.navWall[cz * N + cx] > 0 : false;
+      const bodyBad = !this.isPassable(u.x, u.z, u);
+      if (!wallBad && bodyBad) {
+        u.overlapN = (u.overlapN || 0) + 1;
+        if (u.overlapN < 3) continue;   // ~1 s at the scan cadence
+      } else {
+        u.overlapN = 0;
+      }
+      if (!wallBad && !bodyBad) continue;
+      const spot = this.freeSpotNear(u.x, u.z, u, 12);
+      if (!spot) continue;
+      u.x = spot[0];
+      u.z = spot[1];
+      /* The *order* survives the rescue: clearing destX/destZ as well left a
+         man in state `move` with nothing to move to, standing there until the
+         match ended. The path is dropped so the next tick plans again from the
+         new ground. */
+      u.path = null;
+      u.pathIdx = 0;
+      u.targetPos = null;
+      u.repathTimer = 0;
+      u.moving = false;
+      u._passKey = -1;
+      u._wpBlock = 0;
+      u.stallT = 0;
+      u.stuckScore = 0;
+      u.wedgeT = 0;
+      u.sealedT = 0;
+      u.overlapN = 0;
+      this.stats.strays = (this.stats.strays || 0) + 1;
+      if (this.fx && this.fx.dust) this.fx.dust(u.x, this.heightAt(u.x, u.z) + 0.1, u.z, 1, 0.5);
+    }
+  }
+
   /**
    * The half-width of the square the *pathfinder* refuses around a building.
    *
@@ -1148,6 +1223,8 @@ export class Game {
     }
     const t = this.navTerrain, nb = this.navBuild, nf = this.navFinal;
     const nfe = this.navFinalEnemy, ng = this.navGate, nc = this.navCarve;
+    const isWall = b.def.wall ? 1 : 0;
+    const nw = this.navWall;
     for (let cz = z0; cz <= z1; cz++) {
       for (let cx = x0; cx <= x1; cx++) {
         const wx = (cx + 0.5) * cell - half, wz = (cz + 0.5) * cell - half;
@@ -1155,6 +1232,7 @@ export class Game {
         const i = cz * N + cx;
         const v = Math.max(0, nb[i] + delta);
         nb[i] = v;
+        if (isWall) nw[i] = blocked ? Math.min(255, nw[i] + 1) : Math.max(0, nw[i] - 1);
         /* Patch the combined grids in place. Recombining all 65 536 cells on
            every house was a 1.2 ms spike for a change that touches ~36. */
         nf[i] = (t[i] || (v && !nc[i])) ? 1 : 0;
@@ -1174,7 +1252,13 @@ export class Game {
     const d = Math.hypot(x1 - x0, z1 - z0);
     if (d < 0.6) return false;
     const probe = { radius: 0.42, def: { naval: false }, kind: 'unit', team: 0 };
-    const steps = Math.min(40, Math.ceil(d / 1.1));
+    /* Sampling has to be finer than the narrowest thing a man can clip. A
+       house corner is a few centimetres of intrusion into a line, so one
+       sample per 1.1 m could walk a "clear" straight line through a corner
+       -- which is exactly how a soldier ended up oscillating on the face of
+       a house for half a minute. One sample per 0.4 m still costs far less
+       than a search, and a straight segment is at most a map diagonal. */
+    const steps = Math.min(90, Math.ceil(d / 0.4));
     for (let i = 1; i < steps; i++) {
       const t = i / steps;
       if (!this.isPassable(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t, probe)) return true;
@@ -2005,6 +2089,9 @@ export class Game {
     // resources (herds wander, farms tick)
     const res = this.resources;
     for (let i = 0; i < res.length; i++) if (!res[i].dead) res[i].update(dt);
+
+    /* half-second sweep: nobody may stand inside a wall or a roof */
+    if (this.frame % 15 === 0) this.rescueStrays();
 
     this.projectiles.update(dt, this);
 

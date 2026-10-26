@@ -98,7 +98,14 @@ check('a villager delivers even when the town centre is crowded', () => {
   const before = g.teams.get(1).res.wood;
   tick(g, 8);
   assert(g.teams.get(1).res.wood > before, `wood never arrived (still ${before.toFixed(0)}) — the villager livelocked`);
-  assert(v.state !== STATE.RETURN, 'the villager is still stuck in the return state');
+  /* Not "state is not RETURN": a villager who delivers at second one, walks
+     back to the woodline and fills a second load is *working*, and by second
+     eight he may well be carrying that load home again. What must never
+     happen is standing at the town centre with the same load in his arms
+     forever, so the test is about where he is and what he is carrying. */
+  const stuck = v.state === STATE.RETURN && Math.hypot(v.x - tc.x, v.z - tc.z) < 6
+    && v.carry.kind === 'wood' && v.carry.amount >= 9.5;
+  assert(!stuck, 'the villager is still stuck in the return state with the same load');
   // it must have been handed over, not ground down: the full 10 wood arrives
   assert(g.teams.get(1).res.wood - before >= 9.5, `only ${(g.teams.get(1).res.wood - before).toFixed(1)} of 10 wood arrived`);
 });
