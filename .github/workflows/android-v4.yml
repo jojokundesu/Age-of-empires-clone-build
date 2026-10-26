@@ -111,6 +111,15 @@ jobs:
         run: |
           node tests/playtest.mjs --out ci/screenshots 2>&1 | tee -a playtest.log
 
+      # Walls and gates, in the real page: a crew raises a run of stone, the
+      # finished wall has to look like a wall, and a formation has to stand in
+      # its shape. It is the browser half of `tests/wallgate.mjs`.
+      - name: Wall and gate test (real headless Chrome)
+        id: wallsite
+        continue-on-error: true
+        run: |
+          node tests/wallsite.mjs --out ci/v4-walls 2>&1 | tee -a wallsite.log
+
       # The measurement that decides whether this build is actually usable on a
       # phone: the same scene at every pixel budget, in a real browser at the
       # phone's geometry. Informational, so a slow shared runner cannot block a
@@ -130,7 +139,7 @@ jobs:
           {
             echo '### Browser diagnostics (v4)'
             echo
-            echo "browser: \`${{ steps.browser.outcome }}\` · playtest: \`${{ steps.playtest.outcome }}\` · soak: \`${{ steps.soak.outcome }}\` · fps: \`${{ steps.fps.outcome }}\`"
+            echo "browser: \`${{ steps.browser.outcome }}\` · wallsite: \`${{ steps.wallsite.outcome }}\` · playtest: \`${{ steps.playtest.outcome }}\` · soak: \`${{ steps.soak.outcome }}\` · fps: \`${{ steps.fps.outcome }}\`"
             echo
             echo '```'
             tail -n 60 browser-test.log 2>/dev/null || echo 'no log written'
@@ -160,6 +169,9 @@ jobs:
 
       - name: Check the play test passed
         run: |
+          grep -qi "WALL/GATE BROWSER CHECKS PASSED" wallsite.log || {
+            echo "::error::the wall and gate test did not pass"; tail -40 wallsite.log; exit 1; }
+
           test -s ci/playtest-report.md || { echo "::error::ci/playtest-report.md missing"; exit 1; }
           grep -qi "PLAYTEST PASSED" ci/playtest-report.md || {
             echo "::error::the play test did not pass"; cat ci/playtest-report.md; exit 1; }
@@ -181,6 +193,7 @@ jobs:
             imperial-crown-v4/ci/browser-report.md
             imperial-crown-v4/ci/playtest-report.md
             imperial-crown-v4/ci/soak-report.md
+            imperial-crown-v4/ci/v4-walls
             imperial-crown-v4/browser-test.log
             imperial-crown-v4/playtest.log
             imperial-crown-v4/soak.log

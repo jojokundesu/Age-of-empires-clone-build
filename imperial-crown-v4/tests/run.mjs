@@ -33,7 +33,7 @@ const SUITES = [
   ['veterancy', 'tests/veterancy.mjs'],
   ['calendar', 'tests/calendar.mjs'],
   ['morale', 'tests/morale.mjs'],
-  ['wallsite', 'tests/wallsite.mjs'],
+  ['wallsite', 'tests/wallsite.mjs', true],
   ['modsite', 'tests/modsite.mjs', true],
   ['realm', 'tests/realm.mjs'],
   ['kingdoms', 'tests/kingdoms.mjs'],
@@ -62,6 +62,11 @@ if (!process.env.LD_LIBRARY_PATH || !process.env.LD_LIBRARY_PATH.includes('.tool
 }
 
 const ci = process.argv.includes('--ci');
+const chromiumLibs = () => {
+  const nss = process.env.LD_LIBRARY_PATH || '';
+  if (nss.split(':').some((p) => p && existsSync(p) && existsSync(`${p}/libnss3.so`))) return true;
+  return ['/usr/lib/x86_64-linux-gnu/libnss3.so', '/usr/lib64/libnss3.so', '/usr/lib/libnss3.so'].some((p) => existsSync(p));
+};
 const results = [];
 
 function run(name, file, arg) {
@@ -95,6 +100,13 @@ for (const [name, file, argOrOptional] of SUITES) {
   const arg = typeof argOrOptional === 'string' ? argOrOptional : null;
   if (optional && !existsSync('dist')) {
     console.log(`SKIP  ${name.padEnd(12)} (run npm run build first)`);
+    continue;
+  }
+  /* The browser suites need Chromium's shared libraries as well as the
+     bundle; a container without libnss3.so used to turn "optional" into
+     "failed". CI runs these in their own steps, after `npm run build`. */
+  if (optional && name.endsWith('site') && !chromiumLibs()) {
+    console.log(`SKIP  ${name.padEnd(12)} (Chromium libraries not found — see docs-browser-tests.md)`);
     continue;
   }
   if (!existsSync(file)) { console.log(`SKIP  ${name.padEnd(12)} (missing ${file})`); continue; }
