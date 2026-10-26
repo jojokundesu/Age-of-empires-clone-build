@@ -193,6 +193,7 @@ export class Game {
     this.groups = new Map();                 // control groups 0..9
     this.groundMarkers = [];                 // tap/command feedback rings
     this.placing = null;                     // {type,x,z,y,facing,valid,footprint}
+    this.formationStyle = 'box';             // box | line | wedge | column
     this.settings = { fog: true, bars: true, grid: false, shake: true };
     this.showFog = true;
     this.camera = null;                      // set by the app layer
@@ -1732,7 +1733,16 @@ export class Game {
       }
       return;
     }
-    const slots = formationSlots(movable.length, x, z);
+    /* facing: from the group's centre toward the tap */
+    let sx = 0, sz = 0, rmax = 0;
+    for (const u of movable) { sx += u.x; sz += u.z; rmax = Math.max(rmax, u.radius || 0.4); }
+    const cxg = sx / movable.length, czg = sz / movable.length;
+    const facing = Math.atan2(x - cxg, z - czg);
+    /* a rank of horse needs more room than a rank of archers */
+    const spacing = clamp(1.15 + rmax * 2.1, 1.35, 3.2);
+    const slots = formationSlots(movable.length, x, z, {
+      style: this.formationStyle, facing, spacing
+    });
     // sort so the nearest units take the nearest slots
     movable.sort((a, b) => dist2(a.x, a.z, x, z) - dist2(b.x, b.z, x, z));
     for (let i = 0; i < movable.length; i++) {
@@ -1991,6 +2001,29 @@ export class Game {
     return { placed: out, stopped };
   }
 
+  /**
+   * The nearest enemy structure a frustrated unit could hit instead.
+   *
+   * Walls made the map honest, and an army that cannot walk to the town centre
+   * has to take the wall down -- that is what siege units are for, and what
+   * every player does by hand. The AI asks for this when one of its soldiers
+   * reports an unreachable destination. Walls and gates come first within the
+   * same radius (they are the actual obstacle); anything else is a fallback.
+   */
+  nearestEnemyStructure(unit, team, radius = 26) {
+    let best = null, bestD = radius * radius, bestWall = null, bestWallD = Infinity;
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (b.dead || b.team === team || b.team === 0) continue;
+      const d = dist2(b.x, b.z, unit.x, unit.z);
+      if (b.def.wall || b.def.gate) {
+        if (d < bestWallD) { bestWallD = d; bestWall = b; }
+      } else if (d < bestD) { bestD = d; best = b; }
+    }
+    if (bestWall && bestWallD < radius * radius * 2.25) return bestWall;
+    return best || bestWall;
+  }
+
   /** Everything the HUD needs about a selection. */
   getTeamSummary(team) {
     const st = this.teams.get(team);
@@ -2005,25 +2038,80 @@ export class Game {
 }
 
 /* ============================================================
-   formation helper — a soft block in front of the click point
+   formations — where each soldier of a group should stand
+
+   Four shapes, all built in a local frame (x = right, z = forward) and then
+   rotated to face the direction of the march:
+
+     box     the old default: a soft block, seven wide
+     line    one or two ranks, as wide as the army allows -- the shape you want
+             archers in front of the enemy and cavalry behind
+     wedge   ranks of 1, 3, 5, 7: a spearhead for a charge down a lane
+     column  two abreast, for marching a road or threading a gate
+
+   Spacing is derived from the unit radius, not a constant: cavalry are twice
+   the width of an archer, and a fixed 1.5 m pitch made horse float through
+   horse. The whole group is centred on the point you tapped.
    ============================================================ */
-const _slotX = new Float32Array(256);
-const _slotZ = new Float32Array(256);
-export function formationSlots(count, cx, cz) {
+export const FORMATIONS = ['box', 'line', 'wedge', 'column'];
+
+export function formationSlots(count, cx, cz, opts = {}) {
+  const style = FORMATIONS.includes(opts.style) ? opts.style : 'box';
+  const facing = Number.isFinite(opts.facing) ? opts.facing : 0;
+  const spacing = clamp(opts.spacing || 1.5, 1.1, 3.4);
+  const local = [];
+  if (style === 'line') {
+    const perRow = count <= 14 ? count : Math.ceil(count / 2);
+    for (let i = 0; i < count; i++) {
+      const row = (i / perRow) | 0;
+      const col = i % perRow;
+      const n = Math.min(perRow, count - row * perRow);
+      local.push([(col - (n - 1) / 2) * spacing, row * spacing * 0.9]);
+    }
+  } else if (style === 'wedge') {
+    /* ranks of 1, 3, 5, ... with the leader at the tip */
+    let placed = 0, rank = 0;
+    while (placed < count) {
+      const width = rank * 2 + 1;
+      for (let k = 0; k < width && placed < count; k++, placed++) {
+        local.push([(k - (width - 1) / 2) * spacing, -rank * spacing * 0.9]);
+      }
+      rank++;
+    }
+  } else if (style === 'column') {
+    const perRow = 2;
+    for (let i = 0; i < count; i++) {
+      const row = (i / perRow) | 0;
+      const col = i % perRow;
+      local.push([(col - 0.5) * spacing, -row * spacing * 0.9]);
+    }
+  } else {
+    const perRow = Math.min(7, Math.ceil(Math.sqrt(count * 1.35)));
+    const rows = Math.ceil(count / perRow);
+    for (let i = 0; i < count; i++) {
+      const row = (i / perRow) | 0;
+      const col = i % perRow;
+      const n = Math.min(perRow, count - row * perRow);
+      local.push([(col - (n - 1) / 2) * spacing, (row - (rows - 1) / 2) * spacing]);
+    }
+  }
+  /* centre the shape on the tap, then turn it to face the march */
+  let mnx = Infinity, mxx = -Infinity, mnz = Infinity, mxz = -Infinity;
+  for (const [lx, lz] of local) {
+    if (lx < mnx) mnx = lx; if (lx > mxx) mxx = lx;
+    if (lz < mnz) mnz = lz; if (lz > mxz) mxz = lz;
+  }
+  const ox = (mnx + mxx) / 2, oz = (mnz + mxz) / 2;
+  const sin = Math.sin(facing), cos = Math.cos(facing);
   const out = [];
-  const perRow = Math.min(7, Math.ceil(Math.sqrt(count * 1.35)));
-  const spacing = 1.5;
-  const rows = Math.ceil(count / perRow);
-  for (let i = 0; i < count; i++) {
-    const row = (i / perRow) | 0;
-    const col = i % perRow;
-    const rowCount = Math.min(perRow, count - row * perRow);
-    const x = (col - (rowCount - 1) / 2) * spacing;
-    const z = (row - (rows - 1) / 2) * spacing;
-    out.push([cx + x, cz + z]);
+  for (let i = 0; i < local.length; i++) {
+    const lx = local[i][0] - ox, lz = local[i][1] - oz;
+    /* forward = (sin, cos), right = (cos, -sin) */
+    out.push([cx + lx * cos + lz * sin, cz - lx * sin + lz * cos]);
   }
   return out;
 }
+
 
 const NULL_FX = {
   spawn() {}, dust() {}, smoke() {}, fire() {}, blood() {}, sparks() {},

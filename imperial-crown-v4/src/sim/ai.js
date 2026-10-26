@@ -627,6 +627,19 @@ export class AIController {
           }
         } else {
           for (const u of army) {
+            /* A soldier that reported "no way through" is standing outside a
+               wall. Put it to work on the wall: an AI army that politely stops
+               at a palisade is not an opponent. */
+            if (u.unreachable) {
+              u.unreachable = false;
+              const wall = g.nearestEnemyStructure(u, this.team, 30);
+              if (wall) {
+                u.state = STATE.ATTACK;
+                u.target = wall;
+                u.noAggro = false;
+                continue;
+              }
+            }
             if (u.state === STATE.IDLE) {
               u.state = STATE.ATTACK_MOVE;
               u.moveTo(enemyBase.x + (this.rng() - 0.5) * 14, enemyBase.z + (this.rng() - 0.5) * 14, true);

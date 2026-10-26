@@ -303,6 +303,7 @@ export class Unit extends Entity {
          forever from the same spot. */
       const tail = p[p.length - 1];
       this.partialPath = !hop && Math.hypot(tail[0] - destX, tail[1] - destZ) > 2.5;
+      this.unreachable = false;
     } else if (pf.lastUnreachable) {
       /* There is no way through: this unit is walled off from where it was
          told to go. Cancel the order instead of grinding against the wall --

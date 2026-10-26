@@ -46,7 +46,7 @@ export class UI {
       'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer',
       'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnDecrees', 'decreeBadge',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
-      'stanceBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
+      'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
       'minimap', 'miniStamp', 'btnGotoTC', 'btnMiniMode', 'btnFormation',
       'inspIcon', 'inspName', 'inspSub', 'inspMultiBtn', 'hpWrap', 'hpFill', 'hpText',
       'inspStats', 'queueWrap', 'queueFill', 'queueText', 'queueDots',
@@ -126,6 +126,12 @@ export class UI {
       const b = e.target.closest('[data-stance]');
       if (!b) return;
       this.setStance(b.dataset.stance);
+    });
+
+    el.formationBar?.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-formation]');
+      if (!b) return;
+      this.setFormation(b.dataset.formation);
     });
 
     // minimap interaction
@@ -359,6 +365,7 @@ export class UI {
     }
     if (units.length) {
       out.push({ icon: 'boot', label: 'Stop', action: () => { g.orderStop(units); this.audio?.play('order'); } });
+      out.push({ icon: 'people', label: 'Formation', action: () => this.cycleFormation() });
       const stance = units[0].stance || 'aggressive';
       out.push({
         icon: stance === 'aggressive' ? 'sword' : stance === 'defensive' ? 'shield' : 'boot',
@@ -531,6 +538,26 @@ export class UI {
     for (const u of units) u.stance = stance;
     for (const b of this.el.stanceBar?.children || []) b.classList.toggle('active', b.dataset.stance === stance);
     this.toast(`Stance: ${STANCE_LABEL[stance]}`);
+  }
+
+  /**
+   * Formation is a property of the *next* move order, so it applies to the
+   * whole game rather than to a selection that may be about to change. The rail
+   * only shows it while troops are selected, which is when it matters.
+   */
+  setFormation(style) {
+    const g = this.game;
+    g.formationStyle = style;
+    const label = { box: 'Box', line: 'Line', wedge: 'Wedge', column: 'Column' }[style] || style;
+    this.toast(`Formation: ${label}`, 'info');
+    this.sig = '';
+    this.refreshCommands(true);
+  }
+
+  cycleFormation() {
+    const order = ['box', 'line', 'wedge', 'column'];
+    const next = order[(order.indexOf(this.game.formationStyle) + 1) % order.length];
+    this.setFormation(next);
   }
 
   cycleStance() {
@@ -899,6 +926,10 @@ export class UI {
     if (this.el.stanceBar) {
       this.el.stanceBar.style.display = selUnits.length ? '' : 'none';
       if (stance) for (const b of this.el.stanceBar.children) b.classList.toggle('active', b.dataset.stance === stance);
+    }
+    if (this.el.formationBar) {
+      this.el.formationBar.style.display = selUnits.length ? '' : 'none';
+      for (const b of this.el.formationBar.children) b.classList.toggle('active', b.dataset.formation === g.formationStyle);
     }
   }
 
