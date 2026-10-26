@@ -678,7 +678,6 @@ class App {
       seed: g.world.seed,
       civ: g.civ,
       mode: g.mode,
-      civ: g.civ,
       difficulty: g.difficultyKey,
       kingdoms: g.crowns,
       victory: g.victory,
@@ -796,12 +795,18 @@ class App {
 
     this.acc += this.paused ? 0 : dt;
     let steps = 0;
-    while (this.acc >= STEP && steps < 6) {
+    /* Three steps of catch-up is the ceiling. Six was enough to turn one slow
+       frame into a quarter of a second of frozen screen on a phone: the sim
+       tries to make up lost time, each tick costs more because the frame is
+       already late, and the catch-up itself becomes the stall. Past three the
+       backlog is dropped instead -- the war runs a fraction of a second slow
+       for a moment, and the player never sees it. */
+    while (this.acc >= STEP && steps < 3) {
       g.update(STEP);
       this.acc -= STEP;
       steps++;
     }
-    if (steps >= 6) this.acc = 0;
+    if (steps >= 3) this.acc = 0;
     g.renderAlpha = this.paused ? 1 : Math.min(1, this.acc / STEP);
 
     if (!this.paused && !g.gameOver) for (const a of this.ais || (this.ai ? [this.ai] : [])) a.update(dt);

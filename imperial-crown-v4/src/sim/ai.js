@@ -56,7 +56,12 @@ export class AIController {
     this.team = team;
     this.diff = game.difficulty;
     this.aggression = this.diff.aggression;
-    this.timer = 0.6 + this.rng() * 0.4;
+    /* Councils are staggered by crown. Four controllers created in the same
+       frame used to think on the same frame, and their census -- which reads
+       every man on the field against every man they own -- landed as a spike
+       once every half second. Spacing them by crown turns a spike into four
+       small bills. */
+    this.timer = 0.6 + (team % 5) * 0.11 + this.rng() * 0.08;
     this.econTimer = 0;
     this.buildTimer = 0;
     this.attackTimer = this.diff.firstWave;
@@ -634,18 +639,51 @@ export class AIController {
     const mine = [];
     for (const u of g.units) if (!u.dead && u.team === this.team && !u.garrisoned) mine.push(u);
     for (const b of g.buildings) if (!b.dead && b.team === this.team) mine.push(b);
-    const R2 = 44 * 44;
+    /* What the crown can see, stamped once into a coarse grid.
+       The old census asked every enemy on the map whether he stood within
+       sight of every man and roof the crown owned -- at four crowns, forty
+       thousand distance tests in a single tick every few seconds. The same
+       question is now one array lookup: his cell, or a neighbouring one, is
+       lit or it is not. The grid is 4 m, far finer than any sight radius, so
+       nothing that used to be seen is missed. */
+    const CELL = 4;
+    const N = 128;
+    const grid = this._censusGrid || (this._censusGrid = new Uint8Array(N * N));
+    grid.fill(0);
+    const toCell = (v) => Math.max(0, Math.min(N - 1, ((v + 256) / CELL) | 0));
+    for (let i = 0; i < mine.length; i++) {
+      const m = mine[i];
+      const r = m.kind === 'building' ? 30 : 44;
+      const r2 = r * r;
+      const x0 = toCell(m.x - r), x1 = toCell(m.x + r);
+      const z0 = toCell(m.z - r), z1 = toCell(m.z + r);
+      for (let cz = z0; cz <= z1; cz++) {
+        const wz = cz * CELL + CELL * 0.5 - 256;
+        const dz = wz - m.z;
+        for (let cx = x0; cx <= x1; cx++) {
+          const wx = cx * CELL + CELL * 0.5 - 256;
+          const dx = wx - m.x;
+          if (dx * dx + dz * dz <= r2) grid[cz * N + cx] = 1;
+        }
+      }
+    }
+    const seenAt = (x, z) => {
+      const cx = toCell(x), cz = toCell(z);
+      for (let dz = -1; dz <= 1; dz++) {
+        const nz = cz + dz;
+        if (nz < 0 || nz >= N) continue;
+        const row = nz * N;
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = cx + dx;
+          if (nx < 0 || nx >= N) continue;
+          if (grid[row + nx]) return true;
+        }
+      }
+      return false;
+    };
     for (const u of g.units) {
       if (u.dead || u.garrisoned || u.wild || !g.isHostile(this.team, u.team)) continue;
-      let seen = false;
-      for (let i = 0; i < mine.length; i++) {
-        const m = mine[i];
-        const dx = m.x - u.x, dz = m.z - u.z;
-        /* a roof sees a little further than a man on foot */
-        const r2 = m.kind === 'building' ? 30 * 30 : R2;
-        if (dx * dx + dz * dz <= r2) { seen = true; break; }
-      }
-      if (!seen) continue;
+      if (!seenAt(u.x, u.z)) continue;
       c.total++;
       const cls = u.def.classes || [];
       if (cls.includes('monk')) c.monk++;
@@ -1014,7 +1052,9 @@ export class AIController {
 
     /* --- focus fire: the most dangerous enemy within reach of the line --- */
     let focus = null, bestT = 0, bestD = 22 * 22;
-    for (const e of g.units) {
+    const around = g.spatial.query(cx, cz, 22);
+    for (let i = 0; i < around.length; i++) {
+      const e = around[i];
       if (e.dead || e.garrisoned || !g.isHostile(this.team, e.team)) continue;
       if (!e.def || e.def.attack <= 0) continue;
       const d = (e.x - cx) ** 2 + (e.z - cz) ** 2;
@@ -1060,7 +1100,9 @@ export class AIController {
         }
         /* at the wall: kill whoever is in your face, then the wall */
         let man = null, md = 7 * 7;
-        for (const e of g.units) {
+        const close = g.spatial.query(u.x, u.z, 7);
+        for (let k = 0; k < close.length; k++) {
+          const e = close[k];
           if (e.dead || e.garrisoned || !e.def || e.def.attack <= 0) continue;
           if (e.def.classes.includes('villager')) continue;  // a siege is not a peasant hunt
           if (!g.isHostile(this.team, e.team)) continue;
@@ -1259,7 +1301,13 @@ export class AIController {
     }
     if (this.raidTimer > 0) return;
     const want = Math.min(6, 2 + Math.floor((g.time - 55) / 170));
-    const pool = army.filter((u) => !u.aiRole || u.aiRole === 'wave');
+    /* A raid is a small, cheap thing; a siege is the war. Taking the raid out
+       of the line that is standing at the enemy hall is how a wave of forty
+       men evaporates into a wave of eighteen, looks "broken" to its own
+       commander, and walks home -- over and over, for an hour. Raiders are
+       found among the men who are not already committed. */
+    const siegeLive = this.armyState === 'attack' || this.armyState === 'stage';
+    const pool = army.filter((u) => (!u.aiRole || (u.aiRole === 'wave' && !siegeLive)));
     /* never strip the home defence bare */
     if (pool.length < want + 4 || army.length < want + 5) return;
     const goal = this.pickRaidGoal();

@@ -581,8 +581,15 @@ export class Unit extends Entity {
     this.anim.speed = lerp(this.anim.speed, moving, dt * 7);
     this.anim.phase += dt * (2.6 + stats.speed * 0.55) * (0.25 + this.anim.speed * 1.4);
     if (def.siege) this.anim.spin += dt * (moving ? 1.6 : 0);
-    this.y = def.naval ? 0.1 : g.heightAt(this.x, this.z);
-    this.facing = angleLerp(this.facing, this.desiredFacing ?? this.facing, 1 - Math.pow(0.0008, dt));
+    /* A man standing still does not need the terrain sampled again, and a
+       turn rate is a per-tick constant, not a per-unit power. Together these
+       were two of the most expensive instructions in the whole tick. */
+    if (this.x !== this.xPrev || this.z !== this.zPrev || this._yDirty) {
+      this.y = def.naval ? 0.1 : g.heightAt(this.x, this.z);
+      this._yDirty = false;
+    }
+    const turn = g._facingLerp !== undefined ? g._facingLerp : 0.06;
+    this.facing = angleLerp(this.facing, this.desiredFacing ?? this.facing, turn);
   }
 
   updateGarrisoned(dt) {
@@ -627,6 +634,13 @@ export class Unit extends Entity {
     if (this.attackCooldown > 0) return;
     if (this.def.classes.includes('monk')) return;
     if (this.type === 'villager' && this.stance !== 'aggressive') return;
+    /* A standing man does not need to re-scan the horizon thirty times a
+       second. Each idle unit looks around on its own eighth of a second,
+       staggered by id, so the whole crowd costs an eighth as much and no
+       single tick carries the bill. Nothing a player can see changes: an
+       enemy walking into a spear wall is still noticed inside a quarter of
+       a second, and it is the *wall* that notices, not one man. */
+    if ((((this.game.frame || 0) + this.id) & 7) !== 0) return;
     const range = this.stance === 'defensive' ? 6 : (this.def.classes.includes('archer') ? Math.min(9, stats.range + 1.5) : 7);
     const enemy = this.game.findEnemyNear(this, range);
     if (enemy) {
@@ -652,7 +666,7 @@ export class Unit extends Entity {
     if (arrived) {
       this.moving = false;
       this.path = null;
-      if (this.destX != null && Math.hypot(this.destX - this.x, this.destZ - this.z) > 2.5) {
+      if (this.destX != null && (this.destX - this.x) ** 2 + (this.destZ - this.z) ** 2 > 6.25) {
         this.setPath(this.destX, this.destZ, true);
         if (this.path) return;
       }
@@ -1144,14 +1158,14 @@ export class Unit extends Entity {
     const g = this.game;
     if (!this.path || this.pathIdx >= this.path.length) {
       this.moving = false;
-      if (this.targetPos && Math.hypot(this.targetPos[0] - this.x, this.targetPos[1] - this.z) > 1.2) {
+      if (this.targetPos && (this.targetPos[0] - this.x) ** 2 + (this.targetPos[1] - this.z) ** 2 > 1.44) {
         this.path = null;
         this.pathIdx = 0;
         return false;
       }
       return true;
     }
-    const speedBase = stats.speed * (this.speedMul || 1) * (this.def.naval ? 1 : 1) * g.unitSpeedMul(this);
+    const speedBase = stats.speed * (this.speedMul || 1) * g.speedMulOnStep(this);
     let remaining = speedBase * dt;
     this.moving = true;
     let guard = 0;
@@ -1159,7 +1173,7 @@ export class Unit extends Entity {
       const wp = this.path[this.pathIdx];
       let dx = wp[0] - this.x;
       let dz = wp[1] - this.z;
-      let d = Math.hypot(dx, dz);
+      let d = Math.sqrt(dx * dx + dz * dz);
       if (d < 0.28) {
         this.pathIdx++;
         if (this.pathIdx >= this.path.length) { this.moving = false; return true; }
@@ -1169,15 +1183,38 @@ export class Unit extends Entity {
       dx /= d; dz /= d;
       // Direction is never rotated by neighbours (that used to make crowds
       // orbit forever); overlaps are resolved as a separate positional push.
-      const dl = Math.hypot(dx, dz) || 1;
-      dx /= dl; dz /= dl;
+      // (The old code normalised twice here -- a second hypot per waypoint
+      // per unit per tick, for a vector that was already unit length.)
       const nx = this.x + dx * step;
       const nz = this.z + dz * step;
+      /* A full passability test is a terrain sample, a slope lookup and a
+         building query -- and it was being paid three times a tick for every
+         man on the field. Walk is checked once per two-metre nav cell instead:
+         inside a cell the ground is the same ground, so a unit that was free
+         to stand here is free to stand a hand's width further on. Walls,
+         cliffs and buildings are all stamped at cell scale, so nothing can be
+         slipped through that the pathfinder would have refused. */
       if (this.def.naval) {
         this.x = clamp(nx, -250, 250);
         this.z = clamp(nz, -250, 250);
-      } else if (g.isPassable(nx, nz, this)) {
+        this.desiredFacing = Math.atan2(dx, dz);
+        remaining -= step;
+        continue;
+      }
+      /* The cell the man is *standing in*, tested against the cell he last
+         proved walkable. Standing in a cell that was checked is the proof;
+         stepping into a new one is the question. Teleports (unstick, a
+         garrison door, a crown changing hands) move the man to a different
+         cell, so the proof lapses by itself. */
+      /* the key is the nav grid's own index for the cell (row-major, z first),
+         so it can be looked up in the hazard counters and in nothing else */
+      const N = g.navN || 256;
+      const hereKey = (((this.z + g.navHalf) * g.navInv) | 0) * N + (((this.x + g.navHalf) * g.navInv) | 0);
+      const haz = g.navHaz;
+      if ((this._passKey === hereKey && !(haz && haz[hereKey]))
+          || g.isPassable(nx, nz, this)) {
         this.x = nx; this.z = nz;
+        this._passKey = (((nz + g.navHalf) * g.navInv) | 0) * N + (((nx + g.navHalf) * g.navInv) | 0);
         this._wpBlock = 0;
       } else {
         /* A waypoint that stays blocked is a waypoint from a stale grid: the
@@ -1185,6 +1222,7 @@ export class Unit extends Entity {
            unit is now standing beside. Sliding around it forever is the
            classic RTS livelock, so after a moment the waypoint is abandoned
            and the next one (which came from the grid) is tried. */
+        this._passKey = -1;
         this._wpBlock = (this._wpBlock || 0) + dt;
         if (this._wpBlock > 0.4) {
           this._wpBlock = 0;

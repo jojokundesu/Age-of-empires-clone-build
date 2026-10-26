@@ -266,6 +266,8 @@ check('a man standing at the wall hits the wall, not the nearest farm', () => {
   ai.armyState = 'attack';
   ai.siegeHall = hall;
   ai.lastWaveSeen = g.time;
+  /* the council reads the spatial index, which the tick normally rebuilds */
+  g.spatial.clear(); g.spatial.insertAll(g.units);
   ai.micro(host, { x: hall.x, z: hall.z });
   const onHall = host.filter((u) => u.target === hall).length;
   assert(onHall >= 6, `only ${onHall} of ${host.length} men are working on the hall`);
@@ -285,6 +287,7 @@ check('two men in reach of the same knight both hit him', () => {
   for (let i = 0; i < 4; i++) { host[i].x = victim.x + 2 + i * 0.4; host[i].z = victim.z + 2; host[i].aiRole = 'wave'; host[i].target = null; host[i].state = STATE.IDLE; }
   ai.armyState = 'attack';
   ai.siegeHall = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
+  g.spatial.clear(); g.spatial.insertAll(g.units);
   ai.micro(host.slice(0, 4), { x: victim.x, z: victim.z });
   const onVictim = host.slice(0, 4).filter((u) => u.target === victim).length;
   assert(onVictim >= 2, `focus fire put ${onVictim} men on one wounded spearman`);

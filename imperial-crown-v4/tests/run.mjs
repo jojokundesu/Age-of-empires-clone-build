@@ -22,6 +22,7 @@ const SUITES = [
   ['input', 'tests/input.test.mjs'],
   ['pacing', 'tests/pacing.test.mjs'],
   ['ai', 'tests/ai.test.mjs', '240'],
+  ['peak', 'tests/peak.mjs'],
   ['logistics', 'tests/logistics.mjs'],
   ['wallgate', 'tests/wallgate.mjs'],
   ['formation', 'tests/formation.mjs'],
@@ -44,6 +45,17 @@ const SUITES = [
   ['application', 'tests/app.test.mjs'],
   ['bundle', 'tests/dist.test.mjs', true]
 ];
+
+/* Chromium needs NSS, and a slim container may not have it. If a local copy
+   of the shared libraries has been unpacked into `.toolchain/nss` (see
+   `docs-browser-tests.md`), the browser suites pick it up automatically
+   instead of dying at launch with "libnss3.so: cannot open shared object". */
+if (!process.env.LD_LIBRARY_PATH || !process.env.LD_LIBRARY_PATH.includes('.toolchain/nss')) {
+  const localNss = new URL('../.toolchain/nss/', import.meta.url).pathname;
+  if (existsSync(localNss)) {
+    process.env.LD_LIBRARY_PATH = [localNss, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
+  }
+}
 
 const ci = process.argv.includes('--ci');
 const results = [];

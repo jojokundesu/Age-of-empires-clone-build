@@ -14,11 +14,19 @@ export class SpatialHash {
     this.current = 1;
     this.count = 0;
     this._out = [];
+    this.used = [];
     this.half = 256;
   }
+  /**
+   * Empty the grid. Only the buckets that were actually touched are cleared:
+   * walking all 16 384 buckets every tick to find twelve hundred of them was
+   * half a million pointless tests a second.
+   */
   clear() {
+    const used = this.used;
     const b = this.buckets;
-    for (let i = 0; i < b.length; i++) if (b[i].length) b[i].length = 0;
+    for (let i = 0; i < used.length; i++) b[used[i]].length = 0;
+    used.length = 0;
     this.count = 0;
   }
   cellIndex(x, z) {
@@ -30,7 +38,9 @@ export class SpatialHash {
   insert(e) {
     const i = this.cellIndex(e.x, e.z);
     if (i < 0) return;
-    this.buckets[i].push(e);
+    const bucket = this.buckets[i];
+    if (!bucket.length) this.used.push(i);
+    bucket.push(e);
     this.count++;
   }
   insertAll(list) {

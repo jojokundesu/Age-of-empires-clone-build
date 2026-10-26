@@ -69,6 +69,7 @@ export class HeightField {
     out[0] = nx / l; out[1] = ny / l; out[2] = nz / l;
     return out;
   }
+  /** Steepness, in rise over run, evaluated analytically. */
   slope(wx, wz) {
     const d = this.cell;
     const hl = this.sample(wx - d, wz), hr = this.sample(wx + d, wz);
@@ -694,6 +695,12 @@ export function buildNavGrid(world) {
   const N = WORLD.navCells;
   const cell = WORLD.navCell;
   const blocked = new Uint8Array(N * N);
+  /* `steep` is the same sample against the movement code's own, looser
+     threshold: it lets `isPassable`, which is asked for every man on every
+     step, answer "is this a cliff?" with one array read instead of four
+     bilinear height samples. Terrain never changes, so it is baked once,
+     here, out of exactly the numbers the nav grid is already paying for. */
+  const steep = new Uint8Array(N * N);
   for (let z = 0; z < N; z++) {
     for (let x = 0; x < N; x++) {
       const wx = (x + 0.5) * cell - WORLD.half;
@@ -701,7 +708,8 @@ export function buildNavGrid(world) {
       const h = world.height.sample(wx, wz);
       const slope = world.height.slope(wx, wz);
       blocked[z * N + x] = (h < 0.05 || slope > 0.72) ? 1 : 0;
+      steep[z * N + x] = slope > 0.95 ? 1 : 0;
     }
   }
-  return { cells: N, cell, blocked };
+  return { cells: N, cell, blocked, steep };
 }

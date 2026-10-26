@@ -3,3 +3,4 @@ dist/
 ci/
 .tmp/*.heapprofile
 *.log
+.toolchain/

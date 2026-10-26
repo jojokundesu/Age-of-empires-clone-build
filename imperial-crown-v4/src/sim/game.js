@@ -204,6 +204,16 @@ export class Game {
        needs one grid per team. They are built lazily (a team only pays
        when it first asks), and a map with no gates at all -- the common
        case -- never builds one. */
+    /* Cells a building touches, plus a one-cell ring around it.
+       `stepMovement` skips the exact passability test while a man stays
+       inside one cell -- the cell he stands in is his proof. That proof is
+       sound in open ground and unsound beside a wall: a 2 m cell can hold
+       half a building, and a man who creeps into that half can wedge himself
+       solid. This counter marks the cells where the shortcut is not allowed,
+       so the honest geometric test runs exactly where geometry is subtle --
+       around walls, houses and gates -- and nowhere else. A count, not a
+       flag, because two huts may share a ring cell. */
+    this.navHaz = new Uint8Array(this.navTerrain.length);
     this.navGateTeam = new Int16Array(this.navTerrain.length);   // 0 = no gate, else owner
     this.navGateCount = 0;
     this._teamPf = new Map();          // team -> { pf, grid }
@@ -551,7 +561,15 @@ export class Game {
     const h = this.world.height.sample(x, z);
     if (unit && unit.def && unit.def.naval) return h < -0.3;
     if (h < -0.25) return false;
-    if (this.world.height.slope(x, z) > 0.95) return false;
+    if (this._steep) {
+      /* the baked answer, from the same sample the nav grid used */
+      const nc = this.navCell || 2;
+      const cx = ((x + this.navHalf) / nc) | 0;
+      const cz = ((z + this.navHalf) / nc) | 0;
+      if (cx >= 0 && cz >= 0 && cx < this._steep.n && cz < this._steep.n) {
+        if (this._steep.g[cz * this._steep.n + cx]) return false;
+      }
+    } else if (this.world.height.slope(x, z) > 0.95) return false;
     const near = this.buildingSpatial.query(x, z, 5);
     for (let i = 0; i < near.length; i++) {
       const b = near[i];
@@ -607,6 +625,7 @@ export class Game {
   }
 
   unstick(unit) {
+    unit._passKey = -1;
     const px = unit.x, pz = unit.z;
     const best = this.freeSpotNear(px, pz, unit, 7);
     /* "the spot you are standing on" is trivially free; accepting it as a
@@ -897,6 +916,10 @@ export class Game {
     const fx = this.isPassable(x, z, { radius: 0.4, def }) ? x : this.nudgeFree(x, z);
     const fz = this.isPassable(fx, z, { radius: 0.4, def }) ? z : this.nudgeFree(fx, z, true);
     const u = new Unit(this, type, team, fx, fz);
+    /* A sparring partner is not an opponent: in the sandbox the second team
+       exists to be drilled against, and a dummy that wanders off to chase a
+       woodcutter is not a dummy. It holds its ground until it is ordered. */
+    if (this.mode === 'sandbox' && team !== TEAM_PLAYER) u.stance = 'stand';
     u.statsCache = null;
     this.units.push(u);
     if (this.elites) this.elites.enrol(u);
@@ -1051,6 +1074,23 @@ export class Game {
     const z0 = Math.max(0, Math.floor((b.z - s + half) / cell));
     const z1 = Math.min(N - 1, Math.floor((b.z + s + half) / cell));
     const delta = blocked ? 1 : -1;
+    /* the ring of cells around the footprint: the last metre a man can stand
+       in before his next step would put him against the wall */
+    {
+      const haz = this.navHaz;
+      const hs = s + cell;
+      const hx0 = Math.max(0, Math.floor((b.x - hs + half) / cell));
+      const hx1 = Math.min(N - 1, Math.floor((b.x + hs + half) / cell));
+      const hz0 = Math.max(0, Math.floor((b.z - hs + half) / cell));
+      const hz1 = Math.min(N - 1, Math.floor((b.z + hs + half) / cell));
+      for (let cz = hz0; cz <= hz1; cz++) {
+        for (let cx = hx0; cx <= hx1; cx++) {
+          const i = cz * N + cx;
+          if (blocked) { if (haz[i] < 255) haz[i]++; }
+          else if (haz[i]) haz[i]--;
+        }
+      }
+    }
     if (b.def.gate) {
       /* A gate is an obstacle to the enemy and a doorway to its owner. It lives
          in its own layer so allies path straight through; the doors themselves
@@ -1283,8 +1323,13 @@ export class Game {
     return best;
   }
 
+  /**
+   * The multiplier on a man's speed: decrees, the court, the mods, his own
+   * nerve, the season and the sky. Six systems consulted per unit per tick,
+   * so the answer is remembered for the tick -- none of them can change
+   * twice inside one thirtieth of a second.
+   */
   unitSpeedMul(unit) {
-    // packed formation cohesion: slight slowdown when very close to allies
     let base = this.buffMul(unit.team, 'speed');
     if (this.court) base *= this.court.speedMul(unit);
     if (this.modHost) base *= this.modHost.speedMul(unit);
@@ -1292,6 +1337,23 @@ export class Game {
     if (this.calendar) base *= this.calendar.speedMul();
     if (this.climate) base *= this.climate.speedMul();
     return base;
+  }
+
+  /**
+   * The same number, remembered for the length of one tick.
+   *
+   * Six systems are consulted for every man on every step of his march, and
+   * none of them can change twice inside a thirtieth of a second. The public
+   * `unitSpeedMul` stays pure -- the court, the calendar and the tests all
+   * ask it directly and expect a fresh answer -- and only the movement loop
+   * takes the cached one.
+   */
+  speedMulOnStep(unit) {
+    if (unit._smFrame === this.frame) return unit._sm;
+    const v = this.unitSpeedMul(unit);
+    unit._smFrame = this.frame;
+    unit._sm = v;
+    return v;
   }
 
   /* ==========================================================
@@ -1739,6 +1801,15 @@ export class Game {
     dt = Math.min(dt, 0.1) * this.speed;
     this.navTimer -= dt;
     if (this.navDirty && this.navTimer <= 0) { this.refreshNav(); this.navTimer = 0.2; }
+    if (this.navInv === undefined) {
+      /* nav cells are the movement code's unit of "the same ground" */
+      this.navCell = (this.world.nav && this.world.nav.cell) || 2;
+      this.navHalf = this.world.half || 256;
+      this.navInv = 1 / this.navCell;
+      this.navN = (this.world.nav && this.world.nav.cells) || 256;
+      const st = this.world.nav && this.world.nav.steep;
+      if (st) this._steep = { g: st, n: this.world.nav.cells };
+    }
     const t0 = performance.now();
     this.time += dt;
     this.frame++;
@@ -1755,17 +1826,51 @@ export class Game {
     }
 
     // units
+    /* one exponential for every unit's turn rate, instead of 4 000 a second */
+    this._facingLerp = 1 - Math.pow(0.0008, dt);
     const units = this.units;
     /* One reciprocal for the whole loop (it used to divide twice per unit, and
        a caller passing dt = 0 turned every velocity into Infinity, which the
        archers then used to lead their shots). */
     const invDt = dt > 1e-6 ? 1 / dt : 0;
+    /* ---- the far half of the map ----
+       In a war of four crowns most of the fighting happens somewhere the
+       player cannot see. Those men still march, still fight and still die --
+       but nothing about it is on screen, so they are simulated on every other
+       tick and handed the elapsed time in one piece. The camera's own
+       neighbourhood always runs at the full rate, and a game with no camera
+       (tests, headless soaks) behaves exactly as it always did. */
+    const cam = this.camera;
+    const lodX = cam && Number.isFinite(cam.targetX) ? cam.targetX : (cam && cam.target ? cam.target[0] : NaN);
+    const lodZ = cam && Number.isFinite(cam.targetZ) ? cam.targetZ : (cam && cam.target ? cam.target[2] : NaN);
+    const lodOn = Number.isFinite(lodX) && Number.isFinite(lodZ);
+    const lodR2 = 108 * 108;
+    /* Thirds, spread across ticks: one third of the distant host thinks each
+       tick, with a third of a second's worth of time in its hands. Every tick
+       costs a third as much as the old "all of them, twice as coarsely"
+       version -- and, unlike that version, no tick carries a double bill. */
+    const LOD_N = 3;
+    this.lodRound = ((this.lodRound | 0) + 1) % LOD_N;
+    const lodRound = this.lodRound;
     for (let i = 0; i < units.length; i++) {
       const u = units[i];
       const px = u.x, pz = u.z;
-      u.update(dt);
-      u.vx = (u.x - px) * invDt;
-      u.vz = (u.z - pz) * invDt;
+      let step = dt;
+      if (lodOn) {
+        const dx = u.x - lodX, dz = u.z - lodZ;
+        if (dx * dx + dz * dz > lodR2) {
+          if ((i + lodRound) % LOD_N !== 0) {
+            /* off screen, and not this tick: hold the render pose steady */
+            u.xPrev = u.x; u.yPrev = u.y; u.zPrev = u.z;
+            continue;
+          }
+          step = dt * LOD_N;
+        }
+      }
+      u.update(step);
+      const idt = step > 1e-6 ? 1 / step : 0;
+      u.vx = (u.x - px) * idt;
+      u.vz = (u.z - pz) * idt;
     }
     // buildings
     const buildings = this.buildings;
@@ -1817,15 +1922,21 @@ export class Game {
       }
       st.favor = Math.min(400, st.favor + rate * dt);
       if (st.buffs.length) {
+        let ended = false;
         for (let i = st.buffs.length - 1; i >= 0; i--) {
           const bf = st.buffs[i];
           bf.time -= dt;
           if (bf.time <= 0) {
             st.buffs.splice(i, 1);
+            ended = true;
             if (team === TEAM_PLAYER) this.notify(`${bf.name} has ended`, 'info');
           }
         }
-        this.statsVersion++;
+        /* A buff's multipliers do not change while it runs -- only its clock
+           does. Bumping the stats version every tick invalidated every unit's
+           cached stats thirty times a second for as long as any decree was
+           live, which at four crowns is the entire late game. */
+        if (ended) this.statsVersion++;
       }
     }
 
@@ -1935,26 +2046,37 @@ export class Game {
   /* ==========================================================
      vision
      ========================================================== */
-  updateFog(dt) {
+  /**
+   * Stamp one sight circle into the fog. A method rather than a closure: the
+   * old version built a new function for every unit on every fog pass, which
+   * at four crowns was two thousand closures a second and a visible share of
+   * the garbage collector's work.
+   */
+  _fogStamp(x, z, radius) {
     const fow = this.fow;
     const size = WORLD.fowCell;
     const half = WORLD.half;
+    const r2 = radius * radius;
+    const cx0 = Math.max(0, Math.floor((x - radius + half) / size));
+    const cx1 = Math.min(FOW - 1, Math.floor((x + radius + half) / size));
+    const cz0 = Math.max(0, Math.floor((z - radius + half) / size));
+    const cz1 = Math.min(FOW - 1, Math.floor((z + radius + half) / size));
+    for (let cz = cz0; cz <= cz1; cz++) {
+      const wz = (cz + 0.5) * size - half;
+      const row = cz * FOW;
+      const dz = wz - z;
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const wx = (cx + 0.5) * size - half;
+        const dx = wx - x;
+        if (dx * dx + dz * dz <= r2) fow[row + cx] = 2;
+      }
+    }
+  }
+
+  updateFog(dt) {
+    const fow = this.fow;
     // decay visible -> explored
     for (let i = 0; i < fow.length; i++) if (fow[i] === 2) fow[i] = 1;
-    const stamp = (x, z, radius) => {
-      const r2 = radius * radius;
-      const cx0 = Math.max(0, Math.floor((x - radius + half) / size));
-      const cx1 = Math.min(FOW - 1, Math.floor((x + radius + half) / size));
-      const cz0 = Math.max(0, Math.floor((z - radius + half) / size));
-      const cz1 = Math.min(FOW - 1, Math.floor((z + radius + half) / size));
-      for (let cz = cz0; cz <= cz1; cz++) {
-        const wz = (cz + 0.5) * size - half;
-        for (let cx = cx0; cx <= cx1; cx++) {
-          const wx = (cx + 0.5) * size - half;
-          if (dist2(wx, wz, x, z) <= r2) fow[cz * FOW + cx] = 2;
-        }
-      }
-    };
     const units = this.units;
     const sightMul = this.sightDayMul;
     /* Stamp a third of the army per pass. Vision is a 2 m grid updated 5.5x a
@@ -1967,13 +2089,13 @@ export class Game {
       const u = units[i];
       if (u.dead || u.team !== TEAM_PLAYER) continue;
       if (u.garrisoned) continue;
-      stamp(u.x, u.z, (u.def.sight || 9) * sightMul);
+      this._fogStamp(u.x, u.z, (u.def.sight || 9) * sightMul);
     }
     const buildings = this.buildings;
     for (let i = 0; i < buildings.length; i++) {
       const b = buildings[i];
       if (b.dead) continue;
-      if (b.team === TEAM_PLAYER || b.team === TEAM_NEUTRAL) stamp(b.x, b.z, (b.def.sight || 8) * (b.buildProgress >= 1 ? 1 : 0.5));
+      if (b.team === TEAM_PLAYER || b.team === TEAM_NEUTRAL) this._fogStamp(b.x, b.z, (b.def.sight || 8) * (b.buildProgress >= 1 ? 1 : 0.5));
     }
     this.fowDirty = true;
     this.fowTimer = 0.18;

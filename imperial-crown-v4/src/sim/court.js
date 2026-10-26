@@ -592,7 +592,14 @@ export class Court {
 
   toJSON() {
     const out = {};
-    for (const team of this.teams.keys()) {
+    /* Only the crowns that actually took the field. A court is allocated for
+       every possible crown up front (the roster is not known when the game is
+       constructed), but writing four empty shells into a two-crown save is
+       four hundred bytes of nothing and, worse, makes the save describe a war
+       that never happened. */
+    const roster = (this.game && this.game.teamIds && this.game.teamIds.length) ? this.game.teamIds : [...this.teams.keys()];
+    for (const team of roster) {
+      if (!this.teams.has(team)) continue;
       out[team] = {};
       for (const o of OFFICES) {
         const rec = this.office(team, o.id);
