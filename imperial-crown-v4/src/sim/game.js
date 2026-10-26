@@ -844,7 +844,14 @@ export class Game {
     const N = this.world.nav.cells;
     const cell = this.world.nav.cell;
     const half = WORLD.half;
-    const s = (b.def.size || 3) * 0.5 + 0.15;
+    /* Cells are stamped by *centre containment*, not by box overlap.
+       Overlap inflated every footprint by up to a full cell in each direction,
+       so two wall segments standing 2 m apart (the lattice pitch) shared their
+       cells and a 2 m wall claimed a 4 m band -- which is why gates kept
+       blocking their own troops and why diagonal walls ate six metres of
+       ground. A wall is 2 m on a 2 m grid: it should own exactly one cell. */
+    const pad = b.def.wall ? 0.05 : 0.15;
+    const s = (b.def.size || 3) * 0.5 + pad;
     const x0 = Math.max(0, Math.floor((b.x - s + half) / cell));
     const x1 = Math.min(N - 1, Math.floor((b.x + s + half) / cell));
     const z0 = Math.max(0, Math.floor((b.z - s + half) / cell));
@@ -852,25 +859,23 @@ export class Game {
     const delta = blocked ? 1 : -1;
     if (b.def.gate) {
       /* A gate is an obstacle to the enemy and a doorway to its owner. It lives
-         in its own layer so allies path straight through; the doors are purely
-         visual (the renderer reads b.gateOpen).
-         It also *carves* its doorway out of the build layer. Without that the
-         coarse 2 m grid is fatal: a 2.8 m gate between 2 m wall segments has
-         its centre cell stamped by the wall beside it, so the gate blocks its
-         own troops -- exactly the bug this carve exists to prevent. Cells whose
-         centre is inside the gate's footprint open for the owner; every one of
-         them closes for the enemy. */
+         in its own layer so allies path straight through; the doors themselves
+         are visual (the renderer reads b.gateOpen). It also *carves* its
+         doorway out of the build layer: the gate is 2.8 m on a 2 m grid, so
+         without a carve its centre cell is a wall cell and the gate blocks its
+         own troops. The carve is exactly the gate's own cell. */
       const ng = this.navGate, nfe = this.navFinalEnemy, t2 = this.navTerrain, nb2 = this.navBuild;
       const nc = this.navCarve, nf2 = this.navFinal;
-      const core = (b.def.size || 2.8) * 0.5 + 0.15;
+      const carveR = (b.def.size || 2.8) * 0.5 - 0.1;
       for (let cz = z0; cz <= z1; cz++) {
         for (let cx = x0; cx <= x1; cx++) {
+          const wx = (cx + 0.5) * cell - half, wz = (cz + 0.5) * cell - half;
+          const inBox = Math.abs(wx - b.x) <= s && Math.abs(wz - b.z) <= s;
+          const inCore = Math.abs(wx - b.x) <= carveR && Math.abs(wz - b.z) <= carveR;
+          if (!inBox) continue;
           const i = cz * N + cx;
           const gv = Math.max(0, ng[i] + delta);
           ng[i] = gv;
-          /* is the cell's centre inside the doorway? */
-          const wx = (cx + 0.5) * cell - half, wz = (cz + 0.5) * cell - half;
-          const inCore = Math.abs(wx - b.x) <= core && Math.abs(wz - b.z) <= core;
           const cv = inCore ? Math.max(0, nc[i] + delta) : nc[i];
           nc[i] = cv;
           nf2[i] = (t2[i] || (nb2[i] && !cv)) ? 1 : 0;
@@ -884,10 +889,12 @@ export class Game {
     const nfe = this.navFinalEnemy, ng = this.navGate, nc = this.navCarve;
     for (let cz = z0; cz <= z1; cz++) {
       for (let cx = x0; cx <= x1; cx++) {
+        const wx = (cx + 0.5) * cell - half, wz = (cz + 0.5) * cell - half;
+        if (Math.abs(wx - b.x) > s || Math.abs(wz - b.z) > s) continue;
         const i = cz * N + cx;
         const v = Math.max(0, nb[i] + delta);
         nb[i] = v;
-        /* Patch the combined grid in place. Recombining all 65 536 cells on
+        /* Patch the combined grids in place. Recombining all 65 536 cells on
            every house was a 1.2 ms spike for a change that touches ~36. */
         nf[i] = (t[i] || (v && !nc[i])) ? 1 : 0;
         nfe[i] = (t[i] || v || ng[i]) ? 1 : 0;
@@ -1937,8 +1944,13 @@ export class Game {
     const def = BUILDING_DEFS[type];
     if (!def) return [];
     const size = def.size || 2;
+    /* snap to the middle of a nav cell, not to its corner: a 2 m segment
+       centred on a cell boundary claims four cells, one centred on the cell
+       claims exactly one */
     const edge = WORLD.half - size;
-    const step = (v) => clamp(Math.round(v / size), -Math.round(edge / size), Math.round(edge / size));
+    const navCell = this.world.nav.cell;
+    const off = (size >= navCell ? navCell : size) * 0.5;
+    const step = (v) => clamp(Math.round((v - off) / size), -Math.round(edge / size), Math.round(edge / size));
     const i0 = step(x0), j0 = step(z0), i1 = step(x1), j1 = step(z1);
     const cost = this.buildingCost(type, team);
     const st = this.teams.get(team);
@@ -1950,7 +1962,7 @@ export class Game {
     const xFirst = spanI >= spanJ;
     let i = i0, j = j0, broken = false;
     for (let n = 0; n <= spanI + spanJ && cells.length < limit; n++) {
-      const x = i * size, z = j * size;
+      const x = i * size + off, z = j * size + off;
       const spot = broken ? { ok: false, reason: 'blocked' } : this.canPlaceAt(type, team, x, z);
       let ok = spot.ok, reason = spot.reason;
       /* a wall may not grow through a forest: canPlaceAt waves resources
@@ -1972,11 +1984,23 @@ export class Game {
         }
         if (afford) for (const k of Object.keys(cost)) purse[k] -= cost[k] || 0;
       }
-      cells.push({ x, z, ok, reason, cost, afford });
+      cells.push({ x, z, ok, reason, cost, afford, facing: 0 });
       if (!ok) broken = true;
       if (n === spanI + spanJ) break;
       if (xFirst) { if (i !== i1) i += di; else j += dj; }
       else { if (j !== j1) j += dj; else i += di; }
+    }
+    /* Face each segment along the run. The wall model's long axis is local X,
+       so without this every segment pointed at the map origin and a diagonal
+       run of square blocks came out as a scatter of separate slabs with gaps
+       between them. Corner cells take the average of their two neighbours. */
+    for (let n = 0; n < cells.length; n++) {
+      const prev = cells[n - 1], next = cells[n + 1];
+      let dx = 0, dz = 0;
+      if (prev && next) { dx = next.x - prev.x; dz = next.z - prev.z; }
+      else if (next) { dx = next.x - cells[n].x; dz = next.z - cells[n].z; }
+      else if (prev) { dx = cells[n].x - prev.x; dz = cells[n].z - prev.z; }
+      if (dx || dz) cells[n].facing = Math.atan2(-dz, dx);
     }
     return cells;
   }
@@ -1994,7 +2018,10 @@ export class Game {
       const spot = this.canPlaceAt(type, team, c.x, c.z);
       if (!spot.ok) { stopped = spot.reason || 'blocked'; break; }
       if (!opts.free && !this.canAfford(team, this.buildingCost(type, team))) { stopped = 'resources'; break; }
-      const b = this.placeBuilding(type, team, c.x, c.z, { instant: opts.instant, free: opts.free, facing: opts.facing });
+      const b = this.placeBuilding(type, team, c.x, c.z, {
+        instant: opts.instant, free: opts.free,
+        facing: opts.facing !== undefined ? opts.facing : c.facing
+      });
       if (!b) { stopped = 'resources'; break; }
       out.push(b);
     }
@@ -2022,6 +2049,31 @@ export class Game {
     }
     if (bestWall && bestWallD < radius * radius * 2.25) return bestWall;
     return best || bestWall;
+  }
+
+  /**
+   * The next unfinished piece of wall for a builder to walk to.
+   * Nearest first, within a short leash, and only pieces that no other
+   * villager is already working on -- two villagers hammering one foundation
+   * while three idle is the behaviour this exists to avoid.
+   */
+  nextFoundation(from, unit, radius = 12) {
+    let best = null, bestD = radius * radius;
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (b === from || b.dead || !b.def || !b.def.wall) continue;
+      if (b.buildProgress >= 1) continue;
+      if (b.team !== (unit ? unit.team : b.team)) continue;
+      if (b.builders && b.builders.size && !b.builders.has(unit.id)) continue;
+      /* somebody else is already walking to this piece: without the claim two
+         villagers that finish their pieces on the same tick pick the same
+         next one and leave another foundation idle */
+      if (b.chainClaim && b.chainClaim !== (unit && unit.id) && this.time - (b.chainClaimT || 0) < 8) continue;
+      const d = dist2(b.x, b.z, from.x, from.z);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    if (best && unit) { best.chainClaim = unit.id; best.chainClaimT = this.time; }
+    return best;
   }
 
   /** Everything the HUD needs about a selection. */

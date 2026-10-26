@@ -100,8 +100,12 @@ check('a wall run snaps to the segment lattice and tiles', () => {
   const cells = g.planWallLine(WALL_TYPE, spot.x - 7.3, spot.z, spot.x + 8.6, spot.z);
   assert(cells.length >= 8, `expected a run, got ${cells.length} cells`);
   const size = BUILDING_DEFS[WALL_TYPE].size;
+  /* segments sit on the centres of the nav cells (odd offsets), so each one
+     owns exactly one cell instead of straddling four */
+  const off = size * 0.5;
   for (const c of cells) {
-    assert(Math.abs(c.x / size - Math.round(c.x / size)) < 1e-9, `cell ${c.x} is off the lattice`);
+    const q = (c.x - off) / size;
+    assert(Math.abs(q - Math.round(q)) < 1e-9, `cell ${c.x} is off the lattice`);
   }
   for (let i = 1; i < cells.length; i++) {
     assert(Math.abs(cells[i].x - cells[i - 1].x) === size || Math.abs(cells[i].z - cells[i - 1].z) === size,

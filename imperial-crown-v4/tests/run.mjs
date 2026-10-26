@@ -25,6 +25,7 @@ const SUITES = [
   ['logistics', 'tests/logistics.mjs'],
   ['wallgate', 'tests/wallgate.mjs'],
   ['formation', 'tests/formation.mjs'],
+  ['wallsite', 'tests/wallsite.mjs'],
   ['fuzz', 'tests/fuzz.mjs', ['--seconds', '90', '--seeds', '3', '--orders', '4']],
   ['hud', 'tests/ui.test.mjs'],
   ['application', 'tests/app.test.mjs'],

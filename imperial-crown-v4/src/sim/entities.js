@@ -359,11 +359,11 @@ export class Unit extends Entity {
    * old `stallT` check it cannot be reset by jitter or by a nudge from another
    * unit.
    */
-  _nearEnough(dt, b, near) {
+  _nearEnough(dt, b, near, patience = 3.2) {
     const d = rectDist(this, b);
     if (d < (this.nearBest ?? 1e9) - 0.25) { this.nearBest = d; this.nearT = 0; }
     else this.nearT = (this.nearT || 0) + dt;
-    return d <= near || (this.nearT > 2.5 && d < near + 3.2);
+    return d <= near || (this.nearT > 2.5 && d < near + patience);
   }
   _clearNear() { this.nearBest = 1e9; this.nearT = 0; }
 
@@ -823,6 +823,20 @@ export class Unit extends Entity {
     const target = this.buildTarget;
     if (!target || target.dead || target.buildProgress >= 1) {
       this.buildTarget = null;
+      /* A wall is built as a run, not a segment: when one piece is finished,
+         keep going down the line to the next unfinished piece nearby. Without
+         this a crew of four raised four segments and then stood about while
+         seven foundations sat unfinished, which on a phone (where walls are
+         dragged, not tapped) meant walling a town was an endless chore. */
+      if (target && target.buildProgress >= 1 && target.def && target.def.wall) {
+        const next = g.nextFoundation(target, this);
+        if (next) {
+          this.buildTarget = next;
+          this.state = STATE.BUILD;
+          this.approachBuilding(next, 1.0);
+          return;
+        }
+      }
       if (target && target.buildProgress >= 1 && this.lastGatherKind) {
         const node = g.findNearestResource(this.lastGatherKind, this.x, this.z, 26, this);
         if (node) { this.gatherTarget = node; this.state = STATE.GATHER; return; }
@@ -830,7 +844,18 @@ export class Unit extends Entity {
       this.state = STATE.IDLE;
       return;
     }
-    if (!this._nearEnough(dt, target, 2.0)) {
+    /* A wall run is 2 m thick and is raised shoulder to shoulder, so four
+       villagers cannot all stand inside 2 m of the centre of their piece.
+       The ones squeezed out to 2.4 m used to land a single hammering frame
+       every 2.5 s (nearEnough's patience window, which building then reset)
+       -- walls crawled up at a quarter speed no matter how many villagers
+       were on them. A wall/bastion piece gets a wider, honest stand-off. */
+    const isWall = !!(target.def && (target.def.wall || target.def.gate));
+    const nearWork = isWall ? 1.9 : 2.0;
+    /* Walls get a wide stand-off but a *short* patience leash: without it a
+       villager that could not squeeze through a crowd hammered the wall from
+       6 m away, which reads as a broken animation. */
+    if (!this._nearEnough(dt, target, nearWork, isWall ? 0.9 : 3.2)) {
       this.repathTimer -= dt;
       if (!this.path || this.repathTimer <= 0) {
         this.repathTimer = 3.0;
@@ -842,12 +867,23 @@ export class Unit extends Entity {
     this.moving = false;
     this.path = null;
     this.stallT = 0;
-    this._clearNear();
+    /* only reset the patience timer when we are genuinely at the work spot;
+       resetting it from arm's length is what turned "one frame of work" into
+       "one frame per 2.5 s" */
+    if (rectDist(this, target) <= nearWork) this._clearNear();
     this.desiredFacing = Math.atan2(target.x - this.x, target.z - this.z);
     target.addBuilder(this, dt);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 7) * 0.5 + 0.35);
     if (g.rng() < dt * 2.2) g.fx.dust(target.x + randRange(-1, 1, g.rng), target.y + 0.2, target.z + randRange(-1, 1, g.rng), 1, 0.8);
     if (target.buildProgress >= 1) {
+      /* the piece is up: carry on down the same run instead of standing about */
+      const next = target.def && (target.def.wall || target.def.gate) ? g.nextFoundation(target, this) : null;
+      if (next) {
+        this.buildTarget = next;
+        this.state = STATE.BUILD;
+        this.approachBuilding(next, 1.0);
+        return;
+      }
       this.buildTarget = null;
       this._clearNear();
       this.state = STATE.IDLE;

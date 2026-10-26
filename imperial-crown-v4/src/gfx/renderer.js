@@ -1340,16 +1340,17 @@ export class Renderer {
       if (p.line && p.cells && p.cells.length) {
         /* one tile per planned segment: green where the run can go, red where
            it stops, dim where the treasury runs out */
+        /* one square grid tile per segment, turned along the run: reads as a
+           line of wall, not as a row of green blobs */
         for (let i = 0; i < p.cells.length; i++) {
           const c = p.cells[i];
           const y = game.heightAt(c.x, c.z);
           const good = c.ok && c.afford !== false;
-          const r = good ? (c.ok ? 0.4 : 1) : 1;
-          const g2 = good ? 1 : 0.55;
-          const b2 = good ? 0.55 : 0.26;
-          const a = good ? 0.55 : 0.4;
-          d.push(c.x, y + 0.09, c.z, (p.footprint || 2) * 0.38, r, g2, b2, a, 0, 2, 0, 0);
-          d.push(c.x, y + 0.1, c.z, (p.footprint || 2) * 0.4, r, g2, b2, a + 0.25, 0, 1, 0, 0);
+          const r = good ? 0.36 : 1;
+          const g2 = good ? 1 : 0.5;
+          const b2 = good ? 0.5 : 0.24;
+          const a = good ? 0.6 : 0.55;
+          d.push(c.x, y + 0.09, c.z, (p.footprint || 2) * 0.46, r, g2, b2, a, c.facing || 0, 2, 0, 0);
         }
       } else {
         const col = p.valid ? [0.4, 1, 0.55] : [1, 0.3, 0.26];
