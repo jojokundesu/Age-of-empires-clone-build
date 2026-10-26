@@ -223,14 +223,16 @@ check('the Still Air makes arrows miss a third of the time', () => {
 
 check('the Long Night really is longer', () => {
   const g = makeGame();
+  /* the dark must take *more real time*, so the in-game clock has to move
+     more slowly while the omen holds */
   setWheel(g, 'summer', null); g.calendar.omen = null;
   g.worldTime = 21;
-  const plainRate = (() => { const w = g.worldTime; g.update(1 / 30); return g.worldTime - w; })();
+  const plainRate = (() => { const w = g.worldTime; g.update(1 / 30); return ((g.worldTime - w) + 24) % 24; })();
   setWheel(g, 'summer', 'long_night');
   g.worldTime = 21;
-  const omenRate = (() => { const w = g.worldTime; g.update(1 / 30); return g.worldTime - w; })();
-  assert(omenRate > plainRate * 1.3, `the night must pass slower (${plainRate.toFixed(4)} vs ${omenRate.toFixed(4)})`);
-  return `×${(omenRate / plainRate).toFixed(1)} slower after dark`;
+  const omenRate = (() => { const w = g.worldTime; g.update(1 / 30); return ((g.worldTime - w) + 24) % 24; })();
+  assert(omenRate < plainRate * 0.75, `the night must last longer (hours/s ${plainRate.toFixed(5)} vs ${omenRate.toFixed(5)})`);
+  return `the night takes ×${(plainRate / omenRate).toFixed(1)} as long`;
 });
 
 check('the Great Frost cracks buildings but never finishes one', () => {

@@ -742,6 +742,8 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .inspStats .morale { color: #cdd8e6; display: inline-flex; align-items: center; gap: 3px; }
 .inspStats .morale .ic { width: 10px; height: 10px; }
 .inspStats .morale.bad { color: #ff9b84; font-weight: 600; }
+.renownChip { color: #ffc766; border: 1px solid rgba(255, 199, 102, 0.35); border-radius: 6px; padding: 0 5px; font-size: 8.5px; letter-spacing: 0.06em; background: rgba(70, 44, 12, 0.5); }
+.rankChip { color: #e8c47a; }
 
 /* ============================================================
    THE WHEEL OF THE YEAR

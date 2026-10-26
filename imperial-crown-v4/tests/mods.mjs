@@ -288,8 +288,8 @@ console.log('\nTHE ARCANE ORDER');
 check('mana regenerates and a spell spends it', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);
-  const mage = placeAt(g, 'magician', 1, g.playerBase.x + 6, g.playerBase.z + 6);
-  assert(mage, 'magician spawned');
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  assert(mage, 'mage spawned');
   const rec = host.mods.get('arcane');
   const st = () => mage.modState.arcane;
   st().mana = 10;
@@ -321,8 +321,8 @@ check('blink will not cross a wall', () => {
   g.refreshNav();
   const wx = built.placed[Math.floor(built.placed.length / 2)].x;
   const wz = built.placed[Math.floor(built.placed.length / 2)].z;
-  const mage = placeAt(g, 'magician', 1, wx - 3, wz);
-  assert(mage, 'magician spawned');
+  const mage = placeAt(g, 'mage', 1, wx - 3, wz);
+  assert(mage, 'mage spawned');
   mage.modState.arcane.mana = 100;
   const blocked = rec.mod.castSpell(rec.api, mage, spell, wx + 3, wz);
   assert(!blocked, 'blink through a wall must fail');
@@ -336,7 +336,7 @@ check('blink will not cross a wall', () => {
 check('a golem is temporary', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);
-  const mage = placeAt(g, 'magician', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
   const rec = host.mods.get('arcane');
   levelUp(g, mage, 6);
   mage.modState.arcane.mana = 200;
@@ -354,7 +354,7 @@ check('a golem is temporary', () => {
 check('time warp slows enemies but not allies', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);
-  const mage = placeAt(g, 'magician', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
   const rec = host.mods.get('arcane');
   levelUp(g, mage, 6);
   mage.modState.arcane.mana = 200;
@@ -372,19 +372,19 @@ check('time warp slows enemies but not allies', () => {
 check('insight climbs six ranks and changes the model', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);
-  const mage = placeAt(g, 'magician', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
   const rec = host.mods.get('arcane');
   const st = mage.modState.arcane;
   const seen = [];
   eq(st.rank, 1, 'starts at rank 1');
-  eq(mage.type, 'magician', 'starts as an apprentice model');
+  eq(mage.type, 'mage', 'starts as an apprentice model');
   const startMax = mage.maxHp;
   for (let r = 2; r <= 6; r++) {
     st.xp = rec.mod.ranks()[r - 1].xp + 1;
     run(g, 0.3, 30);   /* one 5 Hz mod tick */
     eq(st.rank, r, `rank ${r}`);
     seen.push(mage.type);
-    assert(mage.type !== 'magician', `rank ${r} must swap the model (${mage.type})`);
+    assert(mage.type !== 'mage', `rank ${r} must swap the model (${mage.type})`);
     assert(UNIT_DEFS[mage.type], `rank ${r} type ${mage.type} is registered`);
     eq(mage.def.name, rec.mod.ranks()[r - 1].title, `rank ${r} name`);
   }
@@ -397,7 +397,7 @@ check('insight climbs six ranks and changes the model', () => {
 check('spells are gated by rank, not just by mana', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);
-  const mage = placeAt(g, 'magician', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
   const rec = host.mods.get('arcane');
   const meteor = rec.mod.spells().find((s) => s.id === 'meteor');
   mage.modState.arcane.mana = 200;
@@ -413,7 +413,7 @@ check('spells are gated by rank, not just by mana', () => {
 check('attunement turns two elements into a new spell', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);
-  const mage = placeAt(g, 'magician', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
   const rec = host.mods.get('arcane');
   levelUp(g, mage, 3);
   const st = mage.modState.arcane;
@@ -437,7 +437,7 @@ check('attunement turns two elements into a new spell', () => {
 check('SKYFALL falls once a day and breaks a base', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);
-  const mage = placeAt(g, 'magician', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
   const rec = host.mods.get('arcane');
   levelUp(g, mage, 6);
   const st = mage.modState.arcane;
@@ -468,13 +468,13 @@ check('an arcane tower raises the cap and teaches faster', () => {
   const host = modHost(g, ['arcane']);
   const rec = host.mods.get('arcane');
   const b = g.playerBase;
-  const cap0 = rec.mod.magicianCap(rec.api, 1);
+  const cap0 = rec.mod.mageCap(rec.api, 1);
   const tower = g.placeBuilding('arcane_tower', 1, b.x + 12, b.z - 6, { free: true, instant: true });
   assert(tower, 'the tower can be placed');
-  eq(rec.mod.magicianCap(rec.api, 1), cap0 + 1, 'a tower raises the magician cap');
+  eq(rec.mod.mageCap(rec.api, 1), cap0 + 1, 'a tower raises the mage cap');
   /* insight beside the tower vs out in the field */
-  const near1 = placeAt(g, 'magician', 1, tower.x + 2, tower.z);
-  const far1 = placeAt(g, 'magician', 1, b.x - 20, b.z - 20);
+  const near1 = placeAt(g, 'mage', 1, tower.x + 2, tower.z);
+  const far1 = placeAt(g, 'mage', 1, b.x - 20, b.z - 20);
   assert(near1 && far1, 'two mages for the lesson');
   const x0 = near1.modState.arcane.xp;
   const y0 = far1.modState.arcane.xp;

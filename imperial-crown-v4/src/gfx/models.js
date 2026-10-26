@@ -1824,10 +1824,10 @@ MU('plague_zombie', () => {
   return { geo: g, height: 1.7, stride: 2.4 };
 });
 
-/* ---- magician: long robe, wide hat, staff with a live orb ----
+/* ---- mage: long robe, wide hat, staff with a live orb ----
    The robe is a skirt from the ankles to the waist, not a cone from the
    chest to the sky: the previous version read as a blue traffic cone. */
-MU('magician', () => {
+MU('mage', () => {
   const g = humanoid({
     torsoCol: [0.18, 0.22, 0.50], legCol: [0.14, 0.16, 0.34],
     sleeveCol: [0.20, 0.24, 0.54], sleeveMat: M.CLOTH, skin: [0.84, 0.70, 0.58],
@@ -1863,7 +1863,7 @@ MU('magician', () => {
 });
 
 
-/* ---- the five higher ranks of the magician ------------------------------
+/* ---- the five higher ranks of the mage ------------------------------
    Same rig, one family of silhouettes. Three things carry the ladder, in
    order of how far away they read:
 
@@ -1924,7 +1924,7 @@ const mageBody = (o = {}) => {
 };
 
 /* rank 2 — a circlet instead of a hat, a white mantle, twin orbs */
-MU('magician_adept', () => {
+MU('mage_adept', () => {
   const g = mageBody({ hem: 0.46, overRobe: true });
   g.material(M.GOLD).color(0.9, 0.76, 0.34);
   mageRing(g, 1.80, 0.16, 0.032, 9);
@@ -1943,7 +1943,7 @@ MU('magician_adept', () => {
 });
 
 /* rank 3 — violet, a cape, a halo, and a book that hangs in the air */
-MU('magician_magus', () => {
+MU('mage_magus', () => {
   const g = mageBody({ hem: 0.5, robeMat: M.MARBLE, robeCol: [0.44, 0.33, 0.66], overRobe: true });
   /* cape behind the shoulders */
   g.part_(PART.EXTRA, 0, 1.5, -0.18);
@@ -1978,7 +1978,7 @@ MU('magician_magus', () => {
 });
 
 /* rank 4 — crimson, gold pauldrons, a crown of three points, four motes */
-MU('magician_archmage', () => {
+MU('mage_archmage', () => {
   const g = mageBody({ hem: 0.54, robeMat: M.MARBLE, robeCol: [0.62, 0.21, 0.24], overRobe: true });
   g.part_(PART.EXTRA, 0, 1.5, -0.2);
   g.material(M.MARBLE).color(0.4, 0.13, 0.16);
@@ -2016,7 +2016,7 @@ MU('magician_archmage', () => {
 });
 
 /* rank 5 — ivory, a white beard, an open book, four motes and a halo */
-MU('magician_sage', () => {
+MU('mage_sage', () => {
   const g = mageBody({ hem: 0.52, robeMat: M.MARBLE, robeCol: [0.95, 0.93, 0.86], overRobe: true, skin: [0.9, 0.82, 0.72] });
   g.part_(PART.BODY, 0, 1.2, 0);
   /* mantle and beard */
@@ -2053,7 +2053,7 @@ MU('magician_sage', () => {
 });
 
 /* rank 6 — the robe does not reach the ground, and the air is crowded */
-MU('magician_ascendant', () => {
+MU('mage_ascendant', () => {
   const g = humanoid({
     torsoCol: [0.94, 0.95, 1.0], legCol: [0.9, 0.93, 1.0],
     sleeveCol: [0.95, 0.96, 1.0], sleeveMat: M.MARBLE,

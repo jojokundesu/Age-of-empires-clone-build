@@ -1385,6 +1385,12 @@ export class UI {
                   : st === STATE.ROUT ? 'Falling back' : 'Ready';
         sub = `${teamName} · ${stateName}`;
         if (e.rank && g.veterancy) sub += ` · ${g.veterancy.name(e)}`;
+        /* renown is a different axis from rank: how long he has lived, not
+           what he has done. The player needs both names to read a company. */
+        if (g.elites) {
+          const rn = g.elites.describe(e);
+          if (rn) sub += ` · ${rn.name}`;
+        }
       }
       el.inspSub.textContent = sub;
     }
@@ -1400,7 +1406,16 @@ export class UI {
         const morale = (e.def && e.def.attack > 0)
           ? `<span class="morale${(e.morale ?? 100) < 40 ? ' bad' : ''}" title="Morale — kept up by supply buildings${e.fed ? '' : ' (out of supply)'}"><svg class="ic"><use href="#i-flag"/></svg>${Math.round(e.morale ?? 100)}</span>`
           : '';
-        el.inspStats.innerHTML = vet + morale + `<span>⚔ ${Math.round(s.attack || 0)}</span><span>🛡 ${s.armor || 0}/${s.pierceArmor || 0}</span>` +
+        /* the renown power, named: a player cannot counter what is invisible */
+        let renown = '';
+        if (g.elites) {
+          const rn = g.elites.describe(e);
+          if (rn) {
+            const next = rn.next ? ` · next ${rn.next} in ${rn.left}s` : '';
+            renown = `<span class="renownChip" title="${rn.power} Counter: ${rn.counter}${next}">★ ${rn.name}</span>`;
+          }
+        }
+        el.inspStats.innerHTML = vet + renown + morale + `<span>⚔ ${Math.round(s.attack || 0)}</span><span>🛡 ${s.armor || 0}/${s.pierceArmor || 0}</span>` +
           (s.range > 1.2 ? `<span>🎯 ${s.range.toFixed(1)}</span>` : '') +
           `<span>👟 ${(s.speed || 0).toFixed(1)}</span>` +
           (e.carry && e.carry.amount ? `<span>🎒 ${Math.round(e.carry.amount)} ${e.carry.kind}</span>` : '');

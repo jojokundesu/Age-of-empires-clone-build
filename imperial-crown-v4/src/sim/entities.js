@@ -97,6 +97,12 @@ export class Entity {
       armor = kind === 'pierce' ? (this.def.pierceArmor || 0) : (this.def.armor || 0);
     }
     if (kind === 'siege') armor *= 0.35;
+    /* Shieldwall: a Hardened man's armour is worth more against a blow he can
+       see coming. The bonus is directional, so flanking really is the answer. */
+    if (this.game && this.game.elites) {
+      const wall = this.game.elites.shieldwall(this, attacker, kind);
+      if (wall) armor += wall;
+    }
     /* a man who has turned his back is the easiest kill on the field */
     if (this.game && this.game.morale) amount *= this.game.morale.damageTakenMul(this);
     if (this.game && this.game.buffMul) {
@@ -119,6 +125,7 @@ export class Entity {
     if (attacker) {
       this.lastAttacker = attacker;
       this.lastAttackTime = this.game.time;
+      if (this.game.elites) this.game.elites.onHurt(this, kind);
       this.game.alertAttacked(this, attacker);
     }
     if (this.hp <= 0) this.kill(attacker);
@@ -273,6 +280,8 @@ export class Unit extends Entity {
       s.attack *= m.atk;
     }
     if (g.calendar) s.sight *= g.calendar.sightMul();
+    /* renown: what survival itself has taught him */
+    if (g.elites) g.elites.applyStats(this, s);
     if (this.def.auraRange) s.auraRange = this.def.auraRange;
     s.maxHpScale = s.maxHpScale || 1;
     this._stats = s;

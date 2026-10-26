@@ -30,6 +30,16 @@ const BUILD_ORDER = [
   { type: 'monastery', age: 2, want: 1 }
 ];
 
+/* Which units answer each role the war council can ask for. The first entry
+   is the ideal; later ones are acceptable answers from another building. */
+const ROLE_UNITS = {
+  spear: ['spearman', 'huskarl', 'axeman', 'swordsman'],
+  skirmisher: ['skirmisher', 'archer', 'longbowman'],
+  archer: ['archer', 'longbowman', 'hand_cannoneer', 'skirmisher'],
+  knight: ['knight', 'scout_cavalry', 'cataphract'],
+  monk: ['monk']
+};
+
 const TECH_PRIORITY = [
   'loom', 'wheelbarrow', 'double_bit_axe', 'horse_collar', 'gold_mining',
   'forging', 'scale_armor', 'fletching', 'hand_cart', 'bow_saw', 'stone_mining',
@@ -92,6 +102,16 @@ export class AIController {
     this.raidRefresh = 0;
     this.waveStrength = 0;
     this.lastWaveSeen = 0;
+    /* --- the war council ------------------------------------------------
+       What the enemy is actually fielding, read from what this AI has
+       actually *seen* (enemy units within scouting distance of its own men
+       or roofs). A good player does not train the same army all match; the
+       AI must not either. `plan` is the answer the council gives the
+       barracks: which arm the next wave needs. */
+    this.staging = null;
+    this.census = null;
+    this.censusAt = -99;
+    this.plan = { role: null, why: '', siege: 0, defend: 0 };
   }
 
   /* ---------------- helpers ---------------- */
@@ -436,6 +456,23 @@ export class AIController {
       if (this.tryBuild('barracks', st)) return;
     }
     if (age >= 1 && army < 6) return;
+    /* ---- the council's answer, built before the standard order ----
+       If the enemy has a legend, the answer is a monastery and monks; if he
+       is turtling, a siege workshop. These are cheap detours compared to the
+       cost of answering a legend with spearmen for ten minutes. */
+    const plan = this.plan || {};
+    if (plan.role === 'monk' && age >= 2 && this.count('monastery') === 0) {
+      if (this.tryBuild('monastery', st)) return;
+    }
+    if (plan.siege && age >= 2 && this.count('siege_workshop') === 0) {
+      if (this.tryBuild('siege_workshop', st)) return;
+    }
+    if (plan.role === 'archer' && age >= 1 && this.count('archery_range') === 0) {
+      if (this.tryBuild('archery_range', st)) return;
+    }
+    if (plan.role === 'knight' && age >= 1 && this.count('stable') === 0) {
+      if (this.tryBuild('stable', st)) return;
+    }
     /* supply: a raid that walks past its tents breaks. The AI keeps a forward
        tent on the road to the enemy and a second behind it, so its armies can
        hold ground a whole map from the town centre. */
@@ -447,7 +484,7 @@ export class AIController {
     /* Wonder Race: the AI has to actually race, or the mode is a formality.
        It commits the moment it can pay the whole bill -- a wonder left half
        built is a thousand stone of nothing. */
-    if (g.mode === 'wonder' && age >= 3 && this.count('wonder') === 0) {
+    if ((g.mode === 'wonder' || g.victory === 'wonder') && age >= 3 && this.count('wonder') === 0) {
       const cost = g.buildingCost('wonder', this.team);
       if (st.res.stone >= (cost.stone || 0) && st.res.gold >= (cost.gold || 0) && st.res.wood >= (cost.wood || 0)) {
         if (this.tryBuild('wonder', st)) return;
@@ -581,6 +618,85 @@ export class AIController {
     return null;
   }
 
+  /* ---------------- the war council ---------------- */
+  /**
+   * Count what the enemy has been seen fielding, and what it is building.
+   * "Seen" is honest: only enemy units within 44 m of one of this AI's own
+   * units or buildings count. The AI has to scout to counter, exactly like
+   * the player, and a hidden build-up stays hidden.
+   *
+   * Refreshed every 8 s -- this is a strategic read, not a tactical one.
+   */
+  readEnemy() {
+    const g = this.game;
+    if (this.census && g.time - this.censusAt < 8) return this.census;
+    const c = { infantry: 0, archer: 0, cavalry: 0, siege: 0, monk: 0, elite: 0, legend: 0, total: 0, towers: 0, roofs: 0 };
+    const mine = [];
+    for (const u of g.units) if (!u.dead && u.team === this.team && !u.garrisoned) mine.push(u);
+    for (const b of g.buildings) if (!b.dead && b.team === this.team) mine.push(b);
+    const R2 = 44 * 44;
+    for (const u of g.units) {
+      if (u.dead || u.garrisoned || u.wild || !g.isHostile(this.team, u.team)) continue;
+      let seen = false;
+      for (let i = 0; i < mine.length; i++) {
+        const m = mine[i];
+        const dx = m.x - u.x, dz = m.z - u.z;
+        /* a roof sees a little further than a man on foot */
+        const r2 = m.kind === 'building' ? 30 * 30 : R2;
+        if (dx * dx + dz * dz <= r2) { seen = true; break; }
+      }
+      if (!seen) continue;
+      c.total++;
+      const cls = u.def.classes || [];
+      if (cls.includes('monk')) c.monk++;
+      else if (u.def.siege) c.siege++;
+      else if (cls.includes('cavalry')) c.cavalry++;
+      else if (cls.includes('archer')) c.archer++;
+      else if (cls.includes('infantry')) c.infantry++;
+      if ((u.rank || 0) >= 2 || (u.renown || 0) >= 2) c.elite++;
+      if ((u.renown || 0) >= 4) c.legend++;
+    }
+    for (const b of g.buildings) {
+      if (b.dead || !g.isHostile(this.team, b.team)) continue;
+      c.roofs++;
+      if (b.def.tower || b.type === 'watch_tower' || b.type === 'castle') c.towers++;
+    }
+    this.census = c;
+    this.censusAt = g.time;
+    this.decidePlan(c);
+    return c;
+  }
+
+  /**
+   * The strategic answer. Each rule names the threat it is answering, so a
+   * player who watches the AI's army change can infer that they were read.
+   */
+  decidePlan(c) {
+    const plan = { role: null, why: '', siege: 0, defend: 0 };
+    if (!c.total) { plan.why = 'no contact'; this.plan = plan; return plan; }
+    const share = (n) => n / Math.max(1, c.total);
+    /* A legend is not a soldier; a line of spears will not kill him and
+       feeding him more spears is how a match is lost. Monks convert what
+       cannot be killed, and archers mass fire faster than a banner heals. */
+    if (c.legend > 0) { plan.role = 'monk'; plan.why = 'legend on the field'; }
+    else if (share(c.cavalry) >= 0.30) { plan.role = 'spear'; plan.why = 'cavalry-heavy enemy'; }
+    else if (share(c.archer) >= 0.32) { plan.role = 'skirmisher'; plan.why = 'archer-heavy enemy'; }
+    else if (share(c.infantry) >= 0.46) { plan.role = 'archer'; plan.why = 'infantry-heavy enemy'; }
+    else if (c.elite >= 3) { plan.role = 'archer'; plan.why = 'enemy veterans'; }
+    else if (c.siege > 0) { plan.role = 'knight'; plan.why = 'enemy siege train'; }
+    /* siege is a building question, not a unit question */
+    if (c.towers >= 3 || c.roofs >= 18) plan.siege = 1;
+    this.plan = plan;
+    return plan;
+  }
+
+  /** What this AI would like to train next, as a role. */
+  wantedRole() {
+    const c = this.readEnemy();
+    if (!c || c.total < 2) return null;
+    return this.plan.role;
+  }
+
   /* ---------------- production ---------------- */
   manageProduction(st, age) {
     const g = this.game;
@@ -597,6 +713,22 @@ export class AIController {
         if (b.queue.length >= 1) continue;
         if (!this.affordableWithReserve(st, age, vcost)) break;
         if (b.queueUnit('villager')) break;
+      }
+    }
+
+    /* ---- siege: walls do not fall to spears ----
+       Once the council sees towers or a real town, it wants engines. Two is
+       enough for a raid; four is an army that can actually take a castle. */
+    if (this.plan && this.plan.siege) {
+      const workshop = this.find('siege_workshop');
+      const engines = this.countUnits('ram') + this.countUnits('mangonel') + this.countUnits('bombard_cannon') + this.countUnits('trebuchet');
+      const wantEngines = this.plan.role === 'monk' ? 2 : 4;
+      if (workshop && workshop.buildProgress >= 1 && workshop.queue.length < 1 && engines < wantEngines && !this.ageReserve(st, age)) {
+        for (const t of ['ram', 'mangonel', 'bombard_cannon', 'trebuchet']) {
+          if (!UNIT_DEFS[t] || !workshop.def.trains || !workshop.def.trains.includes(t)) continue;
+          const cost = this.game.unitCost(t, this.team);
+          if (this.affordableWithReserve(st, age, cost)) { workshop.queueUnit(t); break; }
+        }
       }
     }
 
@@ -625,16 +757,25 @@ export class AIController {
       if (st && st.res.food < 220) return null;
     }
     const st = this.game.teams.get(this.team);
+    const role = this.wantedRole();
+    const roleTypes = role ? ROLE_UNITS[role] || [] : [];
     const options = building.def.trains.filter((t) => {
       if (isUnique(t) && this.civ.unique !== t) return false;
-      if (UNIT_DEFS[t].classes.includes('monk')) return false;
+      if (UNIT_DEFS[t].classes.includes('monk') && role !== 'monk') return false;
       return true;
     });
     if (!options.length) return null;
     // prefer units we do not have too many of
     const counts = new Map();
     for (const u of this.game.units) if (!u.dead && u.team === this.team) counts.set(u.type, (counts.get(u.type) || 0) + 1);
-    options.sort((a, b) => (counts.get(a) || 0) - (counts.get(b) || 0));
+    options.sort((a, b) => {
+      /* the council's request comes first; the usual "least of" rule only
+         decides between units that answer it equally well */
+      const ra = roleTypes.includes(a) ? 0 : 1;
+      const rb = roleTypes.includes(b) ? 0 : 1;
+      if (ra !== rb) return ra - rb;
+      return (counts.get(a) || 0) - (counts.get(b) || 0);
+    });
     for (const opt of options) {
       const cost = this.game.unitCost(opt, this.team);
       if (this.affordableWithReserve(st, age, cost) && this.game.popFree(this.team) >= (UNIT_DEFS[opt].pop || 1)) return opt;
@@ -757,12 +898,17 @@ export class AIController {
       let army = 0, buildings = 0;
       for (const u of g.units) if (!u.dead && u.team === t && u.def.attack > 0) army++;
       for (const b of g.buildings) if (!b.dead && b.team === t) buildings++;
-      /* near is cheap to attack; strong is worth attacking; a crown that has
-         been raiding me is worth attacking *now* */
-      let score = 60 - d * 0.22 + army * 1.1 + buildings * 0.35;
-      if (this.raidedBy && this.raidedBy.has(t)) score += 18;
-      if (g.realm && g.realm.state(t).commons < 25) score += 12;   // a realm in revolt is a target
-      if (this.foe === t) score += 26;                              // stay the course
+      /* A competent commander does not march on the strongest enemy for its
+         own sake. The old rule scored strength *positively*, so the AI spent
+         every match attacking the one crown it could not beat and left the
+         weak one alone to grow -- four equal AIs stalemated for half an hour
+         because of it. The rule now is:
+           - close is cheap;
+           - a crown I outmatch is a crown I can actually take;
+           - a crown that has been raiding me has earned a reply;
+           - and a runaway leader must be stopped *before* it is unbeatable,
+             even if that means fighting uphill. */
+      const score = this.foeScore(t, d, { army, buildings });
       if (score > bestScore) { bestScore = score; best = t; }
     }
     this.foe = best || this.foe || 2;
@@ -770,14 +916,46 @@ export class AIController {
     return this.foe;
   }
 
+  /**
+   * How attractive a rival is as the next campaign, as one number.
+   * Pure and side-effect free so the strategy can be tested on its own.
+   */
+  foeScore(team, d, seen = { army: 0, buildings: 0 }) {
+    const g = this.game;
+    let score = 58 - d * 0.18;                      // distance is logistics
+    const myArmy = this.militaryUnits().length;
+    score += (myArmy - (seen.army || 0)) * 0.85;    // a crown I outmatch is takeable
+    let rival = 0;
+    if (g.scoreOf) rival = g.scoreOf(team);
+    const mine = g.scoreOf ? g.scoreOf(this.team) : 0;
+    /* the leader must be stopped before it is unbeatable. Compare armies,
+       not scores: a score is a ledger, an army is what marches. */
+    const theirArmy = seen.army || 0;
+    if (theirArmy > Math.max(6, myArmy * 1.45)) score += 30;        // stop the runaway
+    else if (myArmy > 3 && theirArmy < myArmy * 0.6) score += 10;   // finish the weak
+    if (g.realm && g.realm.state(team) && g.realm.state(team).commons < 25) score += 12;
+    if (this.raidedBy && this.raidedBy.has(team)) score += 18;
+    if (this.foe === team) score += 14;              // stay the course
+    return score;
+  }
+
   /* ---------------- target value ---------------- */
+  /** How much a single enemy unit is worth hunting. Renown is a big part of
+      it: a Legend is not a soldier, it is a banner, and the AI knows that a
+      legend left alone for a minute turns a skirmish into a rout. */
+  threatOf(u) {
+    let t = unitThreat(u);
+    if (this.game.elites) t *= this.game.elites.bounty(u);
+    return t;
+  }
+
   /** The enemy unit this AI would most like to delete, and why. */
   eliteTargets() {
     const g = this.game;
     const out = [];
     for (const u of this.game.units) {
       if (u.dead || u.team === 0 || u.wild || !g.isHostile(this.team, u.team)) continue;
-      if (unitThreat(u) >= 4) out.push(u);
+      if (this.threatOf(u) >= 4) out.push(u);
     }
     return out;
   }
@@ -1110,32 +1288,92 @@ export class AIController {
     /* the line: everything that is not already hunting or raiding */
     const waveUnits = army.filter((u) => !u.aiRole || u.aiRole === 'wave');
 
+    /* how much of the enemy's army is actually at home? A crown whose host is
+       away raiding is a crown with an open gate, and a commander who cannot
+       see that is not a commander -- this is the opening the AI takes. */
+    let foeHome = 0;
+    for (const u of g.units) {
+      if (u.dead || u.team !== this.foe || !u.def || u.def.attack <= 0) continue;
+      if (u.def.classes.includes('villager')) continue;
+      if (dist2(u.x, u.z, enemyBase.x, enemyBase.z) < 42 * 42) foeHome++;
+    }
+    this.foeHome = foeHome;
     /* wave timing */
     const ready = army.length >= Math.min(this.diff.maxArmy, 5 + Math.floor((g.time - this.diff.firstWave) / this.diff.waveEvery) * 3);
-    const canAttack = g.time > this.diff.firstWave && (this.attackTimer <= 0 || (ready && this.armyState !== 'attack'));
+    const opportunistic = !!(this.plan && this.plan.why && foeHome <= 4 && waveUnits.length >= 6 && g.time > this.diff.firstWave + 45);
+    const canAttack = g.time > this.diff.firstWave &&
+      (this.attackTimer <= 0 || (ready && this.armyState !== 'attack') || opportunistic);
 
     if (canAttack && waveUnits.length >= 4) {
-      this.armyState = 'attack';
-      this.attackTimer = this.diff.waveEvery;
-      this.lastAttackTime = g.time;
+      /* ---- staging ---- 
+         An army that walks at the enemy town one unit at a time is defeated
+         in detail: the defender's whole garrison meets each man as he
+         arrives. So the wave first forms up at a staging ground a short march
+         from the town, waits for most of its strength to gather (or 18 s,
+         whichever comes first), and only then goes in as one body. */
+      const dx = enemyBase.x - base.x, dz = enemyBase.z - base.z;
+      const len = Math.hypot(dx, dz) || 1;
+      const stand = Math.max(26, Math.min(46, len * 0.32));
+      this.staging = {
+        x: enemyBase.x - (dx / len) * stand,
+        z: enemyBase.z - (dz / len) * stand,
+        until: g.time + 18,
+        strength: waveUnits.length
+      };
+      this.armyState = 'stage';
       this.waveStrength = waveUnits.length;
-      this.lastWaveSeen = g.time;
-      /* the target is a structure near the enemy base, not the first building
-         in the array: an AI that marches at a random farm looks confused */
-      const target = g.nearestEnemyStructure({ x: enemyBase.x, z: enemyBase.z, team: this.team }, this.team, 40);
       for (const u of waveUnits) {
-        if (u.state === STATE.ATTACK && u.target && !u.target.dead) continue;
-        u.aiRole = 'wave';
-        if (target && u.def.classes.includes('siege')) {
-          u.state = STATE.ATTACK;
-          u.target = target;
-          u.noAggro = false;
-          continue;
-        }
-        u.state = STATE.ATTACK_MOVE;
+        u.aiRole = 'stage';
         u.target = null;
         u.noAggro = false;
-        u.moveTo(enemyBase.x + (this.rng() - 0.5) * 16, enemyBase.z + (this.rng() - 0.5) * 16, true);
+        u.state = STATE.ATTACK_MOVE;
+        u.moveTo(this.staging.x + (this.rng() - 0.5) * 12, this.staging.z + (this.rng() - 0.5) * 12, true);
+      }
+      return;
+    }
+
+    if (this.armyState === 'stage' && this.staging) {
+      const st2 = this.staging;
+      let arrived = 0;
+      for (const u of waveUnits) {
+        if (u.aiRole !== 'stage') continue;
+        if ((u.x - st2.x) ** 2 + (u.z - st2.z) ** 2 < 14 * 14) arrived++;
+      }
+      const enough = arrived >= Math.max(3, st2.strength * 0.6);
+      if (enough || g.time >= st2.until || waveUnits.length < 3) {
+        /* go in as one body */
+        this.armyState = 'attack';
+        this.attackTimer = this.diff.waveEvery;
+        this.lastAttackTime = g.time;
+        this.waveStrength = waveUnits.length;
+        this.lastWaveSeen = g.time;
+        /* the hall first: a war of crowns is decided by which halls still
+           stand, so the engines go for the town centre and the line follows */
+        const target = g.enemyHall(this.team, enemyBase.x, enemyBase.z, 44)
+          || g.nearestEnemyStructure({ x: enemyBase.x, z: enemyBase.z, team: this.team }, this.team, 40);
+        for (const u of waveUnits) {
+          u.aiRole = 'wave';
+          if (target && u.def.classes.includes('siege')) {
+            u.state = STATE.ATTACK;
+            u.target = target;
+            u.noAggro = false;
+            continue;
+          }
+          u.state = STATE.ATTACK_MOVE;
+          u.target = null;
+          u.noAggro = false;
+          u.moveTo(enemyBase.x + (this.rng() - 0.5) * 16, enemyBase.z + (this.rng() - 0.5) * 16, true);
+        }
+        this.staging = null;
+      } else {
+        /* stragglers keep walking to the colours */
+        for (const u of waveUnits) {
+          if (u.aiRole !== 'stage') continue;
+          if (u.state === STATE.IDLE) {
+            u.state = STATE.ATTACK_MOVE;
+            u.moveTo(st2.x + (this.rng() - 0.5) * 10, st2.z + (this.rng() - 0.5) * 10, true);
+          }
+        }
       }
       return;
     }
@@ -1148,8 +1386,23 @@ export class AIController {
         /* a wave that has lost most of its strength pulls back to reform;
            feeding a broken army into a town is how the old AI threw games */
         const broken = this.waveStrength && alive < Math.max(3, this.waveStrength * 0.45);
-        if (alive < 3 || broken) {
+        /* ...but a wave that is winning does not walk home. If the defenders
+           at the hall are down to almost nothing, press the advantage: this
+           is the difference between a war that grinds for an hour and one
+           that is decided when the enemy's army dies. */
+        const guard = g.buildings.filter((b) => !b.dead && b.team === this.foe && b.def.ageAdvance);
+        let foesLeft = 0;
+        for (const u of g.units) {
+          if (u.dead || u.team !== this.foe || !u.def || u.def.attack <= 0) continue;
+          if (u.def.classes.includes('villager')) continue;
+          for (const h of guard) {
+            if (dist2(u.x, u.z, h.x, h.z) < 34 * 34) { foesLeft++; break; }
+          }
+        }
+        const pressing = alive >= 6 && foesLeft <= Math.max(2, alive * 0.5);
+        if ((alive < 3 || broken) && !pressing) {
           this.armyState = 'gather';
+          this.staging = null;
           this.attackTimer = Math.max(20, this.diff.waveEvery * 0.5);
           for (const u of army) {
             if (u.aiRole === 'hunt' || u.aiRole === 'raid') continue;
@@ -1218,7 +1471,11 @@ export function unitThreat(u) {
   if (u.courtOffice) t += 3;
   /* a chevron is worth more than a body: veterans are the enemy's future */
   t += (u.rank || 0) * 1.6;
-  /* a caster is not a unit, it is a *threat curve*. A rank 6 magician can
+  /* renown: a man who has survived long enough to earn a name is worth more
+     than the man who has not, because he is standing proof that shooting him
+     does not work */
+  t += (u.renown || 0) * 1.2;
+  /* a caster is not a unit, it is a *threat curve*. A rank 6 mage can
      delete a town centre once a day, so the bounty on its head has to grow
      faster than its rank: threat is the AI's whole vocabulary for "kill this
      now", and a linear scale would leave the Ascendant priced like a knight. */

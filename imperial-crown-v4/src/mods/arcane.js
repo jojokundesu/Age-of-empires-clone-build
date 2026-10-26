@@ -1,7 +1,7 @@
 /* ============================================================
    arcane.js — The Arcane Order
    ------------------------------------------------------------
-   A magician is not a unit you buy once; it is a unit you *grow*.
+   A mage is not a unit you buy once; it is a unit you *grow*.
    Insight is earned by casting, by killing, and by standing in the
    shadow of a tower, and every rank opens new spells and changes the
    model on the field.
@@ -19,27 +19,27 @@
    different problem. That is the thing a player is still discovering
    in their fourth hour.
 
-   The whole mod is deliberately fragile and expensive: a magician is
+   The whole mod is deliberately fragile and expensive: a mage is
    the most valuable thing on the field, and the AI knows it.
    ============================================================ */
 import { TEAM_PLAYER, TEAM_ENEMY } from '../sim/game.js';
 import { UNIT_DEFS } from '../sim/data.js';
 
-const MAGICIAN = 'magician';
+const MAGE = 'mage';
 const GOLEM = 'stone_golem';
 const TOWER = 'arcane_tower';
-const MAX_BASE_MAGICIANS = 4;
+const MAX_BASE_MAGES = 4;
 
 /* one in-game day, in seconds: the sky falls once per day */
 const DAY = 240;
 
 const RANKS = [
-  { rank: 1, title: 'Apprentice', xp: 0, mana: 100, regen: 3.4, type: MAGICIAN },
-  { rank: 2, title: 'Adept', xp: 80, mana: 118, regen: 3.9, type: 'magician_adept' },
-  { rank: 3, title: 'Magus', xp: 220, mana: 138, regen: 4.5, type: 'magician_magus' },
-  { rank: 4, title: 'Archmage', xp: 430, mana: 162, regen: 5.2, type: 'magician_archmage' },
-  { rank: 5, title: 'Sage', xp: 720, mana: 190, regen: 6.0, type: 'magician_sage' },
-  { rank: 6, title: 'Ascendant', xp: 1100, mana: 225, regen: 7.0, type: 'magician_ascendant' }
+  { rank: 1, title: 'Apprentice', xp: 0, mana: 100, regen: 3.4, type: MAGE },
+  { rank: 2, title: 'Adept', xp: 80, mana: 118, regen: 3.9, type: 'mage_adept' },
+  { rank: 3, title: 'Magus', xp: 220, mana: 138, regen: 4.5, type: 'mage_magus' },
+  { rank: 4, title: 'Archmage', xp: 430, mana: 162, regen: 5.2, type: 'mage_archmage' },
+  { rank: 5, title: 'Sage', xp: 720, mana: 190, regen: 6.0, type: 'mage_sage' },
+  { rank: 6, title: 'Ascendant', xp: 1100, mana: 225, regen: 7.0, type: 'mage_ascendant' }
 ];
 const RANK_BY_TYPE = new Map(RANKS.map((r) => [r.type, r]));
 
@@ -69,7 +69,7 @@ function rankInfo(u) {
   return RANKS[Math.max(0, Math.min(RANKS.length - 1, (st.rank || 1) - 1))];
 }
 
-function isMagician(u) {
+function isMage(u) {
   return !!u && !u.dead && !!(u.modState && u.modState.arcane);
 }
 
@@ -135,7 +135,7 @@ function gainXp(api, unit, amount) {
   st.mana = next.mana;
   api.fx.heal(unit.x, unit.y + 1.6, unit.z, 8);
   api.mark(unit.x, unit.z, { kind: 1, r0: 0.55, g0: 0.8, b0: 1, r: 3.2, life: 1.1 });
-  api.say(`${unit.name || 'Magician'} — ${next.title}. ${rankBlurb(next.rank)}`, 'good');
+  api.say(`${unit.name || 'Mage'} — ${next.title}. ${rankBlurb(next.rank)}`, 'good');
   api.banner(`${next.title}`);
 }
 
@@ -621,17 +621,17 @@ export const arcane = {
   id: 'arcane',
   name: 'The Arcane Order',
   icon: 'monk',
-  tagline: 'One magician, six ranks, nineteen spells.',
-  blurb: 'A magician who grows from a fireball-throwing apprentice into an Ascendant who can drop the sky on an enemy base — once a day.',
+  tagline: 'One mage, six ranks, nineteen spells.',
+  blurb: 'A mage who grows from a fireball-throwing apprentice into an Ascendant who can drop the sky on an enemy base — once a day.',
   detail: [
-    'Magicians earn insight by casting, by killing, and by standing near an Arcane Tower. Every rank unlocks new spells and literally changes the model: grimoire, halo, cape, crown.',
+    'Mages earn insight by casting, by killing, and by standing near an Arcane Tower. Every rank unlocks new spells and literally changes the model: grimoire, halo, cape, crown.',
     'Eleven base spells across fire, ice, storm and arcane — Ice Lance, Chain Lightning, Meteor, Frost Nova, Thunderstorm… and SKYFALL at rank 6, a once-per-day pillar of lightning that damages everything in a 9 m circle, anywhere on the map.',
     'Attunement is the long game: weave two elements at rank 3+ to discover one of six hybrids that are not listed anywhere until you find them.',
-    'The AI knows exactly how dangerous a high-rank magician is: it watches for casters, forms hunting parties, and will spend an army to kill one.'
+    'The AI knows exactly how dangerous a high-rank mage is: it watches for casters, forms hunting parties, and will spend an army to kill one.'
   ],
   units: {
-    [MAGICIAN]: {
-      name: 'Magician', icon: 'monk', hp: 110, attack: 7, armor: 1, pierceArmor: 2,
+    [MAGE]: {
+      name: 'Mage', icon: 'monk', hp: 110, attack: 7, armor: 1, pierceArmor: 2,
       range: 6.5, speed: 2.85, time: 26, cost: { food: 60, gold: 100 },
       classes: ['infantry', 'caster', 'unique'], caster: true, sight: 14, attackSpeed: 1.6,
       projectile: 'flame', pop: 1, threat: 4,
@@ -655,7 +655,7 @@ export const arcane = {
     [TOWER]: {
       name: 'Arcane Tower', icon: 'tower', hp: 1250, armor: 4, pierceArmor: 8, size: 3.4,
       sight: 13, cost: { wood: 150, stone: 120 }, time: 30, minAge: 1, power: -2,
-      desc: 'Teaches nearby magicians (insight over time) and raises the magician cap by one.'
+      desc: 'Teaches nearby mages (insight over time) and raises the mage cap by one.'
     }
   },
 
@@ -675,30 +675,30 @@ export const arcane = {
   },
 
   setup(api) {
-    api.say('The Arcane Order answers the call. Train magicians at the Town Centre.', 'good');
+    api.say('The Arcane Order answers the call. Train mages at the Town Centre.', 'good');
   },
 
   /* ------------------------------------------------------------
      training, caps, towers
      ------------------------------------------------------------ */
-  magicianCap(api, team) {
+  mageCap(api, team) {
     let towers = 0;
     for (const b of api.teamBuildings(team)) if (b.type === TOWER && !b.dead) towers++;
-    return MAX_BASE_MAGICIANS + Math.min(2, towers);
+    return MAX_BASE_MAGES + Math.min(2, towers);
   },
 
-  countMagicians(api, team) {
+  countMages(api, team) {
     let n = 0;
-    for (const u of api.teamUnits(team)) if (isMagician(u)) n++;
+    for (const u of api.teamUnits(team)) if (isMage(u)) n++;
     return n;
   },
 
   trainableAt(api, building, team = TEAM_PLAYER) {
     if (!building || building.team !== TEAM_PLAYER) return [];
     if (building.type !== 'town_center' && building.type !== 'castle') return [];
-    const queued = building.queue ? building.queue.filter((q) => q.type === MAGICIAN).length : 0;
-    if (this.countMagicians(api, TEAM_PLAYER) + queued >= this.magicianCap(api, TEAM_PLAYER)) return [];
-    return [MAGICIAN];
+    const queued = building.queue ? building.queue.filter((q) => q.type === MAGE).length : 0;
+    if (this.countMages(api, TEAM_PLAYER) + queued >= this.mageCap(api, TEAM_PLAYER)) return [];
+    return [MAGE];
   },
 
   buildMenu(api, team = TEAM_PLAYER) {
@@ -707,24 +707,24 @@ export const arcane = {
   },
 
   onSpawn(api, unit) {
-    if (unit.type !== MAGICIAN && !RANK_BY_TYPE.has(unit.type)) return;
+    if (unit.type !== MAGE && !RANK_BY_TYPE.has(unit.type)) return;
     const st = ustate(api, unit);
-    if (unit.type !== MAGICIAN) st.rank = RANK_BY_TYPE.get(unit.type).rank;
+    if (unit.type !== MAGE) st.rank = RANK_BY_TYPE.get(unit.type).rank;
     st.mana = maxMana(unit);
     api.fx.heal(unit.x, unit.y + 1.4, unit.z, 3);
   },
 
   onBuildingComplete(api, b) {
-    if (b.type === TOWER) api.say('An Arcane Tower rises — magicians study faster here', 'good');
+    if (b.type === TOWER) api.say('An Arcane Tower rises — mages study faster here', 'good');
   },
 
   onDeath(api, ent, killer) {
     if (!ent || !killer) return;
-    if (killer.modState && killer.modState.arcane && isMagician(killer)) {
+    if (killer.modState && killer.modState.arcane && isMage(killer)) {
       gainXp(api, killer, ent.kind === 'building' ? 40 : 26);
     }
     /* a golem that kills still feeds its master */
-    if (killer.type === GOLEM && killer.owner && isMagician(killer.owner)) {
+    if (killer.type === GOLEM && killer.owner && isMage(killer.owner)) {
       gainXp(api, killer.owner, ent.kind === 'building' ? 30 : 18);
     }
   },
@@ -784,7 +784,7 @@ export const arcane = {
       ms.mana = Math.min(info.mana, ms.mana + info.regen * dt);
       /* insight: a trickle everywhere, a stream beside a tower */
       ms.xp += dt * 0.16;
-      if (u.type === MAGICIAN || RANK_BY_TYPE.has(u.type)) {
+      if (u.type === MAGE || RANK_BY_TYPE.has(u.type)) {
         for (const b of api.teamBuildings(u.team)) {
           if (b.dead || b.type !== TOWER) continue;
           if (Math.hypot(b.x - u.x, b.z - u.z) < 10) { ms.xp += dt * 0.7; break; }
@@ -905,7 +905,7 @@ export const arcane = {
       if (st.ward.absorb <= 0) st.ward = null;
       return amount - soak;
     }
-    /* the old ward: undead strikes wash off a magician */
+    /* the old ward: undead strikes wash off a mage */
     if (ent.def && ent.def.caster && attacker && attacker.def &&
       attacker.def.classes && attacker.def.classes.includes('undead')) {
       return amount * 0.6;
@@ -919,7 +919,7 @@ export const arcane = {
   commands(ctx) {
     const { api, ui } = ctx;
     const sel = ctx.selection || [];
-    const mage = sel.find((e) => e && isMagician(e));
+    const mage = sel.find((e) => e && isMage(e));
     if (!mage || !ui) return [];
     const st = ustate(api, mage);
     const info = rankInfo(mage);
@@ -1057,7 +1057,7 @@ export const arcane = {
      readouts
      ------------------------------------------------------------ */
   hud(api) {
-    const mages = api.teamUnits(TEAM_PLAYER).filter(isMagician);
+    const mages = api.teamUnits(TEAM_PLAYER).filter(isMage);
     const best = mages.reduce((a, u) => {
       const r = rankInfo(u).rank;
       return !a || r > a.r ? { u, r, st: u.modState.arcane } : a;
@@ -1071,7 +1071,7 @@ export const arcane = {
         tone: best.st.rank >= 5 ? 'good' : ''
       });
     } else {
-      api.hud({ icon: 'monk', label: 'Arcane', value: 'no magician', tone: '' });
+      api.hud({ icon: 'monk', label: 'Arcane', value: 'no mage', tone: '' });
     }
     const day = Math.floor(api.time / DAY);
     if (best && best.st.rank >= 6) {
@@ -1081,8 +1081,8 @@ export const arcane = {
   },
 
   gauge(api) {
-    const sel = (api.game.selection || []).find((e) => e && isMagician(e));
-    const u = sel || api.teamUnits(TEAM_PLAYER).find(isMagician);
+    const sel = (api.game.selection || []).find((e) => e && isMage(e));
+    const u = sel || api.teamUnits(TEAM_PLAYER).find(isMage);
     if (!u) return null;
     const st = u.modState.arcane;
     return {
@@ -1094,7 +1094,7 @@ export const arcane = {
   },
 
   atmosphere(api) {
-    const mages = api.teamUnits(TEAM_PLAYER).filter(isMagician);
+    const mages = api.teamUnits(TEAM_PLAYER).filter(isMage);
     let best = 0;
     for (const m of mages) best = Math.max(best, (m.modState.arcane.rank || 1));
     /* SKYFALL takes the sky first: for three seconds after the pillar lands

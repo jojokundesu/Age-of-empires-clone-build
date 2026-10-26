@@ -273,6 +273,53 @@ check('a crown cannot inherit itself, and a fallen crown cannot fall twice', () 
   assert(again.ok === false, 'a fallen crown fell again');
 });
 
+check('a crown that loses every hall falls 60 s later, and is inherited', () => {
+  const g = match(3, { victory: 'conquest' });
+  /* flatten every town centre of crown 3 -- the sterner kingdoms rule */
+  for (const b of g.buildings) if (b.team === 3 && b.def && b.def.ageAdvance) { b.dead = true; g.markBuildingFootprint(b, false); }
+  g.lastBlood.set(3, 1);
+  g.checkVictory();
+  assert(!g.fallenTeams.has(3), 'the crown fell the instant its hall did');
+  for (let i = 0; i < 70; i++) { g.time += 1; g.checkVictory(); }
+  assert(g.fallenTeams.has(3), 'a crown with no hall for 60 s is still standing');
+  assert(g.fallenTeams.has(3), 'the crown did not fall');
+  const heir = g.units.filter((u) => !u.dead && u.team === 1).length;
+  assert(heir > 0, 'the heir has no army');
+});
+
+check('the AI crowns the leader and hunts the weak', () => {
+  const g = match(4);
+  const ai = new AIController(g, 4, {});
+  /* make crown 1 a runaway: give it an army and buildings */
+  for (let i = 0; i < 14; i++) g.spawnUnitRaw('knight', 1, g.baseOf(1).x + 3 + i, g.baseOf(1).z + 3);
+  g.teams.get(1).kills = 40;
+  ai.foe = null;
+  ai.chooseFoe();
+  assert([1, 2, 3].includes(ai.foe), `foe ${ai.foe}`);
+  /* and at equal distance, a crown it can beat beats a crown that can beat it */
+  const g2 = match(4);
+  const ai2 = new AIController(g2, 3, {});
+  ai2.foe = null;
+  const weak = ai2.foeScore(1, 100, { army: 4, buildings: 10 });
+  const strong = ai2.foeScore(4, 100, { army: 40, buildings: 30 });
+  assert(weak > strong, `the AI prefers a stronger enemy at the same distance (${weak} vs ${strong})`);
+  /* a neighbouring great power is still a neighbour: distance is logistics */
+  const near = ai2.foeScore(1, 40, { army: 2, buildings: 4 });
+  const far = ai2.foeScore(1, 260, { army: 2, buildings: 4 });
+  assert(near > far, `distance stopped mattering (${near} vs ${far})`);
+  /* a crown that raids my farms earns a reply */
+  const quiet = ai2.foeScore(1, 100, { army: 10, buildings: 10 });
+  ai2.raidedBy = new Set([1]);
+  const raider = ai2.foeScore(1, 100, { army: 10, buildings: 10 });
+  assert(raider > quiet, 'the AI ignores the crown burning its farms');
+  /* and a runaway leader is worth marching on even uphill */
+  ai2.raidedBy = null;
+  g2.teams.get(3).kills = 60;
+  const leader = ai2.foeScore(4, 200, { army: 30, buildings: 30 });
+  const nobody = ai2.foeScore(1, 200, { army: 3, buildings: 6 });
+  assert(leader > nobody, 'the AI never answers a runaway leader');
+});
+
 /* ---------- victory conditions ---------- */
 check('the four terms of war are complete and describable', () => {
   assert(VICTORY_LIST.length === 4, `${VICTORY_LIST.length} conditions`);

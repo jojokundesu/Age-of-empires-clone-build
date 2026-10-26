@@ -229,7 +229,13 @@ export class Morale {
         rate = rate > 0 ? rate * m : rate / Math.max(0.4, m);
       }
       if (night) rate -= 0.35;
+      /* a legend's banner steadies the line: men under it bleed morale slower */
+      if (g.elites && g.elites.commanded.has(u)) rate += 0.35;
       u.morale = clamp(u.morale + rate * step, 0, MORALE_MAX);
+      /* Last Stand: a Renowned man who has drawn his final line does not break
+         for its six seconds, whatever happens around him. */
+      const floor = u.stats ? (u.stats().moraleFloor || 0) : 0;
+      if (floor && u.morale < floor) u.morale = floor;
       if (u.morale <= ROUT_AT) this.break_(u);
       else if (u.state === STATE_ROUT && u.morale >= RECOVER_AT) {
         u.state = 'idle';

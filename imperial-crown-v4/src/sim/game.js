@@ -10,6 +10,7 @@ import { Morale } from './morale.js';
 import { Calendar } from './calendar.js';
 import { Realm, freshRealmState, TEAM_REBEL_P, TEAM_REBEL_E, crownOfRebel } from './realm.js';
 import { Climate } from './climate.js';
+import { Elites } from './elites.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
   RES, POP_CAP, isUniqueUnit, VICTORIES, victoryFor
@@ -142,6 +143,9 @@ export class Game {
     /* the campaign's long game: four offices, each held by a body on the map */
     this.court = new Court(this);
     this.veterancy = new Veterancy(this);
+    /* the other half of experience: not what a man has done, but how long he
+       has kept doing it. See src/sim/elites.js */
+    this.elites = new Elites(this);
     this.morale = new Morale(this);
     this.calendar = new Calendar(this);
     /* The Crown's Standing. Two estates with books, and two ways for a
@@ -885,6 +889,7 @@ export class Game {
     const u = new Unit(this, type, team, fx, fz);
     u.statsCache = null;
     this.units.push(u);
+    if (this.elites) this.elites.enrol(u);
     if (this.modHost) this.modHost.onSpawn(u);
     if (team === TEAM_PLAYER) this.popDirty = true;
     return u;
@@ -1868,6 +1873,7 @@ export class Game {
        their own try/catch (inside the host): a broken mod cannot take the
        match down with it */
     this.morale.update(dt);
+    if (this.elites) this.elites.update(dt);
     if (this.modHost) this.modHost.update(dt);
 
     this.stats.tickMs = this.stats.tickMs * 0.9 + (performance.now() - t0) * 0.1;
@@ -2012,7 +2018,18 @@ export class Game {
     if (!this._roofless) this._roofless = new Map();
     for (const team of this.teamIds) {
       if (this.fallenTeams && this.fallenTeams.has(team)) continue;
-      const hasBuilding = this.buildings.some((b) => !b.dead && b.team === team);
+      /* A campaign is lost only when the last roof falls: a lone farm does
+         not hold a kingdom together, but a farm is still a foothold to
+         rebuild from, and the older modes are balanced around that.
+         A war of crowns is sterner: what holds a crown together is its HALL.
+         A kingdom that loses every town centre has sixty seconds to raise a
+         new one or it falls, and its lands pass to whoever broke it. Without
+         this, four forty-building kingdoms ground each other down for half an
+         hour and nothing ever resolved -- conquest had no reachable ending. */
+        const holdfast = this.crowns > 2
+          ? this.buildings.some((b) => !b.dead && b.team === team && b.def && b.def.ageAdvance)
+          : this.buildings.some((b) => !b.dead && b.team === team);
+        const hasBuilding = holdfast;
       if (hasBuilding) { this._roofless.delete(team); continue; }
       const since = this._roofless.get(team) ?? this.time;
       this._roofless.set(team, since);
@@ -2608,6 +2625,19 @@ export class Game {
    * reports an unreachable destination. Walls and gates come first within the
    * same radius (they are the actual obstacle); anything else is a fallback.
    */
+  /** The nearest town centre of an enemy crown: the thing a war is fought over. */
+  enemyHall(team, x, z, radius = 60) {
+    let best = null, bestD = radius * radius;
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (b.dead || b.team === team || b.team === 0) continue;
+      if (!b.def || !b.def.ageAdvance) continue;
+      const d = dist2(b.x, b.z, x, z);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
   nearestEnemyStructure(unit, team, radius = 26) {
     let best = null, bestD = radius * radius, bestWall = null, bestWallD = Infinity;
     for (let i = 0; i < this.buildings.length; i++) {

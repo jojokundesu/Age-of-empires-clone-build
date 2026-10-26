@@ -1630,7 +1630,7 @@ export class Renderer {
          must always draw something, or the two things the player most needs
          to see -- who is experienced, who is running -- would vanish at full
          health. */
-      if (!selected && ratio > 0.995 && !office && !u.rank && u.state !== STATE.ROUT) continue;
+      if (!selected && ratio > 0.995 && !office && !u.rank && !u.renown && u.state !== STATE.ROUT) continue;
       if ((u.x - cx) ** 2 + (u.z - cz) ** 2 > 92 * 92) continue;
       const meta = this.unitMeta.get(u.type) || UNIT_META_FALLBACK;
       const w = selected ? 1.15 : 0.85;
@@ -1649,6 +1649,19 @@ export class Renderer {
         const n = Math.min(3, u.rank);
         for (let k = 0; k < n; k++) {
           b.push(u.x, y + 0.3 + k * 0.085, u.z, 0.13 - k * 0.015, 1.0, 0.84, 0.36, 0.95, 0.05, 0, 0, 0);
+        }
+      }
+      /* renown: a rising star over the man who has simply refused to die.
+         One, two, three small stars for Blooded, Hardened, Renowned, and a
+         crown of four for a Legend -- the crown that everyone on the field
+         should be trying to shoot. */
+      if (u.renown) {
+        const n = Math.min(4, u.renown);
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2 + this.time * 0.9;
+          const r = n === 4 ? 0.18 : 0.13;
+          b.push(u.x + Math.cos(a) * r, y + 0.62 + (n === 4 ? 0.06 : 0), u.z + Math.sin(a) * r,
+            0.055 + (n === 4 ? 0.02 : 0), 1.0, 0.62, 0.22, 0.95, 0.05, 0, 0, 0);
         }
       }
       if (office) {

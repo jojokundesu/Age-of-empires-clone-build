@@ -17,6 +17,7 @@ import { AGES, CIVS, DIFFICULTY, GAME_MODES, BUILDING_DEFS, UNIT_DEFS, VICTORIES
 import { clamp } from './core/math.js';
 import { RANKS, MAX_RANK } from './sim/veterancy.js';
 import { Governor, pickInitialTier, TIER_ORDER } from './gfx/quality.js';
+import { renownOf } from './sim/elites.js';
 
 /* 30 Hz simulation, 60+ Hz rendering. An RTS does not need 60 sim ticks a
    second -- AoE2 ran at 20 -- and halving the rate halves the CPU the
@@ -695,7 +696,8 @@ class App {
       calendar: g.calendar ? g.calendar.toJSON() : null,
       climate: g.climate ? g.climate.toJSON() : null,
       realm: g.realm ? g.realm.toJSON() : null,
-      units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round(u.xp || 0), Math.round(u.morale ?? 100)]),
+      elites: g.elites ? g.elites.toJSON() : null,
+      units: g.units.filter((u) => !u.dead).map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round(u.xp || 0), Math.round(u.morale ?? 100), Math.round(u.survived || 0)]),
       buildings: g.buildings.filter((b) => !b.dead).map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
     };
@@ -734,7 +736,7 @@ class App {
         if (b.buildProgress >= 1) game.onBuildingComplete(b);
       }
     }
-    for (const [type, team, x, z, hp, rank, xp, morale] of save.units || []) {
+    for (const [type, team, x, z, hp, rank, xp, morale, survived] of save.units || []) {
       if (!game.teamIds.includes(team)) continue;
       const u = game.spawnUnit(type, team, x, z);
       if (!u) continue;
@@ -748,7 +750,14 @@ class App {
       u.maxHp = Math.max(u.maxHp, hp);
       u.hp = Math.min(u.maxHp, hp);
       u.morale = morale === undefined ? 100 : clamp(morale, 0, 100);
+      /* renown is survival time: a veteran of the old campaign comes back a
+         veteran, with whatever the field taught him */
+      if (Number.isFinite(survived) && survived > 0 && game.elites) {
+        u.survived = survived;
+        u.renown = Math.min(4, renownOf(survived));
+      }
     }
+    if (game.elites && save.elites) game.elites.fromJSON(save.elites);
     if (save.resources) {
       const map = new Map();
       for (const [type, x, z, amount] of save.resources) map.set(`${Math.round(x)},${Math.round(z)},${type}`, amount);

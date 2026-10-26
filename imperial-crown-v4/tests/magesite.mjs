@@ -144,11 +144,11 @@ await check('six ranks, six silhouettes, one legible line', async () => {
     const g = a.game;
     const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
     const cx = tc.x + 26, cz = tc.z - 22;
-    const types = ['magician', 'magician_adept', 'magician_magus', 'magician_archmage', 'magician_sage', 'magician_ascendant'];
+    const types = ['mage', 'mage_adept', 'mage_magus', 'mage_archmage', 'mage_sage', 'mage_ascendant'];
     const made = [];
     for (let i = 0; i < types.length; i++) {
       const spot = g.freeSpotNear(cx - 9 + i * 3.4, cz, { radius: 0.6, def: { naval: false } }, 8) || [cx - 9 + i * 3.4, cz];
-      const u = g.spawnUnitRaw('magician', 1, spot[0], spot[1]);
+      const u = g.spawnUnitRaw('mage', 1, spot[0], spot[1]);
       if (!u) continue;
       u.modState.arcane.rank = i + 1;
       u.modState.arcane.xp = [0, 90, 240, 460, 760, 1150][i];
@@ -168,7 +168,7 @@ await check('six ranks, six silhouettes, one legible line', async () => {
   assert(info.batches.every(Boolean), `a rank has no renderer batch: ${info.batches.join(',')}`);
   await frame(4);
   await shot('01-six-ranks');
-  return info.made.map((m) => m.type.replace('magician_', '')).join(' → ');
+  return info.made.map((m) => m.type.replace('mage_', '')).join(' → ');
 });
 
 /* ------------------------------------------------------------------ the book */
@@ -178,10 +178,10 @@ await check('the spell card opens a book the rank has earned', async () => {
     const g = a.game;
     /* keep only the apprentice standing in the open: the rest of the line
        falls over so the camera has one mage to read */
-    const keep = g.units.filter((u) => u.type === 'magician');
+    const keep = g.units.filter((u) => u.type === 'mage');
     const u = keep[0];
     for (const other of g.units) {
-      if (other !== u && /^magician/.test(other.type)) other.dead = true;
+      if (other !== u && /^mage/.test(other.type)) other.dead = true;
     }
     g.selection = [u];
     u.modState.arcane.rank = 1;
@@ -244,7 +244,7 @@ await check('SKYFALL: one tap, one pillar, one day spent', async () => {
     const a = window.__imperial;
     const g = a.game;
     g.modHost.cancelCast();
-    const u = g.units.find((x) => x.type === 'magician');
+    const u = g.units.find((x) => x.type === 'mage');
     /* grow it all the way up, in the open, facing the enemy town */
     const st = u.modState.arcane;
     st.xp = 5000;
@@ -256,7 +256,7 @@ await check('SKYFALL: one tap, one pillar, one day spent', async () => {
     return { rank: st.rank, type: u.type, hp: tc.hp, tcId: tc.id, x: tc.x, z: tc.z, mx: u.x, mz: u.z };
   });
   assert(prep.rank === 6, `the mage only reached rank ${prep.rank}`);
-  assert(prep.type === 'magician_ascendant', `model is ${prep.type}`);
+  assert(prep.type === 'mage_ascendant', `model is ${prep.type}`);
   await frame(2);
   await shot('03-ascendant');
 
@@ -300,7 +300,7 @@ await check('the day is spent, and the card says so', async () => {
   const st = await page.evaluate(() => {
     const a = window.__imperial;
     const g = a.game;
-    const u = g.units.find((x) => x.type === 'magician_ascendant');
+    const u = g.units.find((x) => x.type === 'mage_ascendant');
     g.selection = [u];
     a.ui.refreshCommands(true);
     const card = [...document.querySelectorAll('#cmdGrid .cmdBtn')].find((b) => /SKYFALL/.test(b.textContent));
@@ -316,7 +316,7 @@ await check('attunement opens six pairs and finds one', async () => {
   const opened = await page.evaluate(() => {
     const a = window.__imperial;
     const g = a.game;
-    const u = g.units.find((x) => x.type === 'magician_ascendant');
+    const u = g.units.find((x) => x.type === 'mage_ascendant');
     g.selection = [u];
     u.modState.arcane.mana = 200;
     const btn = [...document.querySelectorAll('#cmdGrid .cmdBtn')].find((b) => /Attune/.test(b.textContent));
@@ -344,7 +344,7 @@ await check('a ground spell hits what is standing there', async () => {
   const hit = await page.evaluate(() => {
     const a = window.__imperial;
     const g = a.game;
-    const u = g.units.find((x) => x.type === 'magician_ascendant');
+    const u = g.units.find((x) => x.type === 'mage_ascendant');
     const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
     const spot = g.freeSpotNear(tc.x - 12, tc.z + 12, { radius: 0.5, def: { naval: false } }, 10);
     const victims = [];

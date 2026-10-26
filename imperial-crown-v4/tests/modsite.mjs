@@ -12,7 +12,7 @@
      · a spell is cast by tapping the card and then the ground
      · the mod build menu really offers the mod's building
      · a normal campaign after a mod session is untouched
-     · the workshop, the horde, the magician, the beasts and a shrine are
+     · the workshop, the horde, the mage, the beasts and a shrine are
        photographed for the record
 
    node tests/modsite.mjs [--out ci/v4-mods]
@@ -202,7 +202,7 @@ await check('a mod session starts with all six systems live and no errors', asyn
 await check('every unit and building a mod adds has geometry', async () => {
   const census = await page.evaluate(() => {
     const a = window.__imperial;
-    const units = ['plague_zombie', 'magician', 'stone_golem', 'dire_wolf', 'bear', 'beastmaster'];
+    const units = ['plague_zombie', 'mage', 'stone_golem', 'dire_wolf', 'bear', 'beastmaster'];
     const buildings = ['necropolis', 'spike_trap', 'ballista_tower', 'relic_shrine'];
     return {
       missingUnits: units.filter((t) => !a.renderer.unitBatches.has(t)),
@@ -216,7 +216,7 @@ await check('every unit and building a mod adds has geometry', async () => {
 });
 
 /* ------------------------------------------------------------- presentation */
-/* Put a scene together near the town: the horde, the magician, the wild. */
+/* Put a scene together near the town: the horde, the mage, the wild. */
 const scene = await page.evaluate(() => {
   const a = window.__imperial;
   const g = a.game;
@@ -232,7 +232,7 @@ const scene = await page.evaluate(() => {
     const spot = g.freeSpotNear(tc.x + dx, tc.z + dz, { radius: 0.5, def: { naval: false } }, 14);
     return spot || [tc.x + dx, tc.z + dz];
   };
-  const mage = g.spawnUnitRaw('magician', 1, ...at(7, 5));
+  const mage = g.spawnUnitRaw('mage', 1, ...at(7, 5));
   const zs = [];
   for (let i = 0; i < 5; i++) { const s = at(3 + i * 1.6, 10 + (i % 2)); const z = g.spawnUnitRaw('plague_zombie', 2, s[0], s[1]); if (z) zs.push(z); }
   const wolf = g.spawnUnitRaw('dire_wolf', 2, ...at(-9, 8));
@@ -250,25 +250,25 @@ const scene = await page.evaluate(() => {
     necro: !!necro, tower: !!tower
   };
 });
-assert(scene.mage, 'the magician did not spawn');
+assert(scene.mage, 'the mage did not spawn');
 await wait(1600);
 await shot('02-mod-session');
 
-await check('the horde, the magician and the wild all stand on the field', async () => {
+await check('the horde, the mage and the wild all stand on the field', async () => {
   const live = await page.evaluate(() => {
     const g = window.__imperial.game;
     const count = (t) => g.units.filter((u) => u.type === t && !u.dead).length;
     return {
-      zombies: count('plague_zombie'), magicians: count('magician'), wolves: count('dire_wolf'),
+      zombies: count('plague_zombie'), mages: count('mage'), wolves: count('dire_wolf'),
       bears: count('bear'), masters: count('beastmaster'),
       necro: g.buildings.some((b) => b.type === 'necropolis' && !b.dead),
       tower: g.buildings.some((b) => b.type === 'ballista_tower' && !b.dead)
     };
   });
   assert(live.zombies >= 3, `only ${live.zombies} zombies`);
-  assert(live.magicians >= 1 && live.wolves >= 1 && live.bears >= 1, 'a creature is missing');
+  assert(live.mages >= 1 && live.wolves >= 1 && live.bears >= 1, 'a creature is missing');
   assert(live.necro && live.tower, 'a mod building is missing');
-  return `${live.zombies} zombies, ${live.magicians} magician, ${live.wolves} wolf, ${live.bears} bear`;
+  return `${live.zombies} zombies, ${live.mages} mage, ${live.wolves} wolf, ${live.bears} bear`;
 });
 
 await check('the HUD strip names the mods and updates on its own', async () => {
@@ -291,7 +291,7 @@ await check('tapping the spell card and then the ground casts it', async () => {
     const a = window.__imperial;
     const g = a.game;
     const mage = g.units.find((u) => u.id === id);
-    if (!mage) return { err: 'magician gone' };
+    if (!mage) return { err: 'mage gone' };
     g.setSelection([mage]);
     a.ui.refreshCommands(true);
     const visible = () => [...document.querySelectorAll('#cmdGrid .cmdBtn')].filter((b) => b.style.display !== 'none');
@@ -314,7 +314,7 @@ await check('tapping the spell card and then the ground casts it', async () => {
     const g = a.game;
     const mage = g.units.find((u) => u.id === id);
     if (!mage) return null;
-    /* pick the closest zombie to the magician, then let the camera settle
+    /* pick the closest zombie to the mage, then let the camera settle
        before projecting: the camera eases toward its target, so a projection
        taken on the same frame lands somewhere else entirely */
     const zs = g.units.filter((u) => u.type === 'plague_zombie' && !u.dead);
