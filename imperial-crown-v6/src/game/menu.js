@@ -627,13 +627,12 @@ export class Menu {
       <div class="row"><b>Counter triangle</b><span>Spears beat cavalry · cavalry beats archers · archers beat infantry.</span></div>
       <div class="row"><b>Favour</b><span>Earned from battle. Spend it on Decrees that buff your whole empire.</span></div>
       <div class="row"><b>First person</b><span>Select one of your units and press <b>First Person</b>. That unit becomes your <b>Champion</b>: the same soldier in the same battle, now with renown, ranks and a perk at every rank.</span></div>
-      <div class="row"><b>Your thumbs</b><span>Left thumb on the glass steers. Push it past the gold ring to sprint — no extra button. Right thumb drags to look; <b>tap an enemy</b> to lock on and you will swing at him automatically. <b>BLOCK</b> is a toggle, <b>DODGE</b> is a tap, both cost stamina. Everything else is a pill above your attack thumb, sized for a fingertip.</span></div>
+      <div class="row"><b>Your thumbs</b><span>Left thumb on the glass steers. Push it past the gold ring to sprint — no extra button. Right thumb drags to look; <b>tap an enemy</b> to lock on and you will swing at him automatically. <b>BLOCK</b> is a toggle, <b>DODGE</b> is a tap, both cost stamina. Everything else is a pill above your attack thumb, sized for a fingertip. No keyboard, no mouse: this is a phone game.</span></div>
       <div class="row"><b>Two hands, one screen</b><span>Turn the phone sideways: the battlefield is wider than it is tall, and the stick and the attack thumb never cover the middle of the picture.</span></div>
-      <div class="row"><b>Keyboard, if you must</b><span>WASD move · mouse look · Space attack · Shift sprint · E dodge · Q block · G follow · T focus · P perks · Esc strategy.</span></div>
       <div class="row"><b>Champion</b><span>Renown comes from damage, kills, parries, spells, gathering and razing. Each rank offers one of three permanent perks — armour, cleave, sprint, banners, spell power. They keep working when you go back to the sky view, and saves carry them.</span></div>
       <div class="row"><b>Squads</b><span>A squad shares a second pool of experience. In first person, FOLLOW ME puts them on your shoulder and FOCUS sends them at your target.</span></div>
       <div class="row"><b>The Court</b><span>Top bar → Court. Give one of your own people an office: the Marshal rides with your soldiers, the Chancellor walks with your villagers, the Spymaster watches the enemy, the Hierophant holds the faith. Each earns rank from deeds — and if the officer falls, the office stands empty for a while.</span></div>
-      <p class="dim tiny">Two fingers drag to pan · pinch to zoom · tap to select · long-press a soldier to attack-move. Keyboard: WASD pan · Q/E rotate · +/- zoom · A attack-move · S stop · H town centre · 1–9 groups · Space pause.</p>
+      <p class="dim tiny">Two fingers drag to pan · pinch to zoom · tap to select · long-press a soldier to attack-move. Every control in both views is a button on the glass.</p>
     `);
   }
 

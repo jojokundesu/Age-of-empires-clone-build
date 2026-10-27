@@ -1064,7 +1064,6 @@ body.firstPerson #toastLayer { bottom: 19%; left:50%; transform:translateX(-50%)
 .fpHint { position:absolute; left:50%; bottom:calc(8px + var(--safe-bottom)); transform:translateX(-50%); font:800 7px var(--sans); letter-spacing:1.1px; color:#e8d9baa8; text-shadow:0 1px 3px #000; opacity:0; transition:opacity .4s linear; pointer-events:none; white-space:nowrap; }
 .fpHint.show { opacity:1; }
 
-body.fpMouseLocked #gl { cursor:none; }
 body.firstPerson.lowHealth #vignette { background:radial-gradient(ellipse 120% 90% at 50% 45%, transparent 30%, rgba(120,12,10,.42) 78%, rgba(80,6,6,.62) 100%); opacity:1; }
 
 

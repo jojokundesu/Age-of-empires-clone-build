@@ -167,8 +167,9 @@ check('aim assist fires the unit’s existing melee weapon', () => {
   enemy.kill(null);
 });
 check('pause clears input and closing its modal resumes', () => {
-  g.directControl.keys.add('w'); app.openPause();
-  assert.equal(app.paused, true); assert.equal(g.directControl.keys.size, 0);
+  g.directControl.setBlock(true); app.openPause();
+  assert.equal(app.paused, true); assert.equal(g.directControl.blockHeld, false);
+  assert.equal(g.directControl.stickX, 0);
   app.menu.closeModal(); assert.equal(app.paused, false);
 });
 check('exit restores the strategy camera and selection', () => {

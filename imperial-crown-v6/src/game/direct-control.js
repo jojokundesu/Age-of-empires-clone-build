@@ -15,6 +15,12 @@
      · a legible first-person HUD: compass, stamina, renown, target
        card, hit feedback.
 
+   Two thumbs, one phone. There is no keyboard and no mouse-look: the
+   left thumb steers with a stick that sprints when pushed past its
+   ring, the right thumb drags to look and taps a man to lock on, and
+   the attack itself is automatic so a single thumb is enough to fight
+   with. Every other action is a button tall enough for a fingertip.
+
    Directions are the one thing this file must never get wrong again.
    Every horizontal vector comes from `camera.moveBasis()`, which is
    derived from the same yaw the view matrix is built from. v5 computed
@@ -32,7 +38,6 @@ const MOVE_DEADZONE = 0.14;
 const AIM_CONE = 0.27;        // radians, about 15 degrees; only for visible enemies
 const PRECISE_CONE = 0.035;
 const BASE_LOOK = 0.0034;     // radians per CSS pixel of drag
-const MOUSE_LOOK = 0.0022;    // radians per pixel of mouse-locked movement
 const DODGE_DISTANCE = 4.6;
 const DODGE_TIME = 0.22;
 const SPRINT_DRAIN = 17;      // stamina per second
@@ -75,7 +80,6 @@ export class DirectControl {
     this.sprintHeld = false;
     this.blockHeld = false;
     this.pointers = new Map();
-    this.keys = new Set();
     this.target = null;
     this.hudAcc = 0;
     this.spellSignature = '';
@@ -85,7 +89,6 @@ export class DirectControl {
     this._dodge = null;
     this._feedT = 0;
     this._pausedForPerks = false;
-    this._mouseLocked = false;
     this._hintT = 9;
     this._seenHp = new Map();
     this._compassBuilt = false;
@@ -102,7 +105,7 @@ export class DirectControl {
       /* v6 */
       'fpRank', 'fpPerkCount', 'fpPerkOpen', 'fpStaminaFill', 'fpRenownFill', 'fpSprint', 'fpDodge', 'fpBlock',
       'fpRally', 'fpSquad', 'fpSquadName', 'fpSquadInfo', 'fpFollow', 'fpFocus', 'fpPerkPanel', 'fpPerkCards',
-      'fpPerkSub', 'fpPerkClose', 'fpFloats', 'fpFeed', 'fpCompassTape', 'fpCompassCard', 'fpHint', 'fpMouse',
+      'fpPerkSub', 'fpPerkClose', 'fpFloats', 'fpFeed', 'fpCompassTape', 'fpCompassCard', 'fpHint',
       'fpChampionBadge', 'fpSprintLamp', 'fpRotate', 'fpLookHint']) this.el[id] = document.getElementById(id);
     this._wire();
     this._buildCompass();
@@ -170,7 +173,8 @@ export class DirectControl {
       if (b) this.pickPerk(b.dataset.perk);
     };
 
-    /* --- actions: hold semantics on pointer, click fallback for keyboards --- */
+    /* --- actions: hold semantics on pointer, with a click fallback so the
+       buttons stay operable by assistive technology --- */
     const hold = (node, down, up) => {
       if (!node) return;
       node.onpointerdown = (event) => {
@@ -216,10 +220,9 @@ export class DirectControl {
         this.el.fpEquipment?.classList.remove('is-striking');
       };
       attack.onpointerup = release; attack.onpointercancel = release; attack.onlostpointercapture = release;
-      // A keyboard-generated click has no pointerdown.
+      // A synthetic click (screen reader, switch access) has no pointerdown.
       attack.onclick = (event) => { if (event.detail === 0) this.attackOnce(); };
     }
-    if (e.fpMouse) e.fpMouse.onclick = () => this.toggleMouseLook();
   }
 
   _buildCompass() {
@@ -283,7 +286,6 @@ export class DirectControl {
     this.el.fpDodge?.classList.toggle('hidden', !this.champion);
     this.el.fpBlock?.classList.toggle('hidden', !this.champion || !(unit.def.attack > 0));
     this.el.fpSprint?.classList.toggle('hidden', !this.champion);
-    this.el.fpMouse?.classList.toggle('hidden', !this._hasFinePointer());
     this.equipment = equipmentFor(unit);
     if (this.el.fpEquipment) this.el.fpEquipment.dataset.kind = this.equipment;
     const attackIcon = this.el.fpAttack?.querySelector('use');
@@ -307,7 +309,6 @@ export class DirectControl {
     if (!unit) return;
     this.closePerks(false);
     this.resetInput();
-    this._setMouseLock(false);
     this.camera.exitFirstPerson();
     this.unit = null;
     this.champion = null;
@@ -327,14 +328,14 @@ export class DirectControl {
   }
 
   dispose() {
-    this.exit(); this.resetInput(); this._setMouseLock(false);
+    this.exit(); this.resetInput();
     for (const node of Object.values(this.el)) if (node) node.onclick = null;
     const attack = this.el.fpAttack;
     if (attack) attack.onpointerdown = attack.onpointerup = attack.onpointercancel = attack.onlostpointercapture = null;
   }
 
   resetInput() {
-    this.pointers.clear(); this.keys.clear();
+    this.pointers.clear();
     this.stickX = this.stickY = 0;
     this.attackHeld = false;
     this.sprintHeld = false;
@@ -383,23 +384,12 @@ export class DirectControl {
     this._buzzAt = now;
     try { navigator.vibrate?.(ms); } catch (e) { /* locked down by the browser */ }
   }
-  _hasFinePointer() {
-    try { return !!(window.matchMedia && window.matchMedia('(pointer:fine)').matches); } catch (e) { return false; }
-  }
-
   /* ==========================================================
      pointer / touch
      ========================================================== */
   pointerDown(event) {
     if (!this.canAct()) return false;
     event.preventDefault();
-    /* Mouse-locked desktop is a different control scheme: left button swings,
-       right button blocks, the mouse itself looks. */
-    if (this._mouseLocked) {
-      if (event.button === 2) this.setBlock(true);
-      else { this.attackHeld = true; this.attackOnce(); }
-      return true;
-    }
     this.input.canvas.setPointerCapture?.(event.pointerId);
     const rect = this.input.rect();
     const leftSide = (event.clientX - rect.left) < rect.width * 0.48;
@@ -422,7 +412,6 @@ export class DirectControl {
 
   pointerMove(event) {
     if (!this.active) return false;
-    if (this._mouseLocked) return true;
     const p = this.pointers.get(event.pointerId);
     if (!p) return true;
     event.preventDefault();
@@ -459,7 +448,6 @@ export class DirectControl {
 
   pointerUp(event) {
     if (!this.active) return false;
-    if (this._mouseLocked) { this.attackHeld = false; this.setBlock(false); return true; }
     const p = this.pointers.get(event.pointerId);
     if (p?.role === 'move') {
       this.stickX = this.stickY = 0;
@@ -528,103 +516,6 @@ export class DirectControl {
     const h = e.kind === 'building' ? (e.def.size || 3) * 0.35 : Math.min(e.height || 1.7, 2.2) * 0.55;
     const p = r.projectToScreen(this.camera, e.x, (e.y || 0) + h, e.z, this._proj || (this._proj = [0, 0, 0]));
     return p && p[2] > 0 ? p : null;
-  }
-
-  /* ==========================================================
-     mouse look (desktop, opt-in)
-     ========================================================== */
-  toggleMouseLook() {
-    if (!this.active) return;
-    if (this._mouseLocked) { this._setMouseLock(false); return; }
-    const canvas = this.input.canvas;
-    if (!canvas || !canvas.requestPointerLock) { this.ui.toast('This browser cannot lock the mouse', 'warn'); return; }
-    try {
-      const result = canvas.requestPointerLock();
-      if (result && typeof result.catch === 'function') result.catch(() => this.ui.toast('Mouse look was refused', 'warn'));
-    } catch (e) { this.ui.toast('Mouse look is unavailable', 'warn'); }
-  }
-
-  _setMouseLock(on) {
-    if (on === this._mouseLocked) return;
-    this._mouseLocked = on;
-    this.el.fpMouse?.classList.toggle('active', on);
-    if (on) {
-      this._onMouseMove = this._onMouseMove || ((e) => {
-        if (!this._mouseLocked || !this.active) return;
-        this.camera.lookFirstPerson((e.movementX || 0) * MOUSE_LOOK * (this.sensitivity / BASE_LOOK),
-          -(e.movementY || 0) * MOUSE_LOOK * (this.sensitivity / BASE_LOOK) * (this.invertY ? -1 : 1));
-      });
-      this._onPointerLockChange = this._onPointerLockChange || (() => {
-        if (document.pointerLockElement !== this.input.canvas && this._mouseLocked) this._setMouseLock(false);
-      });
-      document.addEventListener('mousemove', this._onMouseMove);
-      document.addEventListener('pointerlockchange', this._onPointerLockChange);
-      document.body.classList.add('fpMouseLocked');
-      this.ui.toast('Mouse look on · left click attack · right click block · Esc to release', 'info');
-    } else {
-      if (this._onMouseMove) document.removeEventListener('mousemove', this._onMouseMove);
-      if (this._onPointerLockChange) document.removeEventListener('pointerlockchange', this._onPointerLockChange);
-      document.body.classList.remove('fpMouseLocked');
-      if (document.pointerLockElement === this.input.canvas) { try { document.exitPointerLock(); } catch (e) { /* gone */ } }
-    }
-  }
-
-  /* ==========================================================
-     keyboard
-     ========================================================== */
-  keyDown(event) {
-    if (!this.active) return false;
-    if (this.el.fpPerkPanel && !this.el.fpPerkPanel.classList.contains('hidden')) {
-      const n = Number(event.key);
-      if (n >= 1 && n <= 3) {
-        const cards = this.el.fpPerkCards?.querySelectorAll('button[data-perk]') || [];
-        if (cards[n - 1]) this.pickPerk(cards[n - 1].dataset.perk);
-        event.preventDefault();
-        return true;
-      }
-      if (event.key === 'Escape') { this.closePerks(true); event.preventDefault(); return true; }
-      return true;
-    }
-    if (this.app.paused) return true;
-    const k = event.key.toLowerCase();
-    if (k === 'escape') {
-      event.preventDefault();
-      if (this._mouseLocked) this._setMouseLock(false); else this.exit();
-      return true;
-    }
-    if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
-      this.keys.add(k); event.preventDefault(); return true;
-    }
-    if (k === 'shift') { this.setSprint(true); event.preventDefault(); return true; }
-    if (k === 'q') { this.setBlock(true); event.preventDefault(); return true; }
-    if (k === ' ') {
-      event.preventDefault();
-      if (!event.repeat) { this.attackHeld = true; this.attackOnce(); }
-      return true;
-    }
-    if (event.repeat) return true;
-    if (k === 'f') { this.interact(); return true; }
-    if (k === 'e') { this.dodge(); return true; }
-    if (k === 'r') { this.rally(); return true; }
-    if (k === 'g') { this.followSquad(); return true; }
-    if (k === 't') { this.focusSquad(); return true; }
-    if (k === 'p') { this.openPerks(); return true; }
-    if (k === 'm') { this.toggleMouseLook(); return true; }
-    if (k >= '1' && k <= '9') {
-      const spell = this.availableSpells().filter((s) => !s.locked)[Number(k) - 1];
-      if (spell) this.cast(spell.id);
-      return true;
-    }
-    return true; // RTS shortcuts must never issue orders while possessing a unit
-  }
-
-  keyUp(event) {
-    if (!this.active) return;
-    const k = event.key.toLowerCase();
-    this.keys.delete(k);
-    if (k === ' ') this.attackHeld = false;
-    if (k === 'shift') this.setSprint(false);
-    if (k === 'q') this.setBlock(false);
   }
 
   /* ==========================================================
@@ -702,11 +593,7 @@ export class DirectControl {
   }
 
   movement() {
-    let x = this.stickX, y = this.stickY;
-    if (this.keys.has('a') || this.keys.has('arrowleft')) x -= 1;
-    if (this.keys.has('d') || this.keys.has('arrowright')) x += 1;
-    if (this.keys.has('w') || this.keys.has('arrowup')) y += 1;
-    if (this.keys.has('s') || this.keys.has('arrowdown')) y -= 1;
+    const x = this.stickX, y = this.stickY;
     const len = Math.hypot(x, y);
     if (len < MOVE_DEADZONE) return [0, 0];
     if (len > 1) { x /= len; y /= len; }

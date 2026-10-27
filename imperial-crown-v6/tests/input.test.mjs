@@ -12,7 +12,6 @@
      • two-finger gestures can never place a move order (the v2 bug that sent
        a whole army to wherever the player had pinched)
      • a long press is attack-move, and its release must not also select
-     • keyboard panning moves the view up-screen for ArrowUp
      • camera clamps (distance, pitch, world edge)
      • tap picking resolves the nearest unit, not the first in the list
    ============================================================ */
@@ -147,19 +146,10 @@ for (const yaw of [0, 0.7, Math.PI / 2, 2.4, -1.1]) {
   });
 }
 
-check('keyboard ArrowUp pans up-screen', () => {
-  cam.desiredYaw = cam.yaw = 0.7;
-  cam.setTarget(0, 0, true);
-  cam.update(1 / 60, { instant: true });
-  const before = [0, 0, 0], after = [0, 0, 0];
-  cam.project(0, 0, 0, before);
-  cam.pan(0, 10);                    // what ArrowUp does
-  cam.update(1 / 60, { instant: true });
-  cam.project(0, 0, 0, after);
-  // NDC y grows upward, so content moving down-screen is a negative delta
-  const dy = -(after[1] - before[1]) * 0.5 * H;
-  assert(dy > 0, `world moved ${dy.toFixed(1)} px, expected down-screen`);
-});
+/* There is no keyboard. This is a touch game: the camera moves when a thumb
+   drags it and by nothing else. v6 removed the ArrowUp/WASD shortcuts rather
+   than leave them half-tested -- the one-finger drag check above is the only
+   pan contract now. */
 
 check('zoom clamps and pinch-out zooms in', () => {
   cam.setTarget(0, 0, true);
@@ -310,25 +300,26 @@ check('taps outside every entity return null instead of the nearest one', () => 
   assert(hit === null, 'picked something from an empty corner');
 });
 
-console.log('\nKEYBOARD');
-check('escape cancels placement, then clears the selection', () => {
-  const g = app.game;
-  g.placing = { type: 'house', footprint: 3 };
-  app.input.key({ key: 'Escape', preventDefault() {} });
-  assert(!g.placing, 'placement was not cancelled');
-  g.setSelection([app.game.units.find((u) => u.team === 1 && !u.dead)]);
-  app.input.key({ key: 'Escape', preventDefault() {} });
-  assert(g.selection.length === 0, 'selection survived escape');
+/* No keyboard. Escape, W/A/S/D and the number row used to drive the camera
+   and the selection; v6 removed every one of them, so the *absence* is the
+   contract: a key must never move the camera or drop a selection. */
+console.log('\nNO KEYBOARD');
+check('the input layer exposes no key handler at all', () => {
+  assert(typeof app.input.key !== 'function', 'a keyboard handler came back');
+  assert(!app.input.keys, 'the keyboard state set came back');
 });
-
-check('number keys do not scroll the camera', () => {
-  app.input.fling = null;
-  app.input.keys.clear();
+check('a keydown on the window changes nothing', () => {
+  const g = app.game;
+  app.input.fling = null;          // an earlier drag may still be gliding
   const before = app.camera.desired[0];
-  for (const k of ['w', 'a', 's', 'd']) app.input.key({ key: k, preventDefault() {} });
-  app.input.keys.clear();
+  const selection = g.selection.length;
+  for (const key of ['w', 'a', 's', 'd', 'Escape', 'ArrowUp', '1', ' ']) {
+    window.dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true }));
+    window.dispatchEvent(new window.KeyboardEvent('keyup', { key, bubbles: true }));
+  }
   app.input.update(0.1);
-  assert(Math.abs(app.camera.desired[0] - before) < 0.01, 'a letter key panned the camera');
+  assert(Math.abs(app.camera.desired[0] - before) < 0.01, 'a key panned the camera');
+  assert(g.selection.length === selection, 'a key changed the selection');
 });
 
 console.log('');

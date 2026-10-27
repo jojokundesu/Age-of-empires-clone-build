@@ -39,7 +39,6 @@ export class Input {
     this.tapValid = true;
     this.dragMoved = 0;
     this.box = null;
-    this.keys = new Set();
     this._out = [0, 0, 0];
     this._ground = [0, 0, 0];
     this._hit = null;
@@ -61,9 +60,7 @@ export class Input {
     this._onUp = (e) => this.pointerUp(e);
     this._onCancel = (e) => this.pointerCancel(e);
     this._onWheel = (e) => this.wheel(e);
-    this._onKey = (e) => this.key(e);
-    this._onKeyUp = (e) => { this.keys.delete(e.key.toLowerCase()); this.game.directControl?.keyUp(e); };
-    this._onBlur = () => { this.keys.clear(); this.game.directControl?.resetInput(); };
+    this._onBlur = () => { this.game.directControl?.resetInput(); };
     this._onContext = (e) => e.preventDefault();
     c.addEventListener('pointerdown', this._onDown, opt);
     c.addEventListener('pointermove', this._onMove, opt);
@@ -71,8 +68,6 @@ export class Input {
     c.addEventListener('pointercancel', this._onCancel, opt);
     c.addEventListener('wheel', this._onWheel, opt);
     c.addEventListener('contextmenu', this._onContext, opt);
-    window.addEventListener('keydown', this._onKey);
-    window.addEventListener('keyup', this._onKeyUp);
     window.addEventListener('blur', this._onBlur);
   }
 
@@ -84,8 +79,6 @@ export class Input {
     c.removeEventListener('pointercancel', this._onCancel);
     c.removeEventListener('wheel', this._onWheel);
     c.removeEventListener('contextmenu', this._onContext);
-    window.removeEventListener('keydown', this._onKey);
-    window.removeEventListener('keyup', this._onKeyUp);
     window.removeEventListener('blur', this._onBlur);
   }
 
@@ -781,47 +774,6 @@ export class Input {
     }
   }
 
-  /* ---------------- keyboard (desktop convenience) ---------------- */
-  key(e) {
-    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
-    if (this.game.directControl?.active) { this.game.directControl.keyDown(e); return; }
-    const k = e.key.toLowerCase();
-    this.keys.add(k);
-    const cam = this.cam;
-    if (k === 'q') cam.rotate(-0.12);
-    else if (k === 'e') cam.rotate(0.12);
-    else if (k === '+' || k === '=') cam.zoom(0.9);
-    else if (k === '-' || k === '_') cam.zoom(1.1);
-    // tilt: R/F would collide with idle-villager on F, so use T/G
-    else if (k === 't') cam.nudge(0, -0.08);
-    else if (k === 'g') cam.nudge(0, 0.08);
-    else if (k === 'escape') {
-      if (this.game.placing) { this.game.placing = null; this.ui?.refreshCommands(true); }
-      if (this.game.modCast) this.game.modHost.cancelCast();
-      this.game.courtArmed = null;
-      this.game.courtWrit = null;
-      if (this.armed) { this.armed = null; this.ui?.refreshCommands(true); }
-      else if (!this.game.placing && !this.game.modCast) { this.game.clearSelection(); this.ui?.refreshCommands(true); }
-    } else if (k === 'a') {
-      const units = this.game.selectionOfTeam(1).filter((u) => u.kind === 'unit' && u.def.attack > 0);
-      if (units.length) { this.armed = { kind: 'attackMove' }; this.ui?.toast('Tap the ground to attack-move', 'info'); this.ui?.refreshCommands(true); }
-    } else if (k === 's') {
-      this.game.orderStop(this.game.selectionOfTeam(1));
-    } else if (k === 'h') {
-      this.ui?.centreOnTownCentre();
-    } else if (k === ' ') {
-      e.preventDefault();
-      this.ui?.togglePause();
-    } else if (k === 'f') {
-      this.ui?.cycleIdleVillager();
-    } else if (k >= '1' && k <= '9') {
-      this.ui?.selectGroup(parseInt(k, 10));
-    } else if (k === 'backspace') {
-      this.game.clearSelection();
-      this.ui?.refreshCommands(true);
-    }
-  }
-
   update(dt) {
     if (!this.enabled) return;
     if (this.game.directControl?.active) {
@@ -836,18 +788,6 @@ export class Input {
       const decay = Math.exp(-dt * INERTIA_DECAY);
       f.x *= decay; f.y *= decay;
       if (Math.hypot(f.x, f.y) < 0.8) this.fling = null;
-    }
-    // keyboard panning uses the arrow keys only: W/A/S/D stay free for the
-    // RTS hotkeys below (a letter that both pans and orders is a bug factory)
-    const k = this.keys;
-    let px = 0, pz = 0;
-    if (k.has('arrowup')) pz += 1;
-    if (k.has('arrowdown')) pz -= 1;
-    if (k.has('arrowleft')) px -= 1;
-    if (k.has('arrowright')) px += 1;
-    if (px || pz) {
-      const spd = this.cam.dist * 1.15 * dt;
-      this.cam.pan(px * spd, pz * spd);
     }
     /* the spell reticle follows the finger (or the mouse) while a cast is
        armed, so the area of effect is visible *before* the tap, not after it */

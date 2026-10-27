@@ -111,6 +111,22 @@ const spawn = (g, type, team, x, z) => {
   assert.ok(u, 'spawn ' + type);
   return u;
 };
+/* The stick, as a thumb uses it: press on the left of the glass, push, hold,
+   lift. `x`/`y` are in -1..1 and 48 px is a full ring. */
+let STICK_ID = 90;
+function stickPush(dc, x = 0, y = 1, strength = 0.62) {
+  const id = ++STICK_ID;
+  dc.pointerDown({ pointerId: id, clientX: 200, clientY: 330, pointerType: 'touch', preventDefault() {} });
+  dc.pointerMove({
+    pointerId: id, clientX: 200 + x * 48 * strength, clientY: 330 - y * 48 * strength,
+    pointerType: 'touch', preventDefault() {}
+  });
+  return id;
+}
+function stickRelease(dc, id) {
+  dc.pointerUp({ pointerId: id, clientX: 200, clientY: 330, pointerType: 'touch', preventDefault() {} });
+}
+
 /* screen-space helper: where does this world point sit on the canvas? */
 const project = (x, y, z) => {
   app.camera.update(0);
@@ -145,9 +161,9 @@ check('forward input always walks the way the camera looks', () => {
     cam.firstPerson.yaw = yaw; cam.firstPerson.pitch = 0; cam.update(0);
     hero.x = ox; hero.z = oz; hero.stop(); hero.state = STATE.CONTROLLED;
     const before = [hero.x, hero.z];
-    dc.keys.clear(); dc.keys.add('w');
+    const id = stickPush(dc, 0, 1);
     tick(g, 12);
-    dc.keys.clear();
+    stickRelease(dc, id);
     const dx = hero.x - before[0], dz = hero.z - before[1];
     const dist = Math.hypot(dx, dz);
     assert.ok(dist > 0.5, `yaw ${yaw}: the body did not move (${dist.toFixed(2)} m)`);
@@ -161,15 +177,15 @@ check('forward input always walks the way the camera looks', () => {
    itself sits under the camera and cannot be projected. If the body strafes
    right, the world (and the landmark) must slide LEFT across the screen --
    that is what a rightward push looks like from inside the helmet. */
-function landmarkShift(key, yaw) {
+function landmarkShift(axis, yaw) {
   cam.firstPerson.yaw = yaw; cam.firstPerson.pitch = 0; cam.update(0);
   hero.x = ox; hero.z = oz; hero.stop(); hero.state = STATE.CONTROLLED;
   cam.update(0);
   const mark = [hero.x + Math.sin(yaw) * 11 + hero.x * 0, hero.y + 1.6, hero.z + Math.cos(yaw) * 11];
   const before = project(...mark);
-  dc.keys.clear(); dc.keys.add(key);
+  const id = stickPush(dc, axis, 0);
   tick(g, 10);
-  dc.keys.clear();
+  stickRelease(dc, id);
   const dx = hero.x - ox, dz = hero.z - oz;
   const right = [-Math.cos(yaw), Math.sin(yaw)];
   return { shift: project(...mark).x - before.x, along: dx * right[0] + dz * right[1], moved: Math.hypot(dx, dz) };
@@ -177,7 +193,7 @@ function landmarkShift(key, yaw) {
 
 check('a push to the right of the screen moves the body to the right of the screen', () => {
   for (const yaw of [0, 0.7, -1.4, 2.4]) {
-    const r = landmarkShift('d', yaw);
+    const r = landmarkShift(1, yaw);
     assert.ok(r.moved > 0.4, `yaw ${yaw}: D moved the body ${r.moved.toFixed(2)} m`);
     assert.ok(r.along > 0.35, `yaw ${yaw}: D moved ${r.along.toFixed(2)} m along the camera's own right axis`);
     assert.ok(r.shift < -10, `yaw ${yaw}: the landmark slid ${r.shift.toFixed(0)} px — D must take the world left`);
@@ -186,7 +202,7 @@ check('a push to the right of the screen moves the body to the right of the scre
 
 check('a push to the left of the screen moves the body to the left of the screen', () => {
   for (const yaw of [0, 1.1, -2.6]) {
-    const r = landmarkShift('a', yaw);
+    const r = landmarkShift(-1, yaw);
     assert.ok(r.along < -0.35, `yaw ${yaw}: A moved ${r.along.toFixed(2)} m along the camera's right axis`);
     assert.ok(r.shift > 10, `yaw ${yaw}: the landmark slid ${r.shift.toFixed(0)} px — A must take the world right`);
   }
@@ -241,7 +257,6 @@ check('pushing the stick past its ring sprints without a third thumb', () => {
   dc.pointerMove(touch(21, 120, 250));            // a long push up: 50 px on a 48 px ring
   assert.equal(dc.stickSprint, true, 'a full push did not start a sprint');
   assert.ok(document.getElementById('fpStick').classList.contains('sprinting'), 'the stick never lit up');
-  dc.keys.clear();
   tick(g, 12);
   assert.ok(hero.champion.stamina < 100, 'sprinting down the stick cost no stamina');
   dc.pointerUp(touch(21, 120, 250));
@@ -297,11 +312,11 @@ check('a dodge rolls along the input, never against it', () => {
   cam.firstPerson.yaw = 0.4; cam.update(0);
   hero.x = ox; hero.z = oz; hero.stop(); hero.state = STATE.CONTROLLED;
   hero.champion.stamina = 100; hero.champion.dodgeReadyAt = 0;
-  dc.keys.clear(); dc.keys.add('w');
+  const sid = stickPush(dc, 0, 1);
   const before = [hero.x, hero.z];
   assert.equal(dc.dodge(), true, 'dodge refused');
   tick(g, 8);
-  dc.keys.clear();
+  stickRelease(dc, sid);
   const dx = hero.x - before[0], dz = hero.z - before[1];
   const fwd = [Math.sin(0.4), Math.cos(0.4)];
   assert.ok(Math.hypot(dx, dz) > 1.5, 'the dodge did not move the body');
@@ -509,21 +524,22 @@ check('sprint drains stamina and moves faster than a walk', () => {
     champ.x = hx; champ.z = hz; champ.stop(); champ.state = STATE.CONTROLLED;
     st.stamina = 100; st.staminaDelay = 0; st.blocking = false;
     dc._dodge = null;
-    dc.keys.clear(); dc.keys.add('w');
-    dc.setSprint(sprint);
-    tick(g, 20);
-    dc.setSprint(false); dc.keys.clear();
+    /* a deliberate walk, or a thumb pushed past the ring for a run */
+    const id = stickPush(dc, 0, 1, sprint ? 1 : 0.62);
+    tick(g, 24);
+    stickRelease(dc, id);
+    dc.setSprint(false);
     return Math.hypot(champ.x - hx, champ.z - hz);
   };
   /* pick a heading with open ground: a walk into a wall proves nothing */
   let walked = 0, ran = 0;
   for (const yaw of [0, 0.8, -0.9, 1.9, -2.4]) {
     walked = travel(false, yaw);
-    if (walked < 1.2) continue;
+    if (walked < 0.8) continue;
     ran = travel(true, yaw);
-    if (ran > 1.2) break;
+    if (ran > 0.8) break;
   }
-  assert.ok(walked > 1.2, `the body walked only ${walked.toFixed(1)} m — no open ground for the test`);
+  assert.ok(walked > 0.8, `the body walked only ${walked.toFixed(1)} m — no open ground for the test`);
   assert.ok(st.stamina < 95, 'sprinting cost no stamina');
   assert.ok(ran > walked * 1.2, `sprinting covered ${ran.toFixed(1)} m vs walking ${walked.toFixed(1)} m`);
   cam.firstPerson.yaw = cam0; cam.firstPerson.pitch = pitch0;
