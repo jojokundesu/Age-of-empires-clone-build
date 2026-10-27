@@ -1,6 +1,8 @@
 # Imperial Crown 3D
 
-> **Version 5:** the separately playable continuation is in [`imperial-crown-v5/`](imperial-crown-v5/README.md), with first-person control, custom squads and persistent defend orders. [Download the Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v5.0.0-preview/imperial-crown-3d-v5.apk). This test build uses a public demo signing key and has not been verified on a Realme 9i. The original v4 remains in [`imperial-crown-v4/`](imperial-crown-v4/); the historical measurements below describe earlier builds.
+> **Version 6 (current):** [`imperial-crown-v6/`](imperial-crown-v6/README.md) — touch-only first person, a Champion with perks, audited squads. [Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.0.0-preview/imperial-crown-3d-v6.apk) (SHA-256 `9ef95e2fcab56824d6d9ffef069acc05c2b578deb071ec535257b0fe489f919a`). It installs beside v5 (`ai.arena.imperialcrown.v6`) and is signed with a public demo key; sustained performance on a physical Realme 9i is still unmeasured.
+>
+> **Version 5:** the earlier continuation is in [`imperial-crown-v5/`](imperial-crown-v5/README.md); [its preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v5.0.0-preview/imperial-crown-3d-v5.apk) remains published. The original v4 stays in [`imperial-crown-v4/`](imperial-crown-v4/); the historical measurements below describe earlier builds.
 
 A real-time strategy game written from scratch for one device class: a mid-range Android
 phone with an **Adreno 610** (Realme 9i class), a 90 Hz screen and 4 GB of RAM. No game
