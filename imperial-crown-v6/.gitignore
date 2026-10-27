@@ -1,0 +1,11 @@
+node_modules/
+dist/
+ci/
+.tmp/*.heapprofile
+*.log
+.toolchain/
+# APK build output and signing material are never source files.
+/build/
+*.jks
+*.p12
+*.pfx
