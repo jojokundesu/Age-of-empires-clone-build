@@ -938,20 +938,41 @@ export class Game {
     return rate;
   }
 
+  /** Yield of a newly sown field, before any of it has been harvested. */
+  farmYieldBonus(team) {
+    let bonus = 0;
+    if (this.hasTech(team, 'horse_collar')) bonus += 75;
+    if (this.hasTech(team, 'heavy_plow')) bonus += 125;
+    return bonus;
+  }
+
   findNearestResource(kind, x, z, maxDist, unit) {
     // Deterministic per-unit jitter spreads a work crew across a whole mine
     // or grove instead of stacking everybody on one node.
     const jitter = unit ? (((unit.id * 2654435761) >>> 0) % 1000) / 1000 : 0.5;
     let best = null, bestScore = maxDist * maxDist;
     let nearest = null, nearestD = maxDist * maxDist;
-    for (let i = 0; i < this.resources.length; i++) {
-      const r = this.resources[i];
-      if (r.dead || r.amount <= 0) continue;
-      if (r.resKind !== kind) continue;
+    const consider = (r, i) => {
       const d = dist2(x, z, r.x, r.z);
       if (d < nearestD) { nearestD = d; nearest = r; }
       const score = d * (0.72 + 0.56 * (((i * 31 + jitter * 997) % 100) / 100));
       if (score < bestScore) { bestScore = score; best = r; }
+    };
+    for (let i = 0; i < this.resources.length; i++) {
+      const r = this.resources[i];
+      if (r.dead || r.amount <= 0) continue;
+      if (r.resKind !== kind) continue;
+      consider(r, i);
+    }
+    /* Fields are buildings, not scenery, so they live in `buildings` -- but
+       they are food, and a villager looking for food has to be able to find
+       one. A field still going up is skipped: you cannot harvest a furrow. */
+    const buildings = this.buildings;
+    for (let i = 0; i < buildings.length; i++) {
+      const b = buildings[i];
+      if (b.dead || !b.def || b.def.resKind !== kind) continue;
+      if (b.buildProgress < 0.99 || !(b.amount > 0)) continue;
+      consider(b, i + this.resources.length);
     }
     return best || nearest;
   }
@@ -996,20 +1017,39 @@ export class Game {
     this.resourcesDirty = true;
   }
 
+  /**
+   * A harvested field is resown for a little wood, exactly as its card says.
+   *
+   * The farmer asks, the treasury pays, the field refills and he carries on --
+   * one continuous job instead of a villager who vanishes into "idle" the
+   * moment his first field runs out. If the wood is not there the field simply
+   * stays bare and he goes looking for other work, which is what a person
+   * would do; the explanation is given once per field rather than every time
+   * somebody walks past it.
+   */
   tryReseedFarm(unit, node) {
-    // farms can be re-seeded for a small wood cost, keeping the villager working
     const team = unit.team;
+    node.amount = Math.max(0, node.amount || 0);
+    unit.gatherTarget = null;
     if (this.canAfford(team, { wood: 60 })) {
       this.spend(team, { wood: 60 });
-      node.amount = 280 + (this.hasTech(team, 'horse_collar') ? 75 : 0) + (this.hasTech(team, 'heavy_plow') ? 125 : 0);
+      node.amount = 280 + this.farmYieldBonus(team);
+      node.maxAmount = Math.max(node.maxAmount || 0, node.amount);
       if (node.dead) { node.dead = false; node.deadT = 0; this.resources.push(node); }
       unit.gatherTarget = node;
+      unit.lastGatherKind = node.resKind || 'food';
       unit.state = STATE.GATHER;
-    } else {
-      unit.gatherTarget = null;
-      unit.state = STATE.IDLE;
-      if (team === TEAM_PLAYER) this.notify('Not enough wood to reseed the farm', 'bad');
+      if (team === TEAM_PLAYER) this.onEvent('reseed', { farm: node });
+      return true;
     }
+    unit.state = STATE.IDLE;
+    unit.retaskT = 0;
+    const now = this.time;
+    if (team === TEAM_PLAYER && !(node._seedNotice > now - 45)) {
+      node._seedNotice = now;
+      this.notify('Not enough wood to reseed the farm', 'bad');
+    }
+    return false;
   }
 
   /* ==========================================================
@@ -1812,6 +1852,59 @@ export class Game {
     this.spatial.insertAll(this.units);
   }
 
+  /**
+   * Lookouts.
+   *
+   * "I never saw them coming" is a fair complaint about a phone screen: the
+   * enemy walks 400 m of empty island, arrives at the one building on the edge
+   * of your town, and the first thing you learn about it is a burning roof.
+   * Once a second the watch looks for a body of enemy soldiers near anything
+   * you own and, at most every 40 s, says how many and from where. The warning
+   * is a report, not an order: it tells the player what a scout would, and
+   * leaves the answer to him.
+   */
+  _lookouts(dt) {
+    this._lookoutT = (this._lookoutT || 0) + dt;
+    if (this._lookoutT < 1) return;
+    this._lookoutT = 0;
+    const mine = this.buildings;
+    if (!mine.length) return;
+    let count = 0, sx = 0, sz = 0, nearest = null, nd = Infinity;
+    const units = this.units;
+    for (let i = 0; i < units.length; i++) {
+      const u = units[i];
+      if (u.dead || u.team === TEAM_PLAYER || u.team === 0 || u.garrisoned) continue;
+      if (!(u.def.attack > 0)) continue;
+      let bestB = null, bestD = 70 * 70;
+      for (let k = 0; k < mine.length; k++) {
+        const b = mine[k];
+        if (b.dead || b.team !== TEAM_PLAYER) continue;
+        const d2 = (b.x - u.x) ** 2 + (b.z - u.z) ** 2;
+        if (d2 < bestD) { bestD = d2; bestB = b; }
+      }
+      if (!bestB) continue;
+      count++;
+      sx += u.x; sz += u.z;
+      if (bestD < nd) { nd = bestD; nearest = bestB; }
+    }
+    if (count < 4) return;
+    const now = this.time;
+    if (this._lookoutNext > now) return;
+    this._lookoutNext = now + 40;
+    sx /= count; sz /= count;
+    const home = this.baseOf ? this.baseOf(TEAM_PLAYER) : null;
+    const dir = this._compassWord((Math.atan2(sx - (home ? home.x : sx), sz - (home ? home.z : sz))));
+    const where = nearest ? `the ${nearest.name.toLowerCase()}` : 'your walls';
+    this.notify(`Lookouts: ${count} enemy soldiers closing on ${where} from the ${dir}`, 'warn');
+    if (this.onAlarm) this.onAlarm(nearest || home);
+  }
+
+  _compassWord(a) {
+    const words = ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'];
+    const t = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+    return words[Math.round(t / (Math.PI / 4)) % 8];
+  }
+
   alertAttacked(entity, attacker) {
     this.noteAttack(entity, attacker);
     if (entity.team === TEAM_PLAYER && this.time - (this._lastAlert || -99) > 6) {
@@ -2073,6 +2166,7 @@ export class Game {
     this.guards.update(dt);
     this.squads.update(dt);
     this.champions.update(dt);
+    this._lookouts(dt);
 
     // units
     /* one exponential for every unit's turn rate, instead of 4 000 a second */

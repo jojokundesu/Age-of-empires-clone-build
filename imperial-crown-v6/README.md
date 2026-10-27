@@ -1,6 +1,32 @@
-# Imperial Crown 3D — Version 5
+# Imperial Crown 3D — Version 6
 
-Version 5 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-v4/). The v4 source, assets, Android package and save slot remain untouched. V5 keeps the same procedural art, custom WebGL2 renderer, strategy simulation, 30 Hz fixed tick, LOD, and adaptive quality governor; its new controls operate on the actual units in that simulation rather than a second game.
+Version 6 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-v4/); v5 is kept beside it. The v4 and v5 source, assets, Android packages and save slots remain untouched. V6 keeps the same procedural art, custom WebGL2 renderer, strategy simulation, 30 Hz fixed tick, LOD, and adaptive quality governor; its controls operate on the actual units in that simulation rather than a second game.
+
+## What changed in 6.0.1
+
+Everything here came from playing 6.0.0 on the phone, and each one has a check in the suite now
+(`tests/economy.mjs`, `tests/morale.mjs`, `tests/champion.test.mjs` and the Chromium pass).
+
+- **Armies no longer turn round and walk home.** Morale charged -1.05 a second to any unit more than a
+  supply radius from a tent, whether it was fighting, marching or standing guard. A march to the enemy
+  takes about three minutes, so every army broke on the way and ran for home — "turning away for no
+  reason, from the very beginning". Fighting now costs almost nothing, marching costs a slow bleed,
+  standing in the open is the real cost, and your own buildings (within 18 m) steady the men around
+  them.
+- **Villagers keep working.** Standing still to chop was counted as being stuck, so every 3.5 s a
+  woodcutter lost his tree and went idle; and once the trees near the town were gone, the 26 m search
+  failed and the villager retired for ever. Working states no longer stall, the search widens until it
+  finds work, and an idle villager with a trade goes back to it on his own, preferring the field or
+  grove he was already working.
+- **Farms work.** The card promised food and nothing ever made the building harvestable. A finished
+  field is a real food source (the inspector shows what is left), it is resown for 60 wood when bare
+  instead of being destroyed by its own harvest, and a bare field with no wood sends the farmer to
+  other work rather than stranding him.
+- **The spellbook survives the once-a-day spell.** SKYFALL is cast from the map; the map closed the
+  book and nothing reopened it, so every other spell appeared to vanish. The book returns with only
+  the spent spell marked "Tomorrow".
+- **You are told when an army is coming.** The watch calls out enemy soldiers near anything you own,
+  with a direction, at most once every 40 s.
 
 ## Run it
 
@@ -70,9 +96,9 @@ See [docs-browser-tests.md](docs-browser-tests.md) for Chromium libraries on min
 
 ## Android builds and signing
 
-[Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.0.0-preview/imperial-crown-3d-v6.apk) — the same file CI builds and verifies on every push, published as the `v6.0.0-preview` release with a matching `apk-sha256.txt`. It is signed with the repository's **public demo key** for testing and has not been performance-tested on a physical Realme 9i.
+[Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.0.1-preview/imperial-crown-3d-v6.apk) — the same file CI builds and verifies on every push, published as the `v6.0.1-preview` release with a matching `apk-sha256.txt`. It is signed with the repository's **public demo key** for testing and has not been performance-tested on a physical Realme 9i.
 
-The v6 Android application ID is `ai.arena.imperialcrown.v6` (versionCode 60000), distinct from v5's `ai.arena.imperialcrown.v5` and v4's `ai.arena.imperialcrown`, so it installs **beside** v5 without replacing it and without inheriting its save slot. A local build needs JDK 17+, an Android SDK platform and build-tools, and produces `build/imperial-crown-6.0.0.apk`:
+The v6 Android application ID is `ai.arena.imperialcrown.v6` (versionCode 60001), distinct from v5's `ai.arena.imperialcrown.v5` and v4's `ai.arena.imperialcrown`, so it installs **beside** v5 without replacing it and without inheriting its save slot. A local build needs JDK 17+, an Android SDK platform and build-tools, and produces `build/imperial-crown-6.0.1.apk`:
 
 ```sh
 ANDROID_HOME=/path/to/android-sdk npm run apk
@@ -80,7 +106,7 @@ ANDROID_HOME=/path/to/android-sdk npm run apk
 
 Signing is unchanged from v4/v5: the repository's v4 PKCS#12 key is a **public demo key**, and the v6 script reuses the sibling `imperial-crown-v4/android/imperial.p12` without copying it. Provide your own key through `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD` and `KEY_ALIAS` for anything real, and keep the same certificate for future v6 upgrades or Android will refuse the update. Never commit a production signing key. If neither key is available the script warns and generates a throwaway key that cannot provide stable upgrades.
 
-`.github/workflows/android-v6.yml` is the only supported path to a published v6 APK. On every push that touches `imperial-crown-v6/**` it installs the SDK, builds `dist/`, runs the whole regression suite, the Chromium first-person/panel test and the 892x412 phone-layout check, builds and signs the APK, then verifies the v1+v2 signatures, `zipalign`, the manifest identity (`ai.arena.imperialcrown.v6`, 60000, 6.0.0) and that every byte of `dist/` is inside `assets/www`. It publishes the release only from a dispatch or from a commit message containing `[release v6.0.0-preview]`, and it refuses to overwrite the tag if it already belongs to another commit.
+`.github/workflows/android-v6.yml` is the only supported path to a published v6 APK. On every push that touches `imperial-crown-v6/**` it installs the SDK, builds `dist/`, runs the whole regression suite, the Chromium first-person/panel test and the 892x412 phone-layout check, builds and signs the APK, then verifies the v1+v2 signatures, `zipalign`, the manifest identity (`ai.arena.imperialcrown.v6`, 60001, 6.0.1) and that every byte of `dist/` is inside `assets/www`. It publishes the release only from a dispatch or from a commit message containing `[release v6]`, and it refuses to overwrite the tag if it already belongs to another commit.
 
 Installation and sustained performance on a physical handset are still unverified here. Use in-game **Menu → Check device**, then play a long battle and first-person run on the phone to judge frame rate, heat and battery.
 

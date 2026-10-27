@@ -135,7 +135,7 @@ check('with no supply a unit eventually breaks and runs for home', () => {
   const [x, z] = farSpot(g, 1);
   const u = placeAt(g, 'swordsman', 1, x, z);
   assert(u, 'the swordsman');
-  u.morale = ROUT_AT + 1.5;
+  u.morale = ROUT_AT + 0.5;
   const d0 = Math.hypot(u.x - g.playerBase.x, u.z - g.playerBase.z);
   run(g, 4);
   eq(u.state, 'rout', 'the unit should break');
@@ -204,6 +204,53 @@ check('a broken man is slower and softer in the back', () => {
   assert(g.morale.speedMul(u) < 0.95, 'running is slower than walking');
   assert(g.morale.damageTakenMul(u) > 1.4, 'a fleeing man is cut down from behind');
   return `speed ×${g.morale.speedMul(u)}, damage taken ×${g.morale.damageTakenMul(u)}`;
+});
+
+/* ============================================================ */
+console.log('\nTHE MARCH');
+
+/**
+ * The bug that made v6 unplayable: every state away from supply bled the same
+ * -1.05 a second, so an army ordered to march 200 m turned its back and ran
+ * home inside a minute and a half -- "units turning away for no reason".
+ * Marching is now a slow cost, not a rout sentence.
+ */
+check('a marching column keeps its nerve all the way to the enemy', () => {
+  const g = makeGame();
+  const base = g.playerBase;
+  const squad = [];
+  for (let i = 0; i < 6; i++) {
+    const [x, z] = [base.x + 40 + i * 2, base.z + 40];
+    const u = placeAt(g, 'spearman', 1, x, z);
+    if (u) { u.stance = 'aggressive'; squad.push(u); }
+  }
+  assert(squad.length === 6, 'six spearmen');
+  const goal = [base.x + 200, base.z + 200];
+  for (const u of squad) g.orderMove([u], goal[0], goal[1]);
+  /* three minutes of marching: longer than the walk to the far side of the
+     island, and far longer than the old numbers allowed */
+  for (let t = 0; t < 180 * 30; t++) {
+    g.update(1 / 30);
+    for (const u of squad) if (u.state === 'idle') g.orderMove([u], goal[0], goal[1]);
+  }
+  const routed = squad.filter((u) => u.state === 'rout').length;
+  assert(routed === 0, `${routed} of ${squad.length} broke on the march`);
+  const worst = Math.min(...squad.map((u) => u.morale));
+  assert(worst > 20, `the column should still have some nerve left (${worst.toFixed(0)})`);
+  return `${squad.length} men, 3 min, worst morale ${worst.toFixed(0)}`;
+});
+
+check('an army parked in the open still eventually loses its nerve', () => {
+  const g = makeGame();
+  const [x, z] = farSpot(g, 1);
+  const u = placeAt(g, 'swordsman', 1, x, z);
+  assert(u, 'the swordsman');
+  u.stance = 'stand';
+  let broke = 0;
+  for (let t = 0; t < 260 * 30 && !broke; t++) { g.update(1 / 30); if (u.state === 'rout') broke = t / 30; }
+  assert(broke, 'standing in the wilderness forever must cost him his nerve');
+  assert(broke > 90, `it should take minutes, not seconds (${broke.toFixed(0)} s)`);
+  return `broke after ${broke.toFixed(0)} s in the open`;
 });
 
 /* ============================================================ */

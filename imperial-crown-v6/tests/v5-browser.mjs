@@ -235,6 +235,21 @@ try {
   await map.click({ offset: { x: 30, y: 40 } });
   const skyday = await page.evaluate(() => window.__imperial.game.modHost.mods.get('arcane').state.skyday);
   check('Skyfall tactical map casts through the actual mod', () => assert.equal(skyday, 0));
+  /* A real thumb path: the map closes and the book has to come back, or the
+     once-a-day spell looks like it took every other spell with it. */
+  const book = await page.evaluate(() => ({
+    shelf: !document.getElementById('fpSpellShelf').classList.contains('hidden'),
+    map: !document.getElementById('fpMap').classList.contains('hidden'),
+    spells: [...document.querySelectorAll('#fpSpellList [data-spell]')].map((b) => b.dataset.spell),
+    sky: document.querySelector('#fpSpellList [data-spell="skyfall"] small')?.textContent || ''
+  }));
+  check('the spellbook is still there after the once-a-day spell', () => {
+    assert.equal(book.map, false, 'the skyfall map stayed open');
+    assert.equal(book.shelf, true, 'the spellbook vanished after casting');
+    assert.ok(book.spells.length >= 11, 'only ' + book.spells.length + ' spells left');
+    assert.ok(book.spells.includes('fireball'), 'Fireball disappeared with SKYFALL');
+    assert.match(book.sky, /tomorrow/i, 'the spent daily spell says "' + book.sky + '"');
+  });
   assert.ok(await page.evaluate(() => window.__imperial.saveMatch()));
   const mode = await page.evaluate(() => JSON.parse(localStorage.getItem('imperial-crown-v6-save')).mods);
   check('workshop state is saved from the browser', () => assert.ok(mode.includes('arcane')));

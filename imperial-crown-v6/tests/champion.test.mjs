@@ -382,6 +382,38 @@ check('the spellbook shelf really casts what you tap', () => {
   dc.exit();
 });
 
+check('the once-a-day spell does not take the rest of the spellbook with it', () => {
+  /* The reported bug: cast SKYFALL from the map and every other spell "just
+     completely disappeared" -- the map had closed the book, and nothing ever
+     opened it again. The book comes back, scrolled where it was, with only
+     the spent spell greyed out. */
+  const mage = g.units.find((u) => u.team === 1 && !u.dead && u.type === 'mage');
+  assert.ok(mage, 'no mage to possess');
+  assert.ok(dc.enter(mage), 'the mage could not be possessed');
+  mage.modState.arcane.rank = 6;
+  mage.modState.arcane.mana = 300;
+  mage.modState.arcane.cd = Object.create(null);
+  dc.openSpellShelf();
+  const rows = () => [...document.querySelectorAll('#fpSpellList [data-spell]')].map((b) => b.dataset.spell);
+  const before = rows();
+  assert.ok(before.includes('fireball') && before.includes('skyfall'), 'the book is missing rows');
+  assert.ok(dc.cast('skyfall'), 'SKYFALL could not be aimed');
+  assert.ok(!document.getElementById('fpMap').classList.contains('hidden'), 'the map never opened');
+  /* the tap a thumb makes on the map, through the element's own handler */
+  const canvas = document.getElementById('fpMapCanvas');
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: 300, height: 300 });
+  canvas.onclick({ clientX: 150, clientY: 150 });
+  assert.equal(arc.state.skyday, Math.floor(g.time / 240), 'the sky was not actually spent');
+  assert.ok(document.getElementById('fpMap').classList.contains('hidden'), 'the map stayed open');
+  assert.ok(!document.getElementById('fpSpellShelf').classList.contains('hidden'), 'the spellbook vanished after the daily spell');
+  const after = rows();
+  assert.deepEqual(after, before, 'the spellbook changed when the daily spell was used');
+  const sky = document.querySelector('#fpSpellList [data-spell="skyfall"] small');
+  assert.match(sky.textContent, /Tomorrow/i, `the spent spell should say tomorrow, said "${sky.textContent}"`);
+  assert.ok(document.querySelector('#fpSpellList [data-spell="fireball"]'), 'fireball is gone from the book');
+  dc.exit();
+});
+
 check('the cap is a reason, not a silent no-op', () => {
   g.teams.get(1).res.food = 5000; g.teams.get(1).res.gold = 5000;
   let guard = 0;

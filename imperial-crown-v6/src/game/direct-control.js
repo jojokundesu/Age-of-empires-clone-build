@@ -145,13 +145,20 @@ export class DirectControl {
       const half = this.game.world.half || 256;
       const x = clamp((event.clientX - r.left) / r.width, 0, 1) * half * 2 - half;
       const z = clamp((event.clientY - r.top) / r.height, 0, 1) * half * 2 - half;
-      if (this.cast(this.mapSpell, [x, z])) this.closeGlobalMap();
+      const wasSpell = this.mapSpell;
+      if (this.cast(wasSpell, [x, z])) {
+        this.closeGlobalMap();
+        /* Skyfall is cast from the map, and the map covers the book. Sending
+           the player back to the battlefield with the shelf shut read as "my
+           spells are gone": the once-a-day spell was where the book used to
+           be and every other spell had apparently vanished with it. The book
+           comes back, scrolled where it was, with the spent spell greyed. */
+        this.openSpellShelf();
+      }
     };
     if (e.fpSpells) e.fpSpells.onclick = () => {
-      e.fpBuildShelf?.classList.add('hidden'); this.closeGlobalMap();
-      e.fpSpellShelf?.classList.toggle('hidden');
-      this.spellSignature = '';
-      this.refreshSpells();
+      if (e.fpSpellShelf?.classList.contains('hidden')) this.openSpellShelf();
+      else e.fpSpellShelf.classList.add('hidden');
     };
     if (e.fpShelfClose) e.fpShelfClose.onclick = () => e.fpSpellShelf?.classList.add('hidden');
     /* The spellbook rows are rebuilt every time mana or a cooldown changes,
@@ -1144,6 +1151,17 @@ export class DirectControl {
     const [x, z] = this.aimPoint({ id: 'construction', range: 10 });
     p.x = x; p.z = z; p.y = this.game.heightAt(x, z);
     p.valid = this.game.canPlaceAt(p.type, u.team, x, z).ok;
+  }
+
+  /** Show the spellbook (and only the spellbook) with fresh rows. */
+  openSpellShelf() {
+    if (!this.arcane()) return false;
+    this.el.fpBuildShelf?.classList.add('hidden');
+    this.closeGlobalMap();
+    this.el.fpSpellShelf?.classList.remove('hidden');
+    this.spellSignature = '';
+    this.refreshSpells();
+    return true;
   }
 
   openGlobalMap(id) {

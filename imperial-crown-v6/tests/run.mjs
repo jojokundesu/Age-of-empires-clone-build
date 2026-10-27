@@ -33,6 +33,7 @@ const SUITES = [
   ['veterancy', 'tests/veterancy.mjs'],
   ['calendar', 'tests/calendar.mjs'],
   ['morale', 'tests/morale.mjs'],
+  ['economy', 'tests/economy.mjs'],
   ['wallsite', 'tests/wallsite.mjs', true],
   ['modsite', 'tests/modsite.mjs', true],
   ['realm', 'tests/realm.mjs'],

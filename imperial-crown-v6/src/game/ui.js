@@ -1644,6 +1644,9 @@ export class UI {
       let sub = '';
       if (e.kind === 'building') {
         sub = `${teamName} · ${e.buildProgress < 1 ? `Building ${Math.round(e.buildProgress * 100)}%` : 'Complete'}`;
+        /* a field is a larder: say how much is left in it, because "the farm
+           does nothing" is indistinguishable from a farm with nothing on it */
+        if (e.def && e.def.resKind) sub += ` · ${Math.floor(Math.max(0, e.amount || 0))} ${e.def.resKind} left`;
       } else if (e.kind === 'resource') {
         sub = `${e.resKind} · ${Math.floor(e.amount)} left`;
       } else {

@@ -3,7 +3,7 @@ name: Build Android APK (v6)
 # v6 is its own app (ai.arena.imperialcrown.v6) so it installs side by side with
 # v5 and keeps its own save file. A normal push validates the branch but does
 # not publish; a release is made by an explicit dispatch, or by a commit whose
-# message contains [release v6.0.0-preview].
+# message contains [release v6].
 on:
   workflow_dispatch:
     inputs:
@@ -41,6 +41,15 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
+      - name: Read the version this build will carry
+        run: |
+          node -e '
+            const v = require("./package.json").version;
+            const [a, b, c] = v.split(".").map(Number);
+            const fs = require("fs");
+            fs.appendFileSync(process.env.GITHUB_ENV, `VERSION=${v}\nVERSION_CODE=${a * 10000 + b * 100 + (c || 0)}\n`);
+            console.log(`version ${v} (${a * 10000 + b * 100 + (c || 0)})`);
+          '
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -78,15 +87,17 @@ jobs:
       - name: Verify signatures, identity, alignment and bundled web assets
         run: |
           set -euo pipefail
-          APK=build/imperial-crown-6.0.0.apk
+          APK="build/imperial-crown-${VERSION}.apk"
           "$BUILD_TOOLS/apksigner" verify --verbose --min-sdk-version 23 --max-sdk-version 23 "$APK" | grep -F 'Verified using v1 scheme (JAR signing): true'
           "$BUILD_TOOLS/apksigner" verify --verbose --min-sdk-version 24 --max-sdk-version 24 "$APK" | grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true'
           "$BUILD_TOOLS/zipalign" -c -p 4 "$APK"
-          "$BUILD_TOOLS/aapt2" dump badging "$APK" | grep -F "package: name='ai.arena.imperialcrown.v6' versionCode='60000' versionName='6.0.0'"
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | grep -F "package: name='ai.arena.imperialcrown.v6' versionCode='${VERSION_CODE}' versionName='${VERSION}'"
           python3 - <<'PY'
           from pathlib import Path
           from zipfile import ZipFile
-          with ZipFile('build/imperial-crown-6.0.0.apk') as z:
+          import os
+          VERSION = os.environ["VERSION"]
+          with ZipFile(f"build/imperial-crown-{VERSION}.apk") as z:
               assert z.getinfo('classes.dex').file_size > 0
               assets = [p for p in Path('dist').rglob('*') if p.is_file()]
               for p in assets:
@@ -106,39 +117,55 @@ jobs:
             imperial-crown-v6/apk-sha256.txt
           retention-days: 90
       - name: Publish v6 preview release
-        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release v6.0.0-preview]')) }}
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release v6]')) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TAG=v6.0.0-preview
+          TAG="v${VERSION}-preview"
           cat > "$RUNNER_TEMP/v6-release-notes.md" <<'NOTES'
-          ## Imperial Crown 3D v6 — Android preview
+          ## Imperial Crown 3D v6.0.1 — Android preview
 
-          **A preview, not a performance sign-off.** The Realme 9i layout is checked in CI at its real
-          screen shape (892x412 CSS px, both orientations), but sustained frame rate, heat and battery
-          use on the physical phone are still unmeasured. The APK is signed with the repository's
-          **public demo key**, not a production key — use it for testing only.
+          Built from this commit and verified in this run: the whole regression suite, the Chromium
+          first-person and panel pass, the 892x412 phone-layout check, the signatures, the alignment,
+          the package identity and every byte of the bundled web app.
 
-          ### In this build
+          **This build is a patch on 6.0.0.** It is the same game with five things that were broken
+          fixed -- and they were all reported from a real game on the phone, not from a test.
 
-          - **Two thumbs, one phone.** No keyboard and no mouse anywhere. The left thumb steers and
-            sprints by pushing past the gold ring; the right thumb drags to look and **taps an enemy
-            to lock on**, after which your Champion swings by himself. BLOCK is a toggle, DODGE is a
-            tap, and every other action is a pill sized for a fingertip.
-          - **The Champion.** The soldier you take control of earns renown for damage, kills, parries,
-            spells and razing, climbs six ranks, and chooses one of three permanent perks at each
-            rank — more than thirty, wired into the numbers the simulation actually reads.
-          - **Directions fixed.** v5 mirrored movement and steering. v6 derives both from the camera's
-            own basis; the suite proves it in screen space.
-          - **Mages train again.** Mod units may name their training buildings, so the Town Centre
-            really produces the Arcane mage, and a cap now says so on the card.
-          - **Squads** are audited end to end: form, join, shared experience, ranks that pay armour,
-            save and reload, and FOLLOW ME / FOCUS from inside the body.
-          - **Sandbox mods are optional** (menu toggle, on by default).
+          ### What was wrong, and what it does now
 
-          Installs as `ai.arena.imperialcrown.v6`, so v5 can stay installed beside it. Saves from v5
-          are imported read-only and never overwrite the v5 slot. Android 7.0+.
+          - **Whole armies turned round and walked home.** Morale treated every unit away from a
+            supply tent the same way: -1.05 a second, whether it was fighting, marching or standing
+            guard. A march to the enemy takes about three minutes, so no army ever arrived -- your men
+            dropped their orders, turned their backs and ran, "for no reason, from the very
+            beginning". Fighting now costs almost nothing, marching costs a slow bleed, and standing
+            in the open is what really wears an army down. Your own buildings steady the men around
+            them, so defending a gate is no longer a rout waiting to happen.
+          - **Villagers stopped working after a while.** Two causes. Standing still to chop a tree was
+            counted as being stuck, so every three and a half seconds a woodcutter lost his tree and
+            was put back to idle; and when the trees near the town were gone, the 26 m search found
+            nothing and the villager simply retired, for ever. Working is no longer a stall, the
+            search widens until it finds something, and a villager with no orders goes back to work on
+            his own -- returning to his own field or grove rather than drifting to a new one.
+          - **Farms produced nothing at all.** The farm's card promised food and the code never
+            turned the building into something a villager could harvest; 60 wood bought a decoration.
+            A finished field is now a real food source, the inspector shows what is left in it, and
+            when it is bare it is resown for 60 wood instead of being destroyed by its own harvest.
+          - **The spellbook vanished after the once-a-day spell.** SKYFALL is cast from the world map,
+            and the map closed the book without ever opening it again -- so every other spell looked
+            gone. The book comes back where you left it, with only the spent spell greyed to
+            "Tomorrow".
+          - **You never saw the enemy coming.** A wave walks 400 m of empty island before anything
+            tells you it exists. The watch now calls out a body of enemy soldiers near anything you
+            own, with a direction, at most every 40 s.
+
+          Everything else from 6.0.0 is unchanged: two thumbs and no keyboard, the Champion and his
+          perks, squads, the mage, and optional Workshop mods.
+
+          It installs **over 6.0.0** (same key, versionCode 60001) and stays beside v5. Signed with
+          the repository's public demo key for testing. Sustained frame rate, heat and battery on the
+          physical Realme 9i are still unmeasured -- that needs the phone.
 
           Download `imperial-crown-3d-v6.apk` below; the SHA-256 file lets you verify it.
           NOTES
@@ -149,8 +176,8 @@ jobs:
               exit 1
             fi
             gh release upload "$TAG" imperial-crown-3d-v6.apk apk-sha256.txt --clobber
-            gh release edit "$TAG" --title 'Imperial Crown 3D v6 — Android preview' --notes-file "$RUNNER_TEMP/v6-release-notes.md" --prerelease --draft=false
+            gh release edit "$TAG" --title "Imperial Crown 3D ${VERSION} — Android preview" --notes-file "$RUNNER_TEMP/v6-release-notes.md" --prerelease --draft=false
           else
-            gh release create "$TAG" imperial-crown-3d-v6.apk apk-sha256.txt --target "$GITHUB_SHA" --prerelease --title 'Imperial Crown 3D v6 — Android preview' --notes-file "$RUNNER_TEMP/v6-release-notes.md"
+            gh release create "$TAG" imperial-crown-3d-v6.apk apk-sha256.txt --target "$GITHUB_SHA" --prerelease --title "Imperial Crown 3D ${VERSION} — Android preview" --notes-file "$RUNNER_TEMP/v6-release-notes.md"
           fi
           gh release view "$TAG" --json url,assets --jq '.url, (.assets[] | select(.name == "imperial-crown-3d-v6.apk") | .url)'

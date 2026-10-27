@@ -794,7 +794,7 @@ class App {
       // The indices below share exactly the same live arrays as squads,
       // guards and workshop state; no volatile runtime entity ids are used.
       units: liveUnits.map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round((u.xp || 0) * 10) / 10, Math.round(u.morale ?? 100), Math.round(u.survived || 0), (u.garrisoned ? buildingIndex.get(u.garrisonTarget) : undefined) ?? -1, u.maxHp]),
-      buildings: liveBuildings.map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0, { queue: b.queue, researchQueue: b.researchQueue, rally: b.rally }]),
+      buildings: liveBuildings.map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0, { queue: b.queue, researchQueue: b.researchQueue, rally: b.rally, amount: b.def && b.def.resKind ? Math.round(b.amount || 0) : undefined }]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
     };
     const ok = Menu.writeSave(data);
@@ -842,6 +842,8 @@ class App {
         b.queue = Array.isArray(extra.queue) ? extra.queue : [];
         b.researchQueue = Array.isArray(extra.researchQueue) ? extra.researchQueue : [];
         b.rally = extra.rally || null;
+        /* a half-harvested field comes back half-harvested */
+        if (Number.isFinite(extra.amount)) b.amount = clamp(extra.amount, 0, b.maxAmount);
       }
       if (complete && team !== 0) game.onBuildingComplete(b);
       placed[placed.length - 1] = b;

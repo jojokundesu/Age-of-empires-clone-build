@@ -5,7 +5,7 @@
    projectiles, monk conversion, garrison arrows, garrisoned healing.
    ============================================================ */
 import { UNIT_DEFS, BUILDING_DEFS, AGES, TECH_DEFS } from './data.js';
-import { clamp, lerp, angleLerp } from '../core/math.js';
+import { clamp, lerp, angleLerp, dist2 } from '../core/math.js';
 
 /* Sim-owned randomness. `rngOf(e)` is the entity's game stream; a handful of
    call sites are in the Building and Resource classes, which also hold `game`.
@@ -579,7 +579,17 @@ export class Unit extends Entity {
 
     // stall detection: real displacement, not the intent flag
     const movedSq = (this.x - prevX) * (this.x - prevX) + (this.z - prevZ) * (this.z - prevZ);
-    if (movedSq < 0.00001 && (this.path || this.targetPos)) this.stallT = (this.stallT || 0) + dt;
+    /* Standing still on purpose is not being stuck. A woodcutter at a tree, a
+       mason on a wall and a villager handing over a load all stand perfectly
+       still for seconds at a time, and `targetPos` -- the leftover from the
+       walk that brought them here -- made the watchdog below count every one
+       of those seconds. It fired every 3.5 s, dropped the gather target and
+       put the villager back to IDLE, so a work force quietly dissolved into a
+       crowd of people staring at the horizon. Only travelling states can
+       stall; a working one is cleared here. */
+    const working = this.state === STATE.GATHER || this.state === STATE.BUILD || this.state === STATE.REPAIR;
+    if (working) this.stallT = 0;
+    else if (movedSq < 0.00001 && (this.path || this.targetPos)) this.stallT = (this.stallT || 0) + dt;
     else this.stallT = 0;
     // progress watchdog: a unit that has not really moved for ~2 s is wedged
     this.chkTimer = (this.chkTimer || 0) + dt;
@@ -694,6 +704,12 @@ export class Unit extends Entity {
 
   updateIdle(dt, stats) {
     this.moving = false;
+    /* An idle villager is a job the player has to notice and fix with a thumb,
+       and on a phone that is a summon-and-retask ritual per man. A villager who
+       has worked before looks for work again by himself, on a slow staggered
+       timer -- never taking a unit the player has deliberately parked, and
+       never before a manual order has had a moment to land. */
+    if (this.type === 'villager' && !this.noAggro && this.team !== 0) this._selfTask(dt);
     // auto-acquire targets based on stance
     if (this.stance === 'stand' || this.noAggro) return;
     if (this.attackCooldown > 0) return;
@@ -956,15 +972,75 @@ export class Unit extends Entity {
     }
   }
 
+  /**
+   * The nearest thing worth doing for this villager.
+   *
+   * The old search was a single 26 m ring around the villager and, when that
+   * came back empty, he simply stopped -- for ever. A town that has stripped
+   * the trees and berries around its own walls is a normal town by the tenth
+   * minute, so a dozen villagers would silently retire while the player was
+   * busy. The search now widens until something is found, and falls back to
+   * whatever the island does still have, so nobody ever stands about while
+   * there is work anywhere.
+   */
+  _findWork(kind) {
+    const g = this.game;
+    const first = kind || this.lastGatherKind || 'wood';
+    /* His own field, grove or seam first. A farmer sent back to a field he
+       was already working should walk eight metres to it, not across the map
+       to whichever berry bush the search happens to like today -- and a field
+       with 400 food left in it is exactly where he left it. */
+    const home = this.homeNode;
+    if (home && !home.dead && home.amount > 0 && !home.buildProgress && home.resKind === first) {
+      if (dist2(this.x, this.z, home.x, home.z) < 160 * 160) return home;
+    }
+    if (home && home.kind === 'building' && !home.dead && home.amount > 0 && home.buildProgress >= 0.99 && home.resKind === first) {
+      if (dist2(this.x, this.z, home.x, home.z) < 160 * 160) return home;
+    }
+    for (const r of [26, 90, 260, 900]) {
+      const node = g.findNearestResource(first, this.x, this.z, r, this);
+      if (node) return node;
+    }
+    for (const other of ['wood', 'food', 'gold', 'stone']) {
+      if (other === first) continue;
+      for (const r of [90, 260, 900]) {
+        const node = g.findNearestResource(other, this.x, this.z, r, this);
+        if (node) return node;
+      }
+    }
+    return null;
+  }
+
+  /** See updateIdle: put an idle villager back to work without being asked. */
+  _selfTask(dt) {
+    if (this.carry.amount > 0.01 && this.carry.kind) { this.returnResources(); return; }
+    this.retaskT = (this.retaskT === undefined ? 1.5 + (this.id % 9) * 0.35 : this.retaskT) - dt;
+    if (this.retaskT > 0) return;
+    this.retaskT = 3;
+    if (this.buildTarget || this.gatherTarget) return;
+    /* A villager parked on purpose next to nothing stays parked: only a unit
+       that has had a job before, or that is standing on a resource it can
+       see, is helped out. */
+    const node = this._findWork(this.lastGatherKind);
+    if (!node) { this.retaskT = 10; return; }
+    this.gatherTarget = node;
+    this.homeNode = node;
+    this.lastGatherKind = node.resKind;
+    this.state = STATE.GATHER;
+    this.moveTo(node.x, node.z, true);
+  }
+
   updateGather(dt, stats) {
     const g = this.game;
     let node = this.gatherTarget;
     if (!node || node.dead || node.amount <= 0) {
-      node = g.findNearestResource(this.lastGatherKind || 'wood', this.x, this.z, 26, this);
+      node = this._findWork(this.lastGatherKind);
       this.gatherTarget = node;
-      if (!node) { this.state = STATE.IDLE; return; }
+      if (!node) { this.state = STATE.IDLE; this.retaskT = 2; return; }
+      this.homeNode = node;
       this.moveTo(node.x, node.z, true);
     }
+    this.homeNode = node;
     const d = Math.hypot(node.x - this.x, node.z - this.z);
     const reach = (node.radius || 1) + 1.5 + this.radius;
     if (d > reach) {
@@ -1008,12 +1084,12 @@ export class Unit extends Entity {
     this.lastGatherKind = kind;
     g.onGather(this, node, take);
     if (node.amount <= 0.01) {
-      node.kill(this);
       this.gatherTarget = null;
-      if (node.type === 'farm') {
-        // reseed
-        g.tryReseedFarm(this, node);
-      }
+      /* A bare field is resown, never killed: `kill()` on a building is an
+         explosion, a notification and a razed farm, which is what harvesting
+         your own wheat used to look like. */
+      if (node.kind === 'building') g.tryReseedFarm(this, node);
+      else node.kill(this);
     }
     if (this.carry.amount >= cap - 0.01) this.returnResources();
   }
@@ -1090,9 +1166,10 @@ export class Unit extends Entity {
       this.state = STATE.GATHER;
       this.moveTo(this.gatherTarget.x, this.gatherTarget.z, true);
     } else {
-      const node = g.findNearestResource(this.carry.kind || this.lastGatherKind || 'wood', this.x, this.z, 30, this);
+      const node = this._findWork(this.carry.kind || this.lastGatherKind || 'wood');
       if (node) {
         this.gatherTarget = node;
+        this.homeNode = node;
         this.state = STATE.GATHER;
         this.moveTo(node.x, node.z, true);
       } else {
@@ -1538,6 +1615,16 @@ export class Building extends Entity {
     this.size = def.size || 3;
     this.radius = this.size * 0.5;
     this.height = Math.max(3, this.size * 1.3);
+    /* A farm is a field, and a field is food. The data has said so since the
+       first build -- `farm: { resKind: 'food', yield: 420 }` -- but nothing
+       ever turned the building into something a villager could harvest, so a
+       farm cost 60 wood and produced nothing at all. The building now carries
+       its own remaining yield and the villager search reads it directly. */
+    if (def.resKind && def.yield) {
+      this.resKind = def.resKind;
+      this.maxAmount = def.yield + (game ? game.farmYieldBonus(team) : 0);
+      this.amount = this.maxAmount;
+    }
     this.queue = [];
     this.researchQueue = [];
     this.rally = null;

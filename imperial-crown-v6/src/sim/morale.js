@@ -93,6 +93,18 @@ export class Morale {
       const b = list[i];
       if ((b.x - unit.x) ** 2 + (b.z - unit.z) ** 2 <= b.def.supply * b.def.supply) return true;
     }
+    /* Standing among your own houses, walls and towers steadies a man as much
+       as a tent does. Supply buildings still reach far further than they do --
+       that is what the radius is for -- but a soldier defending a gate is not
+       "out of supply" because the town centre is 40 m behind him.
+       Without this clause the first army anyone sent to hold a wall broke and
+       ran home while the enemy was still walking towards it. */
+    const buildings = this.game.buildings;
+    for (let i = 0; i < buildings.length; i++) {
+      const b = buildings[i];
+      if (b.dead || b.team !== unit.team) continue;
+      if ((b.x - unit.x) ** 2 + (b.z - unit.z) ** 2 <= 18 * 18) return true;
+    }
     /* a Marshal is a walking supply point for his own men (Court synergy) */
     if (this.game.court) {
       const h = this.game.court.holder(unit.team, 'marshal');
@@ -215,12 +227,29 @@ export class Morale {
          march, the waiting, the night and the casualties that break an army.
          Without this, any fight far from a town centre turned into a race to
          see whose damage decayed first. */
-      const engaged = u.state === 'attack' || u.state === 'attackmove';
+      /* Three different things used to share one number, and that number was
+         -1.05 a second: an army more than a supply radius from home was empty
+         in 95 seconds whether it was fighting, marching or standing guard. A
+         march to the enemy's town takes three minutes on this island, so no
+         army ever arrived -- the men turned their backs and walked home, which
+         reads as units "turning away for no reason". The three cases are now
+         separated by what they cost:
+           · fighting:            almost nothing, or a battle would break men
+                                  faster than the enemy could;
+           · marching:            a slow bleed, so a long campaign needs tents
+                                  but is never a suicide;
+           · standing in the open: the real cost, so parking an army nowhere
+                                  near home still eventually costs it its nerve.
+      */
+      const fighting = u.state === 'attack';
+      const marching = u.state === 'move' || u.state === 'attackmove'
+        || u.state === 'patrol' || u.state === 'return';
       let rate;
       const safe = u.state === STATE_ROUT ? this.rallyable(u) : fed;
       if (safe) rate = u.state === STATE_ROUT ? 5.5 : 2.2;
-      else if (engaged) rate = -0.18;
-      else rate = u.state === STATE_ROUT ? 1.6 : -1.05;
+      else if (fighting) rate = -0.05;
+      else if (marching) rate = -0.20;
+      else rate = u.state === STATE_ROUT ? 1.6 : -0.45;
       /* the Wheel of the Year: winter is a second enemy, spring a nurse.
          The season multiplies the *gain* and sharpens the *loss*, so a fed
          army still holds in winter but a starving one dies faster there. */
@@ -228,7 +257,7 @@ export class Morale {
         const m = g.calendar.moraleMul();
         rate = rate > 0 ? rate * m : rate / Math.max(0.4, m);
       }
-      if (night) rate -= 0.35;
+      if (night) rate -= 0.12;
       /* a legend's banner steadies the line: men under it bleed morale slower */
       if (g.elites && g.elites.commanded.has(u)) rate += 0.35;
       u.morale = clamp(u.morale + rate * step, 0, MORALE_MAX);

@@ -180,7 +180,10 @@ function performCast(api, unit, spell, x, z) {
   if (done === false) return false;
   st.mana -= Math.max(1, Math.round((spell.cost || 0) * spellCostMul(api, unit)));
   st.castTotal++;
-  st.cd[spell.id] = api.time + (spell.cd || 8) * (1 - 0.04 * ((st.rank || 1) - 1)) * cooldownMul(api, unit);
+  /* A once-a-day spell is spent by the calendar, not by a cooldown: putting a
+     timer on it as well made the book say "8s" for a spell that would not come
+     back until tomorrow. */
+  if (!spell.daily) st.cd[spell.id] = api.time + (spell.cd || 8) * (1 - 0.04 * ((st.rank || 1) - 1)) * cooldownMul(api, unit);
   gainXp(api, unit, 8 + (spell.rank || 1) * 3);
   return true;
 }
