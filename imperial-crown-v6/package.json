@@ -1,8 +1,8 @@
 {
-  "name": "imperial-crown-3d-v5",
+  "name": "imperial-crown-3d-v6",
   "private": true,
-  "version": "5.0.0",
-  "description": "Imperial Crown 3D v5 \u2014 the mobile-first strategy game, now with first-person command and squads.",
+  "version": "6.0.0",
+  "description": "Imperial Crown 3D v6 \u2014 the mobile-first strategy game: a Champion you command in person, on a phone, with two thumbs.",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5273",

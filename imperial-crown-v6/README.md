@@ -7,14 +7,14 @@ Version 5 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-
 Requires Node.js 20+ and a browser with WebGL2:
 
 ```sh
-cd imperial-crown-v5
+cd imperial-crown-v6
 npm ci
 npm run dev             # http://localhost:5273
 npm run build           # static, offline-capable dist/
 npm run preview         # preview the production build
 ```
 
-The server binds to `0.0.0.0` and accepts proxied preview hosts. The historical download links in the root README are for earlier releases, **not** a v5 APK.
+The server binds to `0.0.0.0` and accepts proxied preview hosts. The historical download links in the root README are for earlier releases; the v6 APK link above is the current one.
 
 ## Field guide
 
@@ -70,15 +70,19 @@ See [docs-browser-tests.md](docs-browser-tests.md) for Chromium libraries on min
 
 ## Android builds and signing
 
-[Download the v5 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v5.0.0-preview/imperial-crown-3d-v5.apk). It is signed with a public demo key for testing and has not been installed or performance-tested on a physical Realme 9i.
+[Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.0.0-preview/imperial-crown-3d-v6.apk) — the same file CI builds and verifies on every push, published as the `v6.0.0-preview` release with a matching `apk-sha256.txt`. It is signed with the repository's **public demo key** for testing and has not been performance-tested on a physical Realme 9i.
 
-The v5 Android application ID is `ai.arena.imperialcrown.v5`, distinct from v4's `ai.arena.imperialcrown`, so installing it does not replace v4. A build requires JDK 17+, Android SDK platform and build-tools, and produces `build/imperial-crown-5.0.0.apk`:
+The v6 Android application ID is `ai.arena.imperialcrown.v6` (versionCode 60000), distinct from v5's `ai.arena.imperialcrown.v5` and v4's `ai.arena.imperialcrown`, so it installs **beside** v5 without replacing it and without inheriting its save slot. A local build needs JDK 17+, an Android SDK platform and build-tools, and produces `build/imperial-crown-6.0.0.apk`:
 
 ```sh
 ANDROID_HOME=/path/to/android-sdk npm run apk
 ```
 
-The repository's v4 PKCS#12 key is a **public demo key**. For local sideload builds, the v5 script can reuse the sibling `imperial-crown-v4/android/imperial.p12` without copying it into v5. For production use your own securely held keystore through `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD` and `KEY_ALIAS`, and retain the same certificate for future v5 upgrades. Never commit a production signing key. If neither a key nor the sibling demo key is available, the script warns and generates a throwaway key that cannot provide stable upgrades. A v5 APK was built and its signatures, alignment, manifest and bundled assets were checked; installation and performance on a physical Android handset have not been verified.
+Signing is unchanged from v4/v5: the repository's v4 PKCS#12 key is a **public demo key**, and the v6 script reuses the sibling `imperial-crown-v4/android/imperial.p12` without copying it. Provide your own key through `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD` and `KEY_ALIAS` for anything real, and keep the same certificate for future v6 upgrades or Android will refuse the update. Never commit a production signing key. If neither key is available the script warns and generates a throwaway key that cannot provide stable upgrades.
+
+`.github/workflows/android-v6.yml` is the only supported path to a published v6 APK. On every push that touches `imperial-crown-v6/**` it installs the SDK, builds `dist/`, runs the whole regression suite, the Chromium first-person/panel test and the 892x412 phone-layout check, builds and signs the APK, then verifies the v1+v2 signatures, `zipalign`, the manifest identity (`ai.arena.imperialcrown.v6`, 60000, 6.0.0) and that every byte of `dist/` is inside `assets/www`. It publishes the release only from a dispatch or from a commit message containing `[release v6.0.0-preview]`, and it refuses to overwrite the tag if it already belongs to another commit.
+
+Installation and sustained performance on a physical handset are still unverified here. Use in-game **Menu → Check device**, then play a long battle and first-person run on the phone to judge frame rate, heat and battery.
 
 ## Why these changes
 

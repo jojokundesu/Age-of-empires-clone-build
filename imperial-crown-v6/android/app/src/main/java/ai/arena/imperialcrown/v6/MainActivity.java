@@ -1,4 +1,4 @@
-package ai.arena.imperialcrown.v5;
+package ai.arena.imperialcrown.v6;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
