@@ -1,0 +1,132 @@
+name: Build Android APK (v5)
+
+# Keep the v5 game and app ID independent of v4. A normal push validates the
+# branch but does not publish. A release is made only by an explicit dispatch
+# or a commit deliberately marked [release v5.0.0-preview].
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: 'Publish the v5 preview APK'
+        type: boolean
+        default: false
+  push:
+    branches: [main, 'arena/**']
+    paths:
+      - 'imperial-crown-v5/**'
+      - '.github/workflows/android-v5.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'imperial-crown-v5/**'
+      - '.github/workflows/android-v5.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk-v5-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: imperial-crown-v5
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: imperial-crown-v5/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android build tools
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-34" "build-tools;34.0.0" >/dev/null
+          echo "BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0" >> "$GITHUB_ENV"
+          echo "PLATFORM=$ANDROID_HOME/platforms/android-34" >> "$GITHUB_ENV"
+      - name: Install dependencies and build web assets
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Run full regression suite
+        run: |
+          set -o pipefail
+          eval "$(node scripts/browser-libs.mjs --export)"
+          npm run test:ci
+      - name: Exercise first-person and panels in a mobile-sized browser
+        run: npm run test:v5-browser
+      - name: Build the signed APK
+        run: npm run apk
+      - name: Verify signatures, identity, alignment and bundled web assets
+        run: |
+          set -euo pipefail
+          APK=build/imperial-crown-5.0.0.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose --min-sdk-version 23 --max-sdk-version 23 "$APK" | grep -F 'Verified using v1 scheme (JAR signing): true'
+          "$BUILD_TOOLS/apksigner" verify --verbose --min-sdk-version 24 --max-sdk-version 24 "$APK" | grep -F 'Verified using v2 scheme (APK Signature Scheme v2): true'
+          "$BUILD_TOOLS/zipalign" -c -p 4 "$APK"
+          "$BUILD_TOOLS/aapt2" dump badging "$APK" | grep -F "package: name='ai.arena.imperialcrown.v5' versionCode='50000' versionName='5.0.0'"
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          with ZipFile('build/imperial-crown-5.0.0.apk') as z:
+              assert z.getinfo('classes.dex').file_size > 0
+              assets = [p for p in Path('dist').rglob('*') if p.is_file()]
+              for p in assets:
+                  name = 'assets/www/' + p.relative_to('dist').as_posix()
+                  assert z.read(name) == p.read_bytes(), f'APK asset mismatch: {name}'
+              print(f'Verified {len(assets)} exact web assets and classes.dex')
+          PY
+          cp "$APK" imperial-crown-3d-v5.apk
+          sha256sum imperial-crown-3d-v5.apk > apk-sha256.txt
+          cat apk-sha256.txt
+      - name: Retain tested APK as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: imperial-crown-3d-v5-apk
+          path: |
+            imperial-crown-v5/imperial-crown-3d-v5.apk
+            imperial-crown-v5/apk-sha256.txt
+          retention-days: 90
+      - name: Publish v5 preview release
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.release) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[release v5.0.0-preview]')) }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=v5.0.0-preview
+          cat > "$RUNNER_TEMP/v5-release-notes.md" <<'NOTES'
+          ## Imperial Crown 3D v5 — Android preview
+
+          **This is a preview, not a phone-performance sign-off.** Realme 9i installation, sustained frame rate, heat, and battery use have not been tested on a physical device. The APK is signed with the repository's **public demo key**, not a private production key; use it only for testing.
+
+          - First-person control with mobile movement/look, aim assist, role-specific weapons and tools, villager building, and the Arcane Order mage's spellbook and Skyfall.
+          - Custom squads with shared progression and perks, individual veterancy, and persistent defend orders for units or buildings.
+          - Hide/show the bottom selection and command panels without losing the selection; a separate × deselects even while they are hidden. Workshop status and squads are collapsible.
+          - Android 7.0+; installed as `ai.arena.imperialcrown.v5`, so v4 remains installed. V4's Android saves do not automatically transfer to the separate app.
+          - The full regression suite and mobile-sized Chromium touch flow run before this release. APK signatures, archive alignment, Android metadata and packaged assets are checked in CI.
+
+          Download `imperial-crown-3d-v5.apk` below. To play a mage, enable **Arcane Order** in the Mod Workshop and start a mod session. The accompanying SHA-256 file lets you verify the download.
+          NOTES
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$TAG" --jq '.object.sha')
+            if [ "$existing" != "$GITHUB_SHA" ]; then
+              echo "Refusing to overwrite $TAG: it belongs to a different commit." >&2
+              exit 1
+            fi
+            gh release upload "$TAG" imperial-crown-3d-v5.apk apk-sha256.txt --clobber
+            gh release edit "$TAG" --title 'Imperial Crown 3D v5 — Android preview' --notes-file "$RUNNER_TEMP/v5-release-notes.md" --prerelease --draft=false
+          else
+            gh release create "$TAG" imperial-crown-3d-v5.apk apk-sha256.txt --target "$GITHUB_SHA" --prerelease --title 'Imperial Crown 3D v5 — Android preview' --notes-file "$RUNNER_TEMP/v5-release-notes.md"
+          fi
+          gh release view "$TAG" --json url,assets --jq '.url, (.assets[] | select(.name == "imperial-crown-3d-v5.apk") | .url)'

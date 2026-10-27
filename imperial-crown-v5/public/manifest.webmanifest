@@ -1,0 +1,19 @@
+{
+  "name": "Imperial Crown 3D V",
+  "short_name": "Imperial Crown V",
+  "description": "A mobile-first 3D real-time strategy engine with a custom WebGL2 renderer.",
+  "id": "./?version=5",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#0a0d10",
+  "theme_color": "#0a0d10",
+  "categories": ["games", "strategy"],
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

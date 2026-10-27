@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- gold crown -->
+    <path android:fillColor="#E8B84B"
+        android:pathData="M30,44 L38,56 L48,36 L54,50 L60,36 L70,56 L78,44 L74,74 L34,74 Z" />
+    <path android:fillColor="#FFE9A8"
+        android:pathData="M34,74 L74,74 L72,80 L36,80 Z" />
+    <path android:fillColor="#7A1616"
+        android:pathData="M51,60 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+</vector>
