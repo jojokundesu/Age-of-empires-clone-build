@@ -228,7 +228,14 @@ try {
   const spellCount = await page.$$eval('#fpSpellList [data-spell]', (els) => els.length);
   const mageEquipment = await page.$eval('#fpEquipment', (el) => el.dataset.kind);
   check('mage spellbook and staff are available in first person', () => { assert.ok(spellCount >= 11, 'only ' + spellCount); assert.equal(mageEquipment, 'staff'); });
-  await page.click('#fpSpellList [data-spell="skyfall"]');
+  /* The shelf casts on pointerdown (that is what makes casting work while the
+     other thumb holds the stick), and arming the daily spell opens the world
+     map on top of the row. A synthetic click would race that, so the test
+     makes the touch itself, exactly as a thumb does. */
+  await page.evaluate(() => {
+    const row = document.querySelector('#fpSpellList [data-spell="skyfall"]');
+    row.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, pointerType: 'touch', bubbles: true, cancelable: true }));
+  });
   await page.waitForFunction('!document.getElementById("fpMap").classList.contains("hidden")');
   await page.screenshot({ path: join(out, 'skyfall-map.png') });
   const map = await page.$('#fpMapCanvas');
