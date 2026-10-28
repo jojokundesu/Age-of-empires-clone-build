@@ -165,12 +165,35 @@ export class DirectControl {
        so the handler is delegated from the shelf rather than attached to the
        buttons. v6 shipped this shelf without a handler at all: a mage could
        open his book and not cast a single spell from it. */
-    if (e.fpSpellList) e.fpSpellList.onclick = (event) => {
-      const b = event.target.closest('button[data-spell]');
-      if (!b) return;
-      if (b.dataset.attune) this.attune(b.dataset.spell);
-      else this.cast(b.dataset.spell);
-    };
+    if (e.fpSpellList) {
+      /* Cast on POINTER DOWN, not on click.
+         A click is only synthesised once the browser is sure the touch was a
+         tap, and while the other thumb is holding the move stick that
+         assurance is exactly what a phone can refuse: the finger lands, the
+         mage keeps running, and nothing happens until the stick is released
+         and the tap is made again. `pointerdown` is delivered the instant the
+         finger touches the glass, with the stick still held and the body
+         still moving, so a spell is castable mid-stride. The click handler
+         stays for assistive tech, and a fired pointerdown swallows the click
+         that follows it. */
+      const fire = (event) => {
+        const b = event.target.closest('button[data-spell]');
+        if (!b) return false;
+        const row = this.el.fpSpellList;
+        event.preventDefault?.();
+        if (b.dataset.attune) this.attune(b.dataset.spell);
+        else this.cast(b.dataset.spell);
+        void row;
+        return true;
+      };
+      e.fpSpellList.addEventListener('pointerdown', (event) => {
+        if (fire(event)) { this._spellTapT = performance.now(); event.stopPropagation(); }
+      });
+      e.fpSpellList.onclick = (event) => {
+        if (performance.now() - (this._spellTapT || 0) < 500) return;   // already cast
+        fire(event);
+      };
+    }
 
     /* --- champion --- */
     if (e.fpPerkOpen) e.fpPerkOpen.onclick = () => this.openPerks();
@@ -472,7 +495,14 @@ export class DirectControl {
        it moves, so the meaning is decided on release. */
     if (p) {
       const quick = performance.now() - (p.t0 || 0) < 340;
-      if (quick && (p.moved || 0) < 14) this.tapLock(event.clientX, event.clientY);
+      if (quick && (p.moved || 0) < 14) {
+        /* an armed spell (the command card's reticle, or SKYFALL from the
+           book) takes the tap: before this, a spell armed with one thumb
+           could never be released with the other while the lens was yours,
+           because every tap went to the lock-on picker */
+        if (this.game.modCast) this.castArmedAt(event.clientX, event.clientY);
+        else this.tapLock(event.clientX, event.clientY);
+      }
     }
     this.pointers.delete(event.pointerId);
     event.preventDefault?.();
@@ -489,6 +519,24 @@ export class DirectControl {
      tap on empty ground clears it. It drops by itself if he dies, leaves
      weapon range or the fight ends.
      ========================================================== */
+  /** Fire an armed spell at the ground under the finger (first person). */
+  castArmedAt(clientX, clientY) {
+    const cast = this.game.modCast;
+    if (!cast) return false;
+    const rect = this.input.rect();
+    const nx = (clientX - rect.left) / rect.width;
+    const ny = (clientY - rect.top) / rect.height;
+    const out = this._castPoint || (this._castPoint = [0, 0, 0]);
+    let x, z;
+    if (this.camera.pickGround(nx, ny, this.game.heightAt, out)) { x = out[0]; z = out[2]; }
+    else { const [ax, az] = this.aimPoint(cast); x = ax; z = az; }
+    this.game.castReticle = null;
+    const done = this.game.modHost.castAt(x, z, null);
+    this.spellSignature = '';
+    this.refreshSpells();
+    return !!done;
+  }
+
   tapLock(clientX, clientY) {
     if (globalThis.__DBG) console.error('tapLock enter', clientX, clientY);
     const u = this.unit, g = this.game;
@@ -1076,7 +1124,7 @@ export class DirectControl {
     if (id === 'skyfall' && !mapPoint) {
       const state = this.unit.modState.arcane;
       if (state.mana < spell.cost) { this.ui.toast(`${spell.name}: not enough mana`, 'warn'); return false; }
-      if (entry.state.skyday === Math.floor(this.game.time / (entry.mod.dayLength?.() || 240))) { this.ui.toast('The sky returns tomorrow', 'warn'); return false; }
+      if (entry.mod.skyUsesLeft?.(entry.api, state.rank) <= 0) { this.ui.toast('The sky returns tomorrow', 'warn'); return false; }
       this.openGlobalMap(id);
       return true;
     }
@@ -1229,15 +1277,16 @@ export class DirectControl {
     const state = this.unit.modState.arcane, rank = state.rank || 1;
     const spells = this.availableSpells();
     const pairs = rank >= 3 ? entry.mod.attunementPairs().filter((p) => !entry.state.discovered.has(p.id)) : [];
-    const sig = `${rank}|${Math.floor(state.mana)}|${spells.map((s) => `${s.id}:${Math.max(0, Math.ceil((state.cd[s.id] || 0) - this.game.time))}`).join(',')}|${entry.state.skyday}|${pairs.map((p) => p.id).join(',')}`;
+    const skyLeft = entry.mod.skyUsesLeft?.(entry.api, rank) ?? 0;
+    const sig = `${rank}|${Math.floor(state.mana)}|${spells.map((s) => `${s.id}:${Math.max(0, Math.ceil((state.cd[s.id] || 0) - this.game.time))}`).join(',')}|${entry.state.skyday}:${skyLeft}|${pairs.map((p) => p.id).join(',')}`;
     if (sig === this.spellSignature) return;
     this.spellSignature = sig;
     const scroll = box.scrollLeft;
     const frag = document.createDocumentFragment();
     for (const s of spells) {
       const cd = Math.max(0, Math.ceil((state.cd[s.id] || 0) - this.game.time));
-      const daily = s.daily && entry.state.skyday === Math.floor(this.game.time / (entry.mod.dayLength?.() || 240));
-      const text = s.locked ? `Rank ${s.rank}` : daily ? 'Tomorrow' : cd ? `${cd}s` : `${s.cost || 0} mana`;
+      const daily = s.daily && skyLeft <= 0;
+      const text = s.locked ? `Rank ${s.rank}` : daily ? 'Tomorrow' : s.daily ? `${skyLeft} left` : cd ? `${cd}s` : `${s.cost || 0} mana`;
       const b = document.createElement('button'); b.type = 'button'; b.className = `fpSpell${s.locked || cd || daily || state.mana < s.cost ? ' locked' : ''}`;
       b.dataset.spell = s.id; b.title = `${s.name}: ${s.desc || ''}`;
       b.setAttribute('aria-label', `${s.name}, ${text}. ${s.desc || ''}`);

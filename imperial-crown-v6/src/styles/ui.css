@@ -1135,3 +1135,24 @@ body[data-fpButtons="large"] .fpStick { width:126px; height:126px; }
 body[data-fpButtons="large"] #fpStickKnob { width:50px; height:50px; left:37px; top:37px; }
 body[data-fpButtons="compact"] .fpAttack { width:82px; height:82px; }
 body[data-fpButtons="compact"] .fpUtility { min-width:58px; height:40px; }
+
+/* ---------------- Codex (main menu → CODEX) ----------------
+   A manual, not a wall of text: one tab per system, and every entry is a
+   label / value pair the eye can run down. Sized for a phone in landscape,
+   which is the only way this game is played. */
+.codexTabs { display: flex; gap: 5px; flex-wrap: wrap; margin: 0 0 8px; }
+.codexTab { flex: 1 1 auto; min-height: 34px; padding: 0 10px; border: 1px solid #a9905c55; border-radius: 6px; background: #201d24; color: #cdbb96; font: 800 9px var(--sans); letter-spacing: 0.8px; text-transform: uppercase; cursor: pointer; }
+.codexTab.active { background: #352b1d; border-color: #d8b66d; color: #f7e6c4; }
+.codexBody { display: flex; flex-direction: column; gap: 8px; }
+.codexHead { margin: 6px 0 2px; font: 800 9px var(--sans); letter-spacing: 1.2px; text-transform: uppercase; color: #d2b67e; }
+.codexGrid { display: flex; flex-direction: column; gap: 4px; }
+.codexRow { display: grid; grid-template-columns: minmax(90px, 0.9fr) auto minmax(120px, 2fr) minmax(80px, 1fr); gap: 8px; align-items: baseline; padding: 5px 7px; border: 1px solid #ffffff10; border-radius: 5px; background: #ffffff06; }
+.codexRow > b { font: 800 10px var(--sans); color: #f0dfc0; }
+.codexRow > small { font: 700 8px var(--sans); color: #b6a17a; text-transform: uppercase; letter-spacing: 0.6px; white-space: nowrap; }
+.codexRow > span { font-size: 9.5px; line-height: 1.45; color: var(--ink-dim); }
+.codexRow > em { font: 700 8.5px var(--sans); font-style: normal; color: #9fb7d6; text-align: right; }
+@media (max-width: 720px) {
+  .codexRow { grid-template-columns: 1fr auto; }
+  .codexRow > span { grid-column: 1 / -1; }
+  .codexRow > em { grid-column: 1 / -1; text-align: left; }
+}

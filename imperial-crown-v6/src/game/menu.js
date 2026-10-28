@@ -81,6 +81,7 @@ export class Menu {
       modCount: document.getElementById('modCount'),
       btnSettings: document.getElementById('btnSettings'),
       btnHelp: document.getElementById('btnHelp'),
+      btnCodex: document.getElementById('btnCodex'),
       menuPerf: document.getElementById('menuPerf'),
       rotate: document.getElementById('rotateHint'),
       modal: document.getElementById('modalScreen'),
@@ -167,6 +168,7 @@ export class Menu {
     el.btnSettings?.addEventListener('click', () => this.openSettings());
     el.btnMods?.addEventListener('click', () => this.openMods());
     el.btnHelp?.addEventListener('click', () => this.openHelp());
+    el.btnCodex?.addEventListener('click', () => this.openCodex());
     el.btnLoad?.addEventListener('click', () => {
       const save = Menu.readSave();
       if (!save) { this.openModal('SAVED CAMPAIGN', 'Nothing to load', '<p class="dim">No saved campaign was found on this device. Start a new one and use Menu → Save Game.</p>'); return; }
@@ -615,6 +617,41 @@ export class Menu {
     });
   }
 
+  /**
+   * The Codex: every number in the game, in one place, on the main menu.
+   *
+   * The Field Manual explains what a button does. This explains what the
+   * spell *costs*, what a rank is worth, how a golem behaves, how fast a
+   * wound closes, and what every perk does — the questions the manual kept
+   * not answering. Tabs are built from the live mod and Champion data.
+   */
+  async openCodex() {
+    let tabs = [];
+    try {
+      const codex = await import('./codex.js');
+      tabs = await codex.buildCodex();
+    } catch (e) {
+      this.openModal('CODEX', 'Codex unavailable',
+        '<p class="dim">The codex could not be built on this device. The game is unaffected.</p>');
+      return;
+    }
+    const body = tabs.map((t, i) => `<div class="codexPane" data-pane="${t.id}"${i ? ' hidden' : ''}>${t.html}</div>`).join('');
+    const bar = tabs.map((t, i) => `<button type="button" class="codexTab${i ? '' : ' active'}" data-tab="${t.id}">${t.label}</button>`).join('');
+    this.openModal('CODEX', 'Everything, in numbers', `
+      <div class="codexTabs">${bar}</div>
+      <div class="codexBody">${body}</div>
+    `);
+    const el = this.el;
+    el.modalBody?.querySelectorAll('.codexTab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.tab;
+        el.modalBody.querySelectorAll('.codexTab').forEach((b) => b.classList.toggle('active', b === btn));
+        el.modalBody.querySelectorAll('.codexPane').forEach((p) => { p.hidden = p.dataset.pane !== id; });
+        this.audio?.play('click');
+      });
+    });
+  }
+
   openHelp() {
     this.openModal('FIELD MANUAL', 'How to wage war', `
       <div class="row"><b>Camera</b><span>Drag to pan · pinch to zoom · twist two fingers to rotate.</span></div>
@@ -625,7 +662,7 @@ export class Menu {
       <div class="row"><b>Build</b><span>Villagers → Build → tap a building → tap the ground to place it.</span></div>
       <div class="row"><b>Economy</b><span>Food, wood, gold and stone. Drop-off buildings shorten every trip.</span></div>
       <div class="row"><b>Counter triangle</b><span>Spears beat cavalry · cavalry beats archers · archers beat infantry.</span></div>
-      <div class="row"><b>Favour</b><span>Earned from battle. Spend it on Decrees that buff your whole empire.</span></div>
+      <div class="row"><b>The Codex</b><span>Every number in the game — spell costs, cooldowns, mana, golems, regeneration, every perk — lives behind <b>Codex</b> on this menu. The Field Manual only tells you which button to press.</span></div>
       <div class="row"><b>First person</b><span>Select one of your units and press <b>First Person</b>. That unit becomes your <b>Champion</b>: the same soldier in the same battle, now with renown, ranks and a perk at every rank.</span></div>
       <div class="row"><b>Your thumbs</b><span>Left thumb on the glass steers. Push it past the gold ring to sprint — no extra button. Right thumb drags to look; <b>tap an enemy</b> to lock on and you will swing at him automatically. <b>BLOCK</b> is a toggle, <b>DODGE</b> is a tap, both cost stamina. Everything else is a pill above your attack thumb, sized for a fingertip. No keyboard, no mouse: this is a phone game.</span></div>
       <div class="row"><b>Two hands, one screen</b><span>Turn the phone sideways: the battlefield is wider than it is tall, and the stick and the attack thumb never cover the middle of the picture.</span></div>

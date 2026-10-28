@@ -2150,6 +2150,77 @@ MU('stone_golem', () => {
   return { geo: g, height: 2.6, stride: 2.2 };
 });
 
+/* ---- the two elite golems ----
+   Same cairn, two different threats. The colossus is broader and darker with
+   a granite slab across its shoulders; the titan is tall, near-black volcanic
+   glass with molten seams, so a player can name all three at a glance from
+   across the field. */
+MU('granite_golem', () => {
+  const g = new Geo();
+  g.material(M.STONE).color(0.5, 0.5, 0.48);
+  g.part_(PART.LEG_L, -0.3, 1.0, 0);
+  g.box(-0.3, 0.5, 0, 0.44, 1.0, 0.46);
+  g.part_(PART.LEG_R, 0.3, 1.0, 0);
+  g.box(0.3, 0.5, 0, 0.44, 1.0, 0.46);
+  g.part_(PART.BODY, 0, 1.75, 0);
+  g.material(M.STONE).color(0.56, 0.56, 0.52);
+  g.taperBox(0, 1.75, 0, 1.32, 1.3, 0.9, 1.5, 1.0);
+  g.material(M.GRAVEL).color(0.4, 0.4, 0.38);
+  /* the slab across the shoulders: this is the one that slams */
+  g.box(0, 2.42, 0, 1.62, 0.24, 1.02);
+  g.box(0, 1.24, 0, 1.36, 0.18, 0.94);
+  g.material(M.STONE).color(0.62, 0.62, 0.58);
+  g.box(0, 2.66, 0, 0.4, 0.24, 0.4);
+  g.box(0, 2.9, 0.03, 0.58, 0.38, 0.5);
+  g.part_(PART.ARM_L, -0.9, 2.0, 0);
+  g.material(M.STONE).color(0.48, 0.48, 0.45);
+  g.box(-0.08, -0.62, 0, 0.48, 1.24, 0.5);
+  g.box(-0.08, -1.34, 0, 0.56, 0.34, 0.58);
+  g.part_(PART.ARM_R, 0.9, 2.0, 0);
+  g.box(0.08, -0.62, 0, 0.48, 1.24, 0.5);
+  g.box(0.08, -1.34, 0, 0.56, 0.34, 0.58);
+  g.material(M.GLOW).color(1.0, 0.55, 0.2);
+  g.box(-0.14, 2.92, 0.27, 0.13, 0.08, 0.05);
+  g.box(0.14, 2.92, 0.27, 0.13, 0.08, 0.05);
+  g.color(1, 1, 1);
+  return { geo: g, height: 3.1, stride: 2.0 };
+});
+
+MU('obsidian_golem', () => {
+  const g = new Geo();
+  g.material(M.STONE).color(0.16, 0.15, 0.17);
+  g.part_(PART.LEG_L, -0.26, 1.05, 0);
+  g.box(-0.26, 0.52, 0, 0.36, 1.05, 0.38);
+  g.part_(PART.LEG_R, 0.26, 1.05, 0);
+  g.box(0.26, 0.52, 0, 0.36, 1.05, 0.38);
+  g.part_(PART.BODY, 0, 1.85, 0);
+  g.material(M.STONE).color(0.2, 0.19, 0.21);
+  g.taperBox(0, 1.85, 0, 1.0, 1.35, 0.66, 1.14, 0.76);
+  /* molten seams down the chest */
+  g.material(M.GLOW).color(1.0, 0.42, 0.1);
+  g.box(0, 1.72, 0.34, 0.09, 0.86, 0.05);
+  g.box(-0.24, 1.62, 0.34, 0.06, 0.6, 0.05);
+  g.box(0.24, 1.62, 0.34, 0.06, 0.6, 0.05);
+  g.material(M.STONE).color(0.24, 0.23, 0.25);
+  g.box(0, 2.6, 0, 0.3, 0.24, 0.3);
+  /* a horned crown, black glass catching the light */
+  g.box(0, 2.84, 0.03, 0.5, 0.4, 0.44);
+  g.beam(-0.2, 3.0, 0.05, -0.34, 3.5, -0.1, 0.09);
+  g.beam(0.2, 3.0, 0.05, 0.34, 3.5, -0.1, 0.09);
+  g.part_(PART.ARM_L, -0.68, 2.1, 0);
+  g.material(M.STONE).color(0.18, 0.17, 0.19);
+  g.box(-0.06, -0.66, 0, 0.34, 1.32, 0.38);
+  g.box(-0.06, -1.42, 0, 0.42, 0.3, 0.44);
+  g.part_(PART.ARM_R, 0.68, 2.1, 0);
+  g.box(0.06, -0.66, 0, 0.34, 1.32, 0.38);
+  g.box(0.06, -1.42, 0, 0.42, 0.3, 0.44);
+  g.material(M.GLOW).color(1.0, 0.45, 0.12);
+  g.box(-0.11, 2.86, 0.24, 0.12, 0.07, 0.05);
+  g.box(0.11, 2.86, 0.24, 0.12, 0.07, 0.05);
+  g.color(1, 1, 1);
+  return { geo: g, height: 3.5, stride: 2.35 };
+});
+
 /* ---- wolf and bear: low quadruped rigs, no humanoid parts ---- */
 function quadruped(g, o) {
   const c = o.col;

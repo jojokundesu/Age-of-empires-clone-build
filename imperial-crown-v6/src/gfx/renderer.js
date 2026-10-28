@@ -291,6 +291,13 @@ export class Renderer {
     this.arrowBatch.cull = true;
     this.boulderBatch = new InstanceBatch(gl, this.boulderGeo, 80);
     this.boulderBatch.cull = true;
+    /* The ice that holds a frozen body. A blue-tinted silhouette behind a
+       snowflake is not encasement; a translucent crystal standing over the
+       man is, and it is the only part of a freeze a player can see from the
+       RTS camera. */
+    this.iceGeo = this._makeIceGeo();
+    this.iceBatch = new InstanceBatch(gl, this.iceGeo, 48);
+    this.iceBatch.cull = true;
 
     this.particleAlpha = new QuadBatch(gl, 12, 900);
     this.particleAdd = new QuadBatch(gl, 12, 900);
@@ -310,6 +317,40 @@ export class Renderer {
   _makeBoulderGeo() {
     return this._geoBox(0.42, 0.42, 0.42, 5, [0.55, 0.53, 0.5]);
   }
+  /**
+   * A six-sided spike of ice, tapered to a point: the shell drawn around a
+   * frozen unit. Built by hand like the ammo meshes so it costs nothing at
+   * load and needs no material texture of its own.
+   */
+  _makeIceGeo() {
+    const v = [], i = [];
+    const SIDES = 6, R = 0.78, topR = 0.2, y0 = -0.1, y1 = 1.55, y2 = 2.2;
+    /* vertex layout, exactly as _geoBox writes it:
+       pos3, normal3, uv2, mat, colour3, pivot3, part */
+    const push = (x, y, z, nx, ny, nz, u, w) => {
+      v.push(x, y, z, nx, ny, nz, u, w, 12, 0.86, 0.95, 1.0, 0, 0, 0, 0);
+    };
+    for (let k = 0; k < SIDES; k++) {
+      const a = (k / SIDES) * Math.PI * 2, b = ((k + 1) / SIDES) * Math.PI * 2;
+      const ax = Math.cos(a), az = Math.sin(a), bx = Math.cos(b), bz = Math.sin(b);
+      const nx = Math.cos((a + b) / 2), nz = Math.sin((a + b) / 2);
+      const base = v.length / 16;
+      // side quad: y0 -> y1, then the shoulder -> apex handled by the fan
+      push(ax * R, y0, az * R, nx, 0.15, nz, 0, 0);
+      push(bx * R, y0, bz * R, nx, 0.15, nz, 1, 0);
+      push(bx * topR, y1, bz * topR, nx, 0.75, nz, 1, 1);
+      push(ax * topR, y1, az * topR, nx, 0.75, nz, 0, 1);
+      i.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      // shoulder triangle up to the point
+      const base2 = v.length / 16;
+      push(ax * topR, y1, az * topR, nx, 0.55, nz, 0, 0);
+      push(bx * topR, y1, bz * topR, nx, 0.55, nz, 1, 0);
+      push(0, y2, 0, nx, 0.9, nz, 0.5, 1);
+      i.push(base2, base2 + 1, base2 + 2);
+    }
+    return { v: new Float32Array(v), i: new Uint16Array(i), tris: i.length / 3 };
+  }
+
   /** Tiny local cube builder so ammo meshes don't need the model library. */
   _geoBox(w, h, d, mat, col) {
     const hw = w / 2, hh = h / 2, hd = d / 2;
@@ -849,6 +890,7 @@ export class Renderer {
     this._drawTerrain(cam);
     this._drawModels(cam);
     this._drawAmmo(cam, game);
+    this._drawIceShells(cam, game);
 
     /* The sky goes on last against the depth buffer (depth == 1 means "nothing
        was here"), so it only ever shades the pixels that are actually sky.
@@ -1509,6 +1551,56 @@ export class Renderer {
     }
   }
 
+  /**
+   * Encased in ice: a crystal shell over every body a freeze spell is holding.
+   *
+   * The freeze itself is arcane mod state (`modState.arcane.freeze` is the
+   * time it ends), which is what the speed multiplier already reads. Reading
+   * the same stamp here keeps the picture and the mechanic on one clock: ice
+   * appears when a man stops walking and shatters when he starts again.
+   */
+  _drawIceShells(cam, game) {
+    const gl = this.gl;
+    const b = this.iceBatch;
+    if (!b) return;
+    b.begin();
+    const now = game.time;
+    for (let i = 0; i < game.units.length; i++) {
+      const u = game.units[i];
+      if (u.dead || u.garrisoned) continue;
+      const ms = u.modState && u.modState.arcane;
+      if (!ms || !ms.freeze || now > ms.freeze) continue;
+      if (cam.firstPerson?.unit === u) continue;
+      if (!this._inFrustum(u.x, (u.y || 0) + 1, u.z, 3)) continue;
+      const meta = this.unitMeta.get(u.type) || UNIT_META_FALLBACK;
+      const grow = clamp((ms.freeze - now) / 0.25, 0, 1);
+      /* the shell is sized to the man inside it: a swordsman gets a two-metre
+         spike, a cavalryman a taller one, so the encasement reads at a glance
+         from the RTS camera and in first person alike */
+      const s = (meta.height / 1.75) * (0.96 + 0.05 * Math.sin(this.time * 7 + u.id)) * grow;
+      const m = this._mB;
+      m4trs(m, u.x, (u.y || 0) - 0.12, u.z, (u.facing || 0) * 0.4 + 0.3, s * 1.1, s * 1.2, s * 1.1);
+      b.push(m, 0.42, 0.74, 1.0, 1, 0, 0.52, 0);
+    }
+    if (!b.count) return;
+    b.flush();
+    const s = this.pModel.use();
+    s.m4('uViewProj', cam.viewProj);
+    s.f('uSwayAmount', 0);
+    this._bindLight(s, 1);
+    s.tex('uMaterials', this.textures.materials, gl.TEXTURE_2D_ARRAY);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.depthMask(false);
+    gl.disable(gl.CULL_FACE);
+    b.draw();
+    this.stats.drawCalls++;
+    this.stats.instances += b.count;
+    this.stats.tris += b.triCount * b.count;
+    gl.depthMask(true);
+    gl.enable(gl.CULL_FACE);
+  }
+
   _drawDecals(game, cam) {
     const gl = this.gl;
     const d = this.decals;
@@ -1521,6 +1613,18 @@ export class Renderer {
       const r = e.kind === 'building' ? (meta ? meta.footprint * 0.72 : 2.6) : (e.radius || 0.5) * 1.9;
       const tc = teamColor(e.team).ring;
       d.push(e.x, e.y + 0.07, e.z, r, tc[0], tc[1], tc[2], 0.9, 0, 1, 0, 0);
+    }
+    /* Arcane wards: a standing ring around every shielded body. Read straight
+       from the mod's own state so it moves with the man it protects. */
+    for (let i = 0; i < game.units.length; i++) {
+      const u = game.units[i];
+      if (u.dead || u.garrisoned) continue;
+      const ms = u.modState && u.modState.arcane;
+      if (!ms || !ms.ward || game.time > ms.ward.until) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(this.time * 5.2 + u.id);
+      const r = (u.radius || 0.5) * (2.1 + pulse * 0.2);
+      d.push(u.x, (u.y || 0) + 0.075, u.z, r, 0.72, 0.62, 1, 0.55, 0, 1, 0, 0);
+      d.push(u.x, (u.y || 0) + 0.08, u.z, r * 0.86, 0.8, 0.72, 1, 0.16, 0, 0, 0, 0);
     }
     /* the court's officers keep a ring of their own office's colour on the
        ground, so a Marshal can be found in a crowd without clicking him */
@@ -1595,6 +1699,15 @@ export class Renderer {
       for (let i = markers.length - 1; i >= 0; i--) {
         const m = markers[i];
         const t = clamp(1 - m.t / m.life, 0, 1);
+        if (m.hold) {
+          /* a held mark keeps its size and its colour and only fades in the
+             last fraction of its life: an ice sheet is a place, not a pulse */
+          const fade = Math.min(1, (m.life - m.t) / Math.min(0.9, m.life * 0.35));
+          const pulse = 0.92 + 0.08 * Math.sin(this.time * 3.1 + m.x);
+          d.push(m.x, (m.y || 0) + 0.08, m.z, m.r * pulse, m.r0 || 0.55, m.g0 || 0.95, m.b0 || 0.7,
+            0.95 * Math.max(0, fade), 0, m.kind || 1, 0, 0);
+          continue;
+        }
         d.push(m.x, (m.y || 0) + 0.08, m.z, m.r * (0.6 + t * 0.9), m.r0 || 0.55, m.g0 || 0.95, m.b0 || 0.7,
           0.85 * (1 - t), 0, m.kind || 1, 0, 0);
       }

@@ -965,10 +965,27 @@ void main(){
     vec2 g = abs(fract(d * 3.0) - 0.5);
     float grid = smoothstep(0.44, 0.48, max(g.x, g.y));
     a = (0.26 + rim * 0.6 + grid * 0.18) * inside * vCol.a;
-  } else {
+  } else if (kind < 3.5) {
     // rally marker (chevrons)
     float band = sin(d.y * 6.0 + 1.2) * 0.5 + 0.5;
     a = smoothstep(1.0, 0.3, r) * (0.35 + band * 0.65) * vCol.a;
+  } else {
+    /* Sheet ice. Every area freeze lays one of these for its whole duration,
+       so the ground keeps showing the spell after the flash has gone.
+       Drawn as *facets*, not as a glow: the pane is cut into angular shards by
+       a polar grid, the shards catch the light at different strengths, and the
+       seams between them are the bright part. A soft white disc read as fog on
+       grass, which is exactly what it looked like. */
+    float ang = atan(d.y, d.x);
+    float facet = 0.5 + 0.5 * sin(floor(ang * 5.093 + 1.7) * 2.3 + floor(r * 6.0) * 1.9);
+    float seamA = smoothstep(0.86, 0.995, abs(sin(ang * 5.093)));
+    float seamR = smoothstep(0.82, 0.99, abs(sin(r * 9.4)));
+    float seam = max(seamA, seamR);
+    float rim = smoothstep(0.80, 1.0, r);
+    /* transparent in the middle where men are standing, ice at the edge */
+    float body = smoothstep(1.0, 0.30, r) * (0.42 + facet * 0.26 + seam * 0.55) + rim * 0.55;
+    a = body * vCol.a;
+    col = mix(col * 0.40, vec3(0.58, 0.84, 1.0), 0.62 + facet * 0.26 + seam * 0.12);
   }
   if (a < 0.01) discard;
   col *= 1.0 + vExtra.z * 0.6;

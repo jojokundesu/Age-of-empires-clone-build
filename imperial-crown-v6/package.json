@@ -1,7 +1,7 @@
 {
   "name": "imperial-crown-3d-v6",
   "private": true,
-  "version": "6.1.0",
+  "version": "6.2.0",
   "description": "Imperial Crown 3D v6 \u2014 the mobile-first strategy game: a Champion you command in person, on a phone, with two thumbs.",
   "type": "module",
   "scripts": {

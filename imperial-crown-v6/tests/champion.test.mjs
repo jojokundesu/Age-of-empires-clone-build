@@ -409,29 +409,29 @@ check('the once-a-day spell does not take the rest of the spellbook with it', ()
   const after = rows();
   assert.deepEqual(after, before, 'the spellbook changed when the daily spell was used');
   const sky = document.querySelector('#fpSpellList [data-spell="skyfall"] small');
-  assert.match(sky.textContent, /Tomorrow/i, `the spent spell should say tomorrow, said "${sky.textContent}"`);
+  assert.match(sky.textContent, /2 left/i, `an Ascendant should have two castings left, said "${sky.textContent}"`);
+  /* and when the third goes, the sky is genuinely spent until tomorrow */
+  for (let i = 0; i < 2; i++) {
+    dc.cast('skyfall');
+    canvas.onclick({ clientX: 150, clientY: 150 });
+  }
+  dc.refreshSpells();
+  const spent = document.querySelector('#fpSpellList [data-spell="skyfall"] small');
+  assert.match(spent.textContent, /Tomorrow/i, `three castings should spend the day, said "${spent.textContent}"`);
+  assert.equal(arc.state.skyuses, 3, 'the sky was used a different number of times than the book says');
   assert.ok(document.querySelector('#fpSpellList [data-spell="fireball"]'), 'fireball is gone from the book');
   dc.exit();
 });
 
 check('the cap is a reason, not a silent no-op', () => {
+  /* One mage per team: the hall must say so, and the card must be disabled. */
   g.teams.get(1).res.food = 5000; g.teams.get(1).res.gold = 5000;
-  let guard = 0;
-  while (mageCap() < 4 && guard++ < 40) {
-    const reason = town.trainBlocker('mage');
-    if (reason) break;
-    town.queueUnit('mage');
-    for (let i = 0; i < 400; i++) g.update(1 / 20);
-  }
-  /* at the limit the hall must *say so*, and the card must be disabled */
-  if (mageCap() >= 4) {
-    const reason = town.trainBlocker('mage');
-    assert.ok(/Mage limit/i.test(reason), `expected a cap reason, got "${reason}"`);
-    assert.ok(/Arcane Tower/i.test(reason), 'the reason does not say how to raise the cap');
-  }
+  assert.equal(mageCap(), 1, `the mage cap is ${mageCap()}, and it is supposed to be one`);
+  const reason = town.trainBlocker('mage');
+  assert.ok(/only one mage|returns in/i.test(reason), `expected a one-mage reason, got "${reason}"`);
   g.setSelection([town]); app.ui.refreshCommands(true);
   const card = document.querySelector('[data-cmd="train:mage"]');
-  if (mageCap() >= 4) assert.ok(card.classList.contains('poor'), 'the card is still tappable at the cap');
+  assert.ok(card.classList.contains('poor'), 'the card is still tappable at the cap');
   assert.ok(reasonText(card), 'the card carries no explanation');
 });
 function reasonText(card) { return card && (card.getAttribute('title') || card.querySelector('.cardReason')?.textContent || ''); }
@@ -715,6 +715,121 @@ check('the Champion can order the squad from inside the body', () => {
   assert.ok(mates.some((m) => m.target === enemy), 'nobody was ordered onto the target');
   enemy.kill(null);
   dc.exit();
+});
+
+await acheck('a spell is castable at a run, with the other thumb on the stick', async () => {
+  await start({ mode: 'mods', mods: ['arcane'] });
+  const g = app.game;
+  let mage = g.units.find((u) => u.team === 1 && u.type === 'mage');
+  if (!mage) {
+    const base = g.playerBase;
+    const [fx, fz] = openField(g);
+    mage = g.spawnUnit('mage', 1, fx, fz, null, { force: true });
+    void base;
+  }
+  assert.ok(mage && mage.modState && mage.modState.arcane, 'no mage in the mod session');
+  mage.modState.arcane.rank = 6;
+  mage.modState.arcane.mana = 1000;
+  g.setSelection([mage]);
+  assert.ok(app.game.directControl.enter(mage), 'the mage could not be possessed');
+  const dc2 = app.game.directControl;
+  dc2.openSpellShelf();
+  /* hold the stick: the body is genuinely walking, and sprinting */
+  const id = 4242;
+  dc2.pointerDown({ pointerId: id, clientX: 180, clientY: 330, pointerType: 'touch', preventDefault() {} });
+  dc2.pointerMove({ pointerId: id, clientX: 180, clientY: 250, pointerType: 'touch', preventDefault() {} });
+  tick(g, 6);
+  assert.equal(mage.moving, true, 'the body is not walking, so the test proves nothing');
+  const row = document.querySelector('#fpSpellList button[data-spell="fireball"]');
+  assert.ok(row, 'no fireball row in the shelf');
+  const casts = mage.modState.arcane.castTotal;
+  const mana = mage.modState.arcane.mana;
+  /* the tap a second thumb makes: pointerdown on the row, no lift needed */
+  row.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+  assert.ok(mage.modState.arcane.castTotal > casts, 'a spell did not fire while running');
+  assert.ok(mage.modState.arcane.mana < mana, 'the spell cost no mana');
+  dc2.pointerUp({ pointerId: id, clientX: 180, clientY: 250, pointerType: 'touch', preventDefault() {} });
+  dc2.exit();
+  app.quitToMenu();
+});
+
+/* ============================================================
+   4b · PLACEMENT IS LITERAL, AND THE CODEX EXISTS
+   ============================================================ */
+await acheck('the building ghost follows the finger, and the build lands on it', async () => {
+  await start({ mode: 'sandbox' });
+  const g = app.game;
+  g.teams.get(1).res.wood = 4000; g.teams.get(1).res.stone = 4000;
+  const villager = g.units.find((u) => u.team === 1 && u.type === 'villager');
+  assert.ok(villager, 'no villager to build with');
+  g.setSelection([villager]);
+  /* the player taps the build card, then moves their finger: the ghost must
+     track it, and the tap must place exactly there */
+  app.ui.openBuildMenu([villager]);
+  const card = [...document.querySelectorAll('#cmdGrid .cmdBtn')].find((b) => /House/.test(b.textContent));
+  assert.ok(card, 'no house card in the build menu');
+  card.click();
+  assert.ok(g.placing, 'tapping the card armed nothing');
+  const spot = [];
+  for (let dx = 6; dx < 22 && !spot.length; dx += 2) {
+    const x = villager.x + dx, z = villager.z + 6;
+    if (g.canPlaceAt('house', 1, x, z, { ignoreUnits: true }).ok) spot.push(x, z);
+  }
+  assert.ok(spot.length, 'no legal ground near the hall');
+  const cam = app.camera;
+  const realPick = cam.pickGround;
+  cam.pickGround = (nx, ny, heightAt, out) => { out[0] = spot[0]; out[1] = heightAt(spot[0], spot[1]); out[2] = spot[1]; return true; };
+  app.input.updatePlacementGhost(640, 300);
+  assert.ok(g.placing.ghost, 'the ghost never got a position');
+  assert.ok(Math.abs(g.placing.ghost.x - spot[0]) < 0.01 && Math.abs(g.placing.ghost.z - spot[1]) < 0.01,
+    'the ghost is not where the finger is');
+  assert.equal(g.placing.valid, true, 'the ghost does not know the spot is legal');
+  app.input.tap(640, 300);
+  cam.pickGround = realPick;
+  const built = g.buildings.find((b) => b.type === 'house' && !b.dead &&
+    Math.abs(b.x - spot[0]) < 0.6 && Math.abs(b.z - spot[1]) < 0.6);
+  assert.ok(built, 'the house was not placed where the ghost stood');
+  assert.equal(g.placing, null, 'placement mode stayed armed after a successful build');
+});
+
+await acheck('a tap that misses the ground refuses instead of building somewhere else', async () => {
+  const g = app.game;
+  const villager = g.units.find((u) => u.team === 1 && u.type === 'villager' && !u.dead);
+  assert.ok(villager, 'no villager');
+  g.setSelection([villager]);
+  app.ui.openBuildMenu([villager]);
+  const card = [...document.querySelectorAll('#cmdGrid .cmdBtn')].find((b) => /House/.test(b.textContent));
+  card.click();
+  assert.ok(g.placing, 'placement did not arm');
+  const before = g.buildings.filter((b) => b.type === 'house').length;
+  const cam = app.camera;
+  const realPick = cam.pickGround;
+  const realTarget = [cam.target[0], cam.target[2]];
+  cam.pickGround = () => false;                 // the finger was on the sky
+  app.input.tap(600, 60);
+  cam.pickGround = realPick;
+  const after = g.buildings.filter((b) => b.type === 'house').length;
+  assert.equal(after, before, 'a tap off the ground still raised a building');
+  assert.ok(g.placing, 'placement mode was lost by a refused tap');
+  assert.equal(g.placing.ghostInvalid, 'sky', 'nothing told the player the tap missed the ground');
+  g.placing = null;
+  void realTarget;
+  app.quitToMenu();
+});
+
+await acheck('the codex exists on the main menu and explains the numbers', async () => {
+  const button = document.getElementById('btnCodex');
+  assert.ok(button, 'there is no Codex button on the main menu');
+  await app.menu.openCodex();
+  const tabs = [...document.querySelectorAll('#modalBody .codexTab')].map((b) => b.textContent);
+  assert.ok(tabs.length >= 4, `the codex has ${tabs.length} tabs: ${tabs.join(', ')}`);
+  const body = document.getElementById('modalBody').textContent;
+  assert.ok(/SKYFALL/.test(body), 'the codex never mentions the daily spell');
+  assert.ok(/mana/i.test(body), 'the codex never mentions mana');
+  assert.ok(/cooldown/i.test(body), 'the codex never mentions cooldowns');
+  assert.ok(/recover|regener/i.test(body), 'the codex never mentions health regeneration');
+  assert.ok(/golem/i.test(body), 'the codex never mentions the golems');
+  app.menu.closeModal();
 });
 
 /* ============================================================

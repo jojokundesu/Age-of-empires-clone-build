@@ -2,6 +2,45 @@
 
 Version 6 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-v4/); v5 is kept beside it. The v4 and v5 source, assets, Android packages and save slots remain untouched. V6 keeps the same procedural art, custom WebGL2 renderer, strategy simulation, 30 Hz fixed tick, LOD, and adaptive quality governor; its controls operate on the actual units in that simulation rather than a second game.
 
+## What changed in 6.2.0
+
+The second list that came back from playing on the phone, answered one item at a time.
+
+- **Mana is a river, not a ration.** 250 at Apprentice, 1000 at Ascendant, regenerating 14 to 64 per
+  second (`RANKS` in `src/mods/arcane.js`). Mana is no longer what limits a high-rank mage.
+- **Cooldowns collapse with rank.** `cdScale(rank) = max(0.1, 1 - 0.18 * (rank - 1))`: an Ascendant
+  pays a tenth of the printed number, so a fireball is repeatable every 0.32 s and Meteor, Golem and
+  Thunderstorm all come back inside one fight. SKYFALL is 3 castings a day at rank 6; the book counts
+  them down ("2 left") instead of saying "tomorrow" after the first.
+- **One mage, and he comes back.** `MAX_BASE_MAGES = 1`; an Arcane Tower teaches faster but no longer
+  raises the cap. `onDeath` schedules a replacement 45 s later at the nearest completed TC/castle, **at
+  Apprentice rank**.
+- **No duplicate spells.** One single-target and one area spell per element: Fireball (one body, 96 +
+  burn) and Meteor (delayed 5 m blast); Ice Lance (freezes the man it hits for 1.6 s) and Frost Nova
+  (area freeze). The second area-freeze, Stasis, became **Shatterfrost**: triple damage against
+  anything already frozen or slowed.
+- **Golems scale with rank.** Rank 4 raises one Stone Golem; rank 5 adds a Granite Colossus that slams
+  the ground every 2.6 s; rank 6 adds an Obsidian Titan that hurls molten rock at 9 m and sets fire to
+  what it hits. The lifetime timer stays (26 s, 34 s at Ascendant).
+- **Blink is a teleport.** 30 m, and it lands as close as the ground allows instead of refusing
+  because the last centimetre of the line is a wall.
+- **Casting works while running.** The spell shelf casts on `pointerdown` (a `click` is never
+  delivered while the other thumb holds the stick), and an armed spell can be released with a tap in
+  first person, which it could not do at all.
+- **Ice you can see.** A frozen body wears an ice crystal for the whole freeze (`_drawIceShells`, a
+  hand-built spike mesh), and an area freeze sheets the ground with a faceted pane until it expires
+  (decal kind 4). Time Warp, Thunderstorm, Hailstorm, the golems' footprint and every Arcane Ward keep
+  their own mark for their real duration (`groundMarkers` now honours `hold`).
+- **Health regeneration exists and is documented.** Out of combat for 6 s, a soldier recovers 0.9 hp/s
+  up to 35% of his health (`REGEN_LIMIT`/`REGEN_RATE`/`REGEN_DELAY` in `src/sim/entities.js`).
+  Berserkers and the Champion's Field Medic perk heal past that cap.
+- **A Codex on the main menu.** `src/game/codex.js` builds four tabs -- Spells, Ranks & mana, Health,
+  Perks -- from the live mod and Champion data, so it cannot drift from the rules.
+- **Farms and placement.** Tapping a finished farm with villagers selected now sends them to harvest
+  it, and `orderGather` pins the tapped node as `homeNode`. The building ghost tracks the finger every
+  frame and turns red where the footprint is illegal; the tap places exactly that point, and a tap
+  that misses the ground is refused with a reason (`input.updatePlacementGhost`).
+
 ## What changed in 6.1.0
 
 This round is the list that came back after 6.0.1, answered one item at a time.

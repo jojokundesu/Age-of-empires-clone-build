@@ -300,14 +300,17 @@ check('spells use actual mana and cooldown rules', () => {
   assert.equal(dc.cast('fireball'), true); assert.ok(mage.modState.arcane.mana < before);
   assert.equal(dc.cast('fireball'), false, 'cooldown was bypassed');
 });
-check('Skyfall can target the whole map and observes its once-a-day rule', () => {
-  const dc = g.directControl; mage.modState.arcane.rank = 6; mage.modState.arcane.mana = 300;
+check('Skyfall can target the whole map and observes its three-a-day rule', () => {
+  const dc = g.directControl; mage.modState.arcane.rank = 6; mage.modState.arcane.mana = 1000;
   assert.equal(dc.cast('skyfall'), true); assert.equal(dc.mapSpell, 'skyfall');
   assert.ok(!document.getElementById('fpMap').classList.contains('hidden'));
   assert.equal(dc.cast('skyfall', [-200, 200]), true);
   assert.equal(arc.state.skyday, Math.floor(g.time / 240));
-  mage.modState.arcane.mana = 300;
+  /* an Ascendant gets three castings a day, and not a fourth */
+  for (let i = 0; i < 2; i++) { mage.modState.arcane.mana = 1000; assert.equal(dc.cast('skyfall', [-200, 200]), true); }
+  mage.modState.arcane.mana = 1000;
   assert.equal(dc.cast('skyfall', [-200, 200]), false);
+  assert.equal(arc.state.skyuses, 3, 'the sky was used a different number of times than the book says');
   dc.closeGlobalMap();
 });
 check('other units with an Arcane debuff are not mistaken for mages', () => {

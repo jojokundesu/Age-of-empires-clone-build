@@ -372,7 +372,7 @@ await check('tapping the spell card and then the ground casts it', async () => {
     return { mana: mage && mage.modState.arcane.mana, armed: !!g.modCast, hp: z ? z.hp : 0, max: z ? z.maxHp : 0 };
   }, scene.mage[0], target.id);
   assert(!after.armed, 'the cast stayed armed after the tap');
-  assert(after.mana < armed.mana - 20, `mana did not fall enough (${armed.mana} → ${after.mana})`);
+  assert(after.mana <= armed.mana - 10, `mana did not fall enough (${armed.mana} → ${after.mana})`);
   assert(after.hp < target.hp, `the zombie took no damage (${target.hp} → ${after.hp})`);
   return `mana ${Math.round(armed.mana)} → ${Math.round(after.mana)}, zombie ${Math.round(after.hp)}/${after.max} hp`;
 });

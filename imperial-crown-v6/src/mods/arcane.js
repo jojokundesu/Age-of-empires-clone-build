@@ -27,19 +27,40 @@ import { UNIT_DEFS } from '../sim/data.js';
 
 const MAGE = 'mage';
 const GOLEM = 'stone_golem';
+/* A rank buys *more* golems, and a better one each time. Rank 4 raises a
+   cairn, rank 5 adds a colossus that slams the ground, rank 6 adds a titan
+   that throws molten rock and sets fire to what it hits. The lifetime timer
+   never changes: these are siege tools, not a standing army. */
+const GOLEM_TIERS = [
+  { type: 'stone_golem', rank: 4 },
+  { type: 'granite_golem', rank: 5 },
+  { type: 'obsidian_golem', rank: 6 }
+];
 const TOWER = 'arcane_tower';
-const MAX_BASE_MAGES = 4;
+/* One mage walks the field. A tower no longer raises the cap -- it teaches
+   the mage faster -- and when he falls the Order sends the same man back,
+   at the bottom of the ladder, to the nearest hall still standing. */
+const MAX_BASE_MAGES = 1;
+const MAGE_RESPAWN = 45;          // seconds before the Order sends another
 
-/* one in-game day, in seconds: the sky falls once per day */
+/* one in-game day, in seconds: the sky falls three times a day at the top of
+   the ladder (once, and only for an Ascendant, below it) */
 const DAY = 240;
+const SKYFALL_MAX = 3;
 
+/* The ladder, in numbers a player can feel. Mana is deliberately generous --
+   an Apprentice already carries more than a whole rank-1 book costs, and an
+   Ascendant carries a thousand, which is the difference between "I have a
+   spell" and "I have a spell for every problem in this fight". Regeneration
+   is fast enough that a fight is never lost to an empty bar: the limit on a
+   high-rank mage is his cooldowns and his glass jaw, not his mana. */
 const RANKS = [
-  { rank: 1, title: 'Apprentice', xp: 0, mana: 120, regen: 4.2, type: MAGE },
-  { rank: 2, title: 'Adept', xp: 60, mana: 145, regen: 5.0, type: 'mage_adept' },
-  { rank: 3, title: 'Magus', xp: 160, mana: 172, regen: 5.9, type: 'mage_magus' },
-  { rank: 4, title: 'Archmage', xp: 320, mana: 205, regen: 6.9, type: 'mage_archmage' },
-  { rank: 5, title: 'Sage', xp: 560, mana: 245, regen: 8.1, type: 'mage_sage' },
-  { rank: 6, title: 'Ascendant', xp: 900, mana: 300, regen: 9.5, type: 'mage_ascendant' }
+  { rank: 1, title: 'Apprentice', xp: 0, mana: 250, regen: 14, type: MAGE },
+  { rank: 2, title: 'Adept', xp: 60, mana: 360, regen: 20, type: 'mage_adept' },
+  { rank: 3, title: 'Magus', xp: 160, mana: 480, regen: 27, type: 'mage_magus' },
+  { rank: 4, title: 'Archmage', xp: 320, mana: 620, regen: 36, type: 'mage_archmage' },
+  { rank: 5, title: 'Sage', xp: 560, mana: 800, regen: 48, type: 'mage_sage' },
+  { rank: 6, title: 'Ascendant', xp: 900, mana: 1000, regen: 64, type: 'mage_ascendant' }
 ];
 const RANK_BY_TYPE = new Map(RANKS.map((r) => [r.type, r]));
 
@@ -86,6 +107,10 @@ function rankInfo(u) {
   return RANKS[Math.max(0, Math.min(RANKS.length - 1, (st.rank || 1) - 1))];
 }
 
+function isMageType(type) {
+  return type === MAGE || RANK_BY_TYPE.has(type);
+}
+
 function isMage(u) {
   return !!u && !u.dead && (u.type === MAGE || RANK_BY_TYPE.has(u.type)) && !!(u.modState && u.modState.arcane);
 }
@@ -99,6 +124,31 @@ function maxMana(u, api) {
 const manaRegenMul = (api, u) => (api && api.champion ? api.champion.manaRegenMul(u) : 1);
 const cooldownMul = (api, u) => (api && api.champion ? api.champion.cooldownMul(u) : 1);
 const spellCostMul = (api, u) => (api && api.champion ? api.champion.spellCostMul(u) : 1);
+
+/**
+ * What is left of a spell's cooldown at this rank.
+ *
+ * Rank used to shave four percent per level, which is a rounding error: an
+ * Ascendant still waited three seconds between fireballs, and "level up"
+ * meant a longer bar rather than a different way of fighting. Now every rank
+ * takes a bite out of every cooldown, and by the top of the ladder a mage is
+ * casting continuously: rank 6 pays a tenth of the printed number, so a
+ * fireball is repeatable almost as fast as the animation allows and the
+ * long spells -- meteor, golem, thunderstorm -- come back inside a fight.
+ */
+function cdScale(rank) {
+  return Math.max(0.1, 1 - 0.18 * ((rank || 1) - 1));
+}
+
+/** How many of the once-a-day spells are left today (3 at Ascendant). */
+function skyUsesLeft(api, rank) {
+  const r = rank || 1;
+  if (r < 6) return 0;
+  const day = Math.floor(api.time / DAY);
+  const perDay = r >= 6 ? SKYFALL_MAX : 1;
+  if (api.state.skyday !== day) return perDay;
+  return Math.max(0, perDay - (api.state.skyuses || 0));
+}
 
 /** Everyone of `enemyTeam` inside a circle. */
 function enemiesIn(api, unit, x, z, r) {
@@ -180,6 +230,9 @@ function castable(api, unit, spell) {
   if (rank < spell.rank) return { ok: false, why: `Rank ${spell.rank}` };
   const cost = Math.max(1, Math.round((spell.cost || 0) * spellCostMul(api, unit)));
   if (st.mana < cost) return { ok: false, why: `${Math.ceil(cost - st.mana)} mana short` };
+  if (spell.daily && skyUsesLeft(api, rank) <= 0) {
+    return { ok: false, why: api.state.skyday === Math.floor(api.time / DAY) ? 'the sky is spent' : `Rank ${spell.rank}` };
+  }
   if ((st.cd[spell.id] || 0) > api.time) return { ok: false, why: `${Math.ceil(st.cd[spell.id] - api.time)}s` };
   return { ok: true, why: '' };
 }
@@ -200,7 +253,7 @@ function performCast(api, unit, spell, x, z) {
   /* A once-a-day spell is spent by the calendar, not by a cooldown: putting a
      timer on it as well made the book say "8s" for a spell that would not come
      back until tomorrow. */
-  if (!spell.daily) st.cd[spell.id] = api.time + (spell.cd || 8) * (1 - 0.04 * ((st.rank || 1) - 1)) * cooldownMul(api, unit);
+  if (!spell.daily) st.cd[spell.id] = api.time + (spell.cd || 8) * cdScale(st.rank) * cooldownMul(api, unit);
   gainXp(api, unit, 8 + (spell.rank || 1) * 3);
   return true;
 }
@@ -210,51 +263,88 @@ function performCast(api, unit, spell, x, z) {
    ============================================================ */
 const SPELLS = [
   {
-    id: 'fireball', name: 'Fireball', icon: 'flame', rank: 1, cost: 22, cd: 3.2, range: 15, radius: 3.4,
+    id: 'fireball', name: 'Fireball', icon: 'flame', rank: 1, cost: 20, cd: 3.2, range: 15, radius: 2.2,
     color: [1, 0.55, 0.2],
-    desc: 'A blast that burns: 62 damage and a five-second fire, all ranks.',
+    desc: 'The single-target fire spell: one body takes the whole blast and keeps burning. Meteor is the area answer.',
     cast(api, unit, x, z) {
-      const r = 3.4;
+      const r = 2.2;
       const pw = power(api, unit);
+      /* A finger lands on a man's chest, and the ground point under that
+         pixel is two or three metres behind his feet -- so a narrow
+         single-target blast used to explode on empty grass next to him.
+         If the aim point is empty, the spell takes the nearest body it was
+         visibly aimed at. It is one blast, on one man, which is the whole
+         promise of the spell. */
+      let cx = x, cz = z;
+      let targets = enemiesIn(api, unit, x, z, r);
+      if (!targets.length) {
+        let best = null, bestD = (r * 2.4) ** 2;
+        for (const e of enemiesIn(api, unit, x, z, r * 2.4)) {
+          const d = (e.x - x) ** 2 + (e.z - z) ** 2;
+          if (d < bestD) { bestD = d; best = e; }
+        }
+        if (best) { cx = best.x; cz = best.z; targets = [best]; }
+      }
       let hit = 0;
-      for (const e of enemiesIn(api, unit, x, z, r)) {
-        const d = Math.hypot(e.x - x, e.z - z);
-        api.damage(e, 62 * pw * (1 - 0.55 * (d / r)), unit);
+      for (const e of targets) {
+        const d = Math.hypot(e.x - cx, e.z - cz);
+        api.damage(e, 96 * pw * (1 - 0.35 * (d / r)), unit);
         const es = api.unitState(e);
         es.burn = { until: api.time + 5, dps: 8 * pw, source: unit.team };
         hit++;
       }
-      for (const b of buildingsIn(api, unit.team, x, z, r)) { api.damage(b, 26 * pw, unit); hit++; }
-      api.fx.explosion(x, api.height(x, z) + 0.6, z, 1.2);
-      api.fx.beamBetween(unit.x, unit.y + 1.3, unit.z, x, api.height(x, z) + 0.5, z,
+      for (const b of buildingsIn(api, unit.team, cx, cz, r)) { api.damage(b, 26 * pw, unit); hit++; }
+      api.fx.explosion(cx, api.height(cx, cz) + 0.6, cz, 1.2);
+      api.fx.beamBetween(unit.x, unit.y + 1.3, unit.z, cx, api.height(cx, cz) + 0.5, cz,
         { color: [1, 0.6, 0.25], scale: 1.1, life: 0.3, jag: 0.22, width: 0.22 });
-      api.fx.fire(x, api.height(x, z) + 0.4, z, 5);
-      api.mark(x, z, { kind: 0, r0: 1, g0: 0.45, b0: 0.15, r: r * 1.7, life: 0.5 });
+      api.fx.fire(cx, api.height(cx, cz) + 0.4, cz, 5);
+      api.mark(cx, cz, { kind: 0, r0: 1, g0: 0.45, b0: 0.15, r: r * 1.7, life: 0.5 });
       if (!hit) api.say('The fireball found nothing', 'info');
     }
   },
   {
-    id: 'blink', name: 'Blink', icon: 'bolt', rank: 1, cost: 20, cd: 9, range: 9.5,
+    id: 'blink', name: 'Blink', icon: 'bolt', rank: 1, cost: 16, cd: 7, range: 30,
     color: [0.5, 0.7, 1],
-    desc: 'A short teleport that refuses walls.',
+    desc: 'Teleport 30 m, in any direction, refusing only walls and water.',
     cast(api, unit, x, z) {
-      if (!api.line(unit.x, unit.z, x, z) || !api.passable(x, z)) {
+      /* A blink that refuses because the *last centimetre* is a wall is a
+         blink the player cannot use in a corridor. Aim at a wall and you land
+         in front of it; the spell only fails when the whole line is blocked. */
+      const spot = api.headroom(x, z);
+      if (api.line(unit.x, unit.z, x, z) && api.passable(x, z) && spot) {
+        // straight there
+      } else if (api.line(unit.x, unit.z, x, z)) {
+        // land as close as the ground allows
+        let ok = null;
+        for (let k = 0.9; k > 0.15 && !ok; k -= 0.1) {
+          const px = unit.x + (x - unit.x) * k, pz = unit.z + (z - unit.z) * k;
+          if (api.passable(px, pz) && api.line(unit.x, unit.z, px, pz)) ok = api.headroom(px, pz) || [px, pz];
+        }
+        if (!ok) { api.say('Something solid is in the way', 'warn'); return false; }
+        return this.land(api, unit, ok[0], ok[1]);
+      } else {
         api.say('Something solid is in the way', 'warn');
         return false;
       }
-      const spot = api.headroom(x, z) || [x, z];
+      return this.land(api, unit, spot[0], spot[1]);
+    },
+    land(api, unit, x, z) {
+      const spot = [x, z];
       api.fx.smoke(unit.x, unit.y + 0.8, unit.z, 6, 1.2, 0.5);
       unit.x = spot[0]; unit.z = spot[1];
       unit.path = null; unit.targetPos = null; unit.pathIdx = 0;
       unit.y = api.height(unit.x, unit.z);
       api.fx.smoke(unit.x, unit.y + 0.8, unit.z, 6, 1.2, 0.5);
-      api.mark(unit.x, unit.z, { kind: 0, r0: 0.6, g0: 0.75, b0: 1, r: 1.8 });
+      api.fx.beam(unit.x, unit.z, unit.y + 0.2, unit.y + 7, { color: [0.6, 0.8, 1], scale: 1.1, life: 0.4, jag: 0.2, width: 0.35, alpha: 0.8 });
+      api.fx.shock(unit.x, unit.y + 0.5, unit.z, 1.6, [0.65, 0.85, 1]);
+      api.mark(unit.x, unit.z, { kind: 1, r0: 0.6, g0: 0.75, b0: 1, r: 2.2, life: 0.5 });
+      return true;
     }
   },
   {
     id: 'ice_lance', name: 'Ice Lance', icon: 'mountain', rank: 2, cost: 22, cd: 4.5, range: 13,
     color: [0.6, 0.85, 1],
-    desc: 'A spear of ice that pierces a line of enemies and slows them.',
+    desc: 'The single-target ice spell: it freezes the body it hits solid. Frost Nova is the area answer.',
     cast(api, unit, x, z) {
       const dx = x - unit.x, dz = z - unit.z;
       const len = Math.hypot(dx, dz) || 1;
@@ -270,10 +360,13 @@ const SPELLS = [
         if (along < -0.5 || along > len + 1.6) continue;
         const perp = Math.abs(px * uz - pz * ux);
         if (perp > 1.6) continue;
-        api.damage(e, 52 * power(api, unit), unit);
+        api.damage(e, 60 * power(api, unit), unit);
         const es = api.unitState(e);
-        es.slow = { mul: 0.5, until: api.time + 2.5 };
-        api.fx.sparks(e.x, e.y + 1, e.z, 6, [0.7, 0.9, 1]);
+        /* one man, held: the ice is a prison, not a chill */
+        es.freeze = api.time + 1.6;
+        es.slow = { mul: 0.45, until: api.time + 3.2 };
+        api.fx.sparks(e.x, e.y + 1, e.z, 8, [0.75, 0.95, 1]);
+        api.mark(e.x, e.z, { kind: 4, hold: true, r0: 0.6, g0: 0.88, b0: 1, r: e.radius ? e.radius * 2.2 : 1.2, life: 1.6 });
         hit++;
       }
       api.fx.beamBetween(unit.x, unit.y + 1.1, unit.z, x, api.height(x, z) + 0.9, z,
@@ -292,10 +385,14 @@ const SPELLS = [
     desc: 'A shield that eats the next blows.',
     cast(api, unit) {
       const st = ustate(api, unit);
-      st.ward = { absorb: 90 + (st.rank || 1) * 18, until: api.time + 9 };
+      const until = api.time + 9;
+      st.ward = { absorb: 90 + (st.rank || 1) * 18, until };
       api.fx.heal(unit.x, unit.y + 1.1, unit.z, 6);
       api.fx.shock(unit.x, unit.y + 0.9, unit.z, 0.7, [0.78, 0.66, 1]);
       api.mark(unit.x, unit.z, { kind: 1, r0: 0.7, g0: 0.55, b0: 1, r: 1.5, life: 0.7 });
+      /* the bubble is drawn by the renderer straight from `st.ward`, so it
+         follows the mage for the whole nine seconds instead of marking the
+         spot he happened to be standing on */
       api.say('The ward settles around you', 'good');
     }
   },
@@ -339,13 +436,14 @@ const SPELLS = [
     cast(api, unit, x, z) {
       api.state.fields.push({ x, z, r: 5.5, until: api.time + 6, team: unit.team });
       api.mark(x, z, { kind: 1, r0: 0.4, g0: 0.4, b0: 1, r: 5.5, life: 1 });
+      api.mark(x, z, { kind: 0, hold: true, r0: 0.45, g0: 0.4, b0: 1, r: 5.5, life: 6 });
       api.fx.smoke(x, api.height(x, z) + 0.4, z, 8, 1.5, 0.8);
     }
   },
   {
-    id: 'meteor', name: 'Meteor', icon: 'flame', rank: 4, cost: 52, cd: 14, range: 16, radius: 4.5,
+    id: 'meteor', name: 'Meteor', icon: 'flame', rank: 4, cost: 46, cd: 11, range: 16, radius: 5.2,
     color: [1, 0.42, 0.16],
-    desc: 'A rock from the sky. It takes a moment to arrive.',
+    desc: 'The area fire spell: a rock from the sky, a delayed 5 m blast. Fireball is the single target.',
     cast(api, unit, x, z) {
       api.state.meteors.push({ x, z, at: api.time + 1.7, team: unit.team, by: unit });
       api.mark(x, z, { kind: 1, r0: 1, g0: 0.4, b0: 0.1, r: 4.9, life: 1.7 });
@@ -353,24 +451,38 @@ const SPELLS = [
     }
   },
   {
-    id: 'golem', name: 'Stone Golem', icon: 'mountain', rank: 4, cost: 55, cd: 30, range: 6,
+    id: 'golem', name: 'Stone Golem', icon: 'mountain', rank: 4, cost: 55, cd: 26, range: 8,
     color: [0.8, 0.75, 0.6],
-    desc: 'A temporary tank that eats buildings.',
+    desc: 'Raises golems for 26 s: one at Archmage, two at Sage, three at Ascendant — each tier stronger and stranger.',
     cast(api, unit) {
-      const spot = api.headroom(unit.x + 1.8, unit.z + 1.8) || [unit.x + 1.8, unit.z + 1.8];
-      const g = api.spawn(GOLEM, unit.team, spot[0], spot[1]);
-      if (!g) { api.say('There is no room for a golem here', 'warn'); return false; }
-      g.owner = unit;
-      api.state.golems.push({ unit: g, until: api.time + 26 });
-      api.fx.dust(g.x, g.y, g.z, 10, 1.6);
-      api.mark(g.x, g.z, { kind: 0, r0: 0.8, g0: 0.75, b0: 0.5, r: 2.2 });
-      api.say('The stone walks', 'good');
+      const rank = ustate(api, unit).rank || 4;
+      const tiers = GOLEM_TIERS.filter((t) => t.rank <= rank).slice(0, Math.max(1, rank - 3));
+      const life = 26 + 4 * Math.max(0, rank - 4);
+      let made = 0;
+      for (let i = 0; i < tiers.length; i++) {
+        /* arranged in an arc in front of the caster, so three of them do not
+           stand in one another's shoulders */
+        const ang = (i - (tiers.length - 1) / 2) * 0.9;
+        const bx = unit.x + Math.cos(ang) * 2.4;
+        const bz = unit.z + Math.sin(ang) * 2.4;
+        const spot = api.headroom(bx, bz) || [bx, bz];
+        const g = api.spawn(tiers[i].type, unit.team, spot[0], spot[1]);
+        if (!g) continue;
+        g.owner = unit;
+        api.state.golems.push({ unit: g, until: api.time + life, kind: tiers[i].type });
+        api.mark(g.x, g.z, { kind: 0, hold: true, r0: 0.62, g0: 0.58, b0: 0.48, r: 2.4, life });
+        api.fx.dust(g.x, g.y, g.z, 10, 1.6);
+        api.mark(g.x, g.z, { kind: 0, r0: 0.8, g0: 0.75, b0: 0.5, r: 2.2 });
+        made++;
+      }
+      if (!made) { api.say('There is no room for a golem here', 'warn'); return false; }
+      api.say(made === 1 ? 'The stone walks' : `The stone walks — ${made} of them`, 'good');
     }
   },
   {
     id: 'nova', name: 'Frost Nova', icon: 'mountain', rank: 5, cost: 55, cd: 14, range: 1, radius: 7.5,
     color: [0.65, 0.9, 1],
-    desc: 'Everything around the caster freezes solid.',
+    desc: 'The area ice spell: everything within 7 m of the caster is frozen solid for two seconds.',
     cast(api, unit) {
       let n = 0;
       for (const e of enemiesIn(api, unit, unit.x, unit.z, 7.5)) {
@@ -384,6 +496,9 @@ const SPELLS = [
       api.fx.smoke(unit.x, unit.y + 0.6, unit.z, 14, 2.4, 1.1);
       api.fx.shock(unit.x, unit.y + 0.4, unit.z, 2.4, [0.72, 0.92, 1]);
       api.mark(unit.x, unit.z, { kind: 1, r0: 0.6, g0: 0.9, b0: 1, r: 7.5, life: 0.9 });
+      /* the sheet of ice outlives the flash and the freeze: the ground stays
+         white for the whole duration, so the player can see where it is */
+      api.mark(unit.x, unit.z, { kind: 4, hold: true, r0: 0.55, g0: 0.85, b0: 1, r: 7.5, life: 3.5 });
       api.say(n ? `Frost Nova — ${n} frozen` : 'Frost Nova', 'good');
     }
   },
@@ -394,20 +509,23 @@ const SPELLS = [
     cast(api, unit, x, z) {
       api.state.storms.push({ x, z, until: api.time + 8, next: 0, team: unit.team, by: unit });
       api.mark(x, z, { kind: 1, r0: 0.7, g0: 0.8, b0: 1, r: 7, life: 1 });
+      api.mark(x, z, { kind: 0, hold: true, r0: 0.5, g0: 0.55, b0: 0.95, r: 7, life: 8 });
       api.say('The sky gathers', 'warn');
     }
   },
   {
     id: 'skyfall', name: 'SKYFALL', icon: 'bolt', rank: 6, cost: 100, cd: 0, range: 999,
     daily: true, color: [0.9, 0.95, 1],
-    desc: 'Once a day: the sky itself comes down, anywhere on the map.',
+    desc: 'Three times a day at Ascendant: the sky itself comes down, anywhere on the map.',
     cast(api, unit, x, z) {
       const day = Math.floor(api.time / DAY);
-      if (api.state.skyday === day) {
+      const left = skyUsesLeft(api, (ustate(api, unit).rank) || 1);
+      if (left <= 0) {
         api.say('The sky is spent — it returns tomorrow', 'warn');
         return false;
       }
-      api.state.skyday = day;
+      if (api.state.skyday !== day) { api.state.skyday = day; api.state.skyuses = 0; }
+      api.state.skyuses = (api.state.skyuses || 0) + 1;
       skyfall(api, unit, x, z);
     }
   }
@@ -450,19 +568,27 @@ const HYBRIDS = [
     }
   },
   {
-    id: 'stasis', name: 'Stasis Field', icon: 'hourglass', pair: ['ice', 'arcane'], cost: 65, cd: 26, range: 12,
+    id: 'stasis', name: 'Shatterfrost', icon: 'hourglass', pair: ['ice', 'arcane'], cost: 65, cd: 24, range: 14,
     color: [0.65, 0.85, 1],
-    desc: 'Ice and arcane: a bubble where time simply stops.',
+    /* This used to be a second area freeze, which made the book read as two
+       copies of Frost Nova. It is now the finisher the ice book was missing:
+       cold does the work, and anything already held by it simply breaks. */
+    desc: 'Ice and arcane: everything frozen or slowed in the area shatters for triple damage.',
     cast(api, unit, x, z) {
-      let n = 0;
+      let n = 0, broken = 0;
       for (const e of enemiesIn(api, unit, x, z, 6)) {
         const es = api.unitState(e);
-        es.freeze = api.time + 3.2;
-        api.fx.sparks(e.x, e.y + 1, e.z, 4, [0.7, 0.9, 1]);
+        const held = (es.freeze && api.time < es.freeze) || (es.slow && api.time < es.slow.until);
+        api.damage(e, (held ? 170 : 55) * power(api, unit), unit);
+        if (held) { broken++; api.fx.explosion(e.x, e.y + 1, e.z, 1.1); }
+        es.freeze = Math.max(es.freeze || 0, api.time + (held ? 0.5 : 0));
+        es.slow = { mul: 0.5, until: api.time + 3 };
+        api.fx.sparks(e.x, e.y + 1, e.z, held ? 10 : 5, [0.72, 0.92, 1]);
         n++;
       }
-      api.mark(x, z, { kind: 1, r0: 0.6, g0: 0.85, b0: 1, r: 6, life: 3.2 });
-      api.say(n ? `Stasis — ${n} held still` : 'Stasis Field', 'good');
+      api.fx.shock(x, api.height(x, z) + 0.6, z, 2.2, [0.72, 0.92, 1]);
+      api.mark(x, z, { kind: 4, hold: true, r0: 0.6, g0: 0.85, b0: 1, r: 6, life: 2.4 });
+      api.say(n ? `Shatterfrost — ${n} caught${broken ? `, ${broken} shattered` : ''}` : 'Shatterfrost', 'good');
     }
   },
   {
@@ -540,6 +666,7 @@ const HYBRIDS = [
       api.state.storms.push({ x, z, until: api.time + 7, next: 0, team: unit.team, by: unit, hail: true });
       api.fx.smoke(x, api.height(x, z) + 0.8, z, 12, 2.6, 1.4);
       api.mark(x, z, { kind: 1, r0: 0.75, g0: 0.88, b0: 1, r: 6.5, life: 1.1 });
+      api.mark(x, z, { kind: 4, hold: true, r0: 0.7, g0: 0.88, b0: 1, r: 6.5, life: 7 });
       api.say('Hailstorm', 'good');
     }
   }
@@ -656,10 +783,12 @@ export const arcane = {
   name: 'The Arcane Order',
   icon: 'monk',
   tagline: 'One mage, six ranks, nineteen spells.',
-  blurb: 'A mage who grows from a fireball-throwing apprentice into an Ascendant who can drop the sky on an enemy base — once a day.',
+  blurb: 'A mage who grows from a fireball-throwing apprentice into an Ascendant who can drop the sky on an enemy base three times a day.',
   detail: [
     'Mages earn insight by casting, by killing, and by standing near an Arcane Tower. Every rank unlocks new spells and literally changes the model: grimoire, halo, cape, crown.',
-    'Eleven base spells across fire, ice, storm and arcane — Ice Lance, Chain Lightning, Meteor, Frost Nova, Thunderstorm… and SKYFALL at rank 6, a once-per-day pillar of lightning that damages everything in a 9 m circle, anywhere on the map.',
+    'One mage walks the field at a time, and when he falls the Order sends another out of the nearest hall — at Apprentice rank — forty-five seconds later.',
+    'Eleven base spells across fire, ice, storm and arcane, one single-target and one area spell per element: Fireball and Meteor, Ice Lance and Frost Nova, Chain Lightning and Thunderstorm. Mana runs 250 to 1000 and every rank shortens every cooldown, so an Ascendant casts continuously. SKYFALL at rank 6 is a pillar of lightning anywhere on the map — three times a day.',
+    'Golems grow with rank: a cairn at Archmage, a ground-slamming colossus at Sage, a molten-rock titan at Ascendant. They last under half a minute and are siege tools, not an army.',
     'Attunement is the long game: weave two elements at rank 3+ to discover one of six hybrids that are not listed anywhere until you find them.',
     'The AI knows exactly how dangerous a high-rank mage is: it watches for casters, forms hunting parties, and will spend an army to kill one.'
   ],
@@ -687,6 +816,18 @@ export const arcane = {
       speed: 2.2, time: 1, cost: {}, classes: ['siege'], sight: 9,
       attackSpeed: 1.9, bonuses: { building: 26 }, pop: 0, threat: 2,
       desc: 'A summoned cairn. Temporary, tough, and very good at doors.'
+    },
+    granite_golem: {
+      name: 'Granite Colossus', icon: 'mountain', hp: 520, attack: 34, armor: 9, pierceArmor: 5,
+      speed: 1.95, time: 1, cost: {}, classes: ['siege'], sight: 10,
+      attackSpeed: 2.1, bonuses: { building: 40 }, pop: 0, threat: 4, hidden: true,
+      desc: 'Sage-tier golem. Every few seconds it slams the ground and breaks the men around it.'
+    },
+    obsidian_golem: {
+      name: 'Obsidian Titan', icon: 'mountain', hp: 470, attack: 38, armor: 7, pierceArmor: 9,
+      speed: 2.35, time: 1, cost: {}, classes: ['siege'], sight: 12, range: 7.5,
+      attackSpeed: 1.7, projectile: 'flame', bonuses: { building: 30 }, pop: 0, threat: 5, hidden: true,
+      desc: 'Ascendant-tier golem. Throws molten rock and sets fire to everything it lands on.'
     }
   },
   buildings: {
@@ -707,6 +848,9 @@ export const arcane = {
       scars: [],
       casts: 0,
       skyday: -1,
+      skyuses: 0,
+      respawn: Object.create(null),   // team -> time the Order sends another
+      lastMageRank: Object.create(null),
       discovered: new Set(),
       towers: []
     };
@@ -719,10 +863,26 @@ export const arcane = {
   /* ------------------------------------------------------------
      training, caps, towers
      ------------------------------------------------------------ */
+  /**
+   * One mage per team, full stop.
+   *
+   * The tower used to add two more, which turned the Order into a squad and
+   * made the ladder meaningless: four Apprentices throw more fireballs than
+   * one Ascendant. The tower now teaches (`insight` still doubles beside it)
+   * and the cap stays at one, so the player's single mage is the whole of
+   * their magic.
+   */
   mageCap(api, team) {
-    let towers = 0;
-    for (const b of api.teamBuildings(team)) if (b.type === TOWER && !b.dead) towers++;
-    return MAX_BASE_MAGES + Math.min(2, towers);
+    return MAX_BASE_MAGES;
+  },
+
+  /** Seconds until the Order sends another mage, or 0 when one is alive. */
+  respawnIn(api, team = TEAM_PLAYER) {
+    const live = api.teamUnits(team).some(isMage);
+    if (live) return 0;
+    const at = api.state.respawn[team];
+    if (!at) return 0;
+    return Math.max(0, at - api.time);
   },
 
   countMages(api, team) {
@@ -754,8 +914,13 @@ export const arcane = {
     const cap = this.mageCap(api, TEAM_PLAYER);
     const live = this.countMages(api, TEAM_PLAYER);
     if (live + queued >= cap) {
-      return { ok: false, reason: `Mage limit reached (${live + queued}/${cap}) — raise an Arcane Tower` };
+      const back = this.respawnIn(api, TEAM_PLAYER);
+      return { ok: false, reason: back > 0
+        ? `Your mage returns in ${Math.ceil(back)} s — only one walks at a time`
+        : 'Only one mage may walk the field at a time' };
     }
+    const back = this.respawnIn(api, TEAM_PLAYER);
+    if (back > 0) return { ok: false, reason: `The Order sends another in ${Math.ceil(back)} s` };
     return { ok: true };
   },
 
@@ -777,7 +942,17 @@ export const arcane = {
   },
 
   onDeath(api, ent, killer) {
-    if (!ent || !killer) return;
+    /* A dead mage is not the end of the Order: the man who walks back through
+       the gate is an Apprentice again, so the ladder is a thing the player
+       climbs, loses and climbs once more. Houses, castles and the Town Centre
+       all answer; if nothing is left, nothing comes. */
+    if (ent && ent.kind === 'unit' && isMageType(ent.type)) {
+      api.state.respawn[ent.team] = api.time + MAGE_RESPAWN;
+      if (ent.team === TEAM_PLAYER) {
+        api.say(`Your mage has fallen — the Order sends another in ${MAGE_RESPAWN} s, at Apprentice rank`, 'warn');
+      }
+    }
+    if (!killer) return;
     if (killer.modState && killer.modState.arcane && isMage(killer)) {
       gainXp(api, killer, ent.kind === 'building' ? 40 : 26);
     }
@@ -822,6 +997,10 @@ export const arcane = {
      ------------------------------------------------------------ */
   spells() { return SPELLS.slice(); },
   dayLength() { return DAY; },
+  skyUsesLeft(api, rank) { return skyUsesLeft(api, rank); },
+  skyMax() { return SKYFALL_MAX; },
+  cooldownScale(rank) { return cdScale(rank); },
+  respawnSeconds() { return MAGE_RESPAWN; },
   hybrids() { return HYBRIDS.slice(); },
   ranks() { return RANKS.slice(); },
   rankOf(unit) { return rankInfo(unit); },
@@ -916,7 +1095,7 @@ export const arcane = {
       }
     }
 
-    /* golem lifetime */
+    /* golem lifetime, and the two elite golems' own tricks */
     for (let i = st.golems.length - 1; i >= 0; i--) {
       const g = st.golems[i];
       if (!g.unit || g.unit.dead || time > g.until) {
@@ -925,7 +1104,72 @@ export const arcane = {
           g.unit.kill(null);
         }
         st.golems.splice(i, 1);
+        continue;
       }
+      const gu = g.unit;
+      gu.abilityT = (gu.abilityT === undefined ? 1.4 : gu.abilityT) - dt;
+      if (gu.abilityT > 0) continue;
+      const pw = power(api, gu.owner || gu);
+      if (g.kind === 'granite_golem') {
+        /* the colossus slams: a ring of broken ground and everything in it */
+        gu.abilityT = 2.6;
+        const foes = enemiesIn(api, gu, gu.x, gu.z, 3.8);
+        if (foes.length) {
+          for (const e of foes) {
+            api.damage(e, 34 * pw, gu);
+            const es = api.unitState(e);
+            es.slow = { mul: 0.55, until: time + 1.6 };
+          }
+          api.fx.shock(gu.x, gu.y + 0.4, gu.z, 2.6, [0.85, 0.8, 0.62]);
+          api.fx.dust(gu.x, gu.y + 0.2, gu.z, 12, 2.2);
+          api.mark(gu.x, gu.z, { kind: 1, r0: 0.85, g0: 0.78, b0: 0.55, r: 3.8, life: 0.4 });
+        }
+      } else if (g.kind === 'obsidian_golem') {
+        /* the titan throws molten rock further than a man can run */
+        gu.abilityT = 2.4;
+        let best = null, bestD = 9 * 9;
+        for (const e of api.units()) {
+          if (e.dead || e.team === gu.team) continue;
+          const d = (e.x - gu.x) ** 2 + (e.z - gu.z) ** 2;
+          if (d < bestD) { bestD = d; best = e; }
+        }
+        if (best) {
+          const y = api.height(best.x, best.z);
+          api.fx.beamBetween(gu.x, gu.y + 2.4, gu.z, best.x, y + 0.9, best.z,
+            { color: [1, 0.5, 0.16], scale: 1.1, life: 0.3, jag: 0.3, width: 0.3 });
+          api.fx.explosion(best.x, y + 0.7, best.z, 1.2);
+          api.fx.fire(best.x, y + 0.3, best.z, 6);
+          api.mark(best.x, best.z, { kind: 0, r0: 1, g0: 0.45, b0: 0.14, r: 3.2, life: 0.5 });
+          api.damage(best, 42 * pw, gu);
+          const es = api.unitState(best);
+          es.burn = { until: time + 4, dps: 10 * pw, source: gu.team };
+        }
+      }
+    }
+
+    /* the Order sends another mage */
+    for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
+      const at = st.respawn[team];
+      if (!at || time < at) continue;
+      if (api.teamUnits(team).some(isMage)) { delete st.respawn[team]; continue; }
+      const halls = api.teamBuildings(team).filter((b) => !b.dead && b.buildProgress >= 0.99);
+      const home = halls.find((b) => b.type === 'town_center') || halls.find((b) => b.type === 'castle') || halls[0];
+      if (!home) continue;
+      let spot = null;
+      for (let r = 2.6; r < 9 && !spot; r += 1.2) {
+        for (let a = 0; a < 8 && !spot; a++) {
+          const x = home.x + Math.cos((a / 8) * Math.PI * 2) * r;
+          const z = home.z + Math.sin((a / 8) * Math.PI * 2) * r;
+          if (api.passable(x, z) && api.headroom(x, z)) spot = [x, z];
+        }
+      }
+      if (!spot) continue;
+      const m = api.spawn(MAGE, team, spot[0], spot[1]);
+      delete st.respawn[team];
+      if (!m) continue;
+      api.fx.heal(m.x, m.y + 1.4, m.z, 5);
+      api.mark(m.x, m.z, { kind: 1, r0: 0.6, g0: 0.8, b0: 1, r: 2.6, life: 1 });
+      if (team === TEAM_PLAYER) api.say('A new Apprentice walks out of the hall', 'good');
     }
 
     /* scorch marks fade */
@@ -1001,12 +1245,12 @@ export const arcane = {
 
     /* skyfall, once a day, rank 6 */
     if ((st.rank || 1) >= 6) {
-      const day = Math.floor(api.time / DAY);
-      const ready = api.state.skyday !== day;
+      const left = skyUsesLeft(api, st.rank);
+      const ready = left > 0;
       list.push({
         icon: 'bolt',
         label: 'SKYFALL',
-        cost: ready ? 'once today' : 'tomorrow',
+        cost: ready ? `${left}/${SKYFALL_MAX} today` : 'tomorrow',
         enabled: ready,
         reason: 'The sky is already spent today',
         primary: true,
@@ -1051,7 +1295,7 @@ export const arcane = {
     return {
       icon: spell.icon,
       label: spell.name,
-      cost: spell.daily ? (api.state.skyday === Math.floor(api.time / DAY) ? 'spent' : '1/day')
+      cost: spell.daily ? (skyUsesLeft(api, st.rank) > 0 ? `${skyUsesLeft(api, st.rank)}/${SKYFALL_MAX} today` : 'spent')
         : `${spell.cost} mana`,
       enabled: ok.ok,
       reason: ok.why,
@@ -1128,10 +1372,9 @@ export const arcane = {
     } else {
       api.hud({ icon: 'monk', label: 'Arcane', value: 'no mage', tone: '' });
     }
-    const day = Math.floor(api.time / DAY);
     if (best && best.st.rank >= 6) {
-      const ready = api.state.skyday !== day;
-      api.hud({ icon: 'bolt', label: 'Skyfall', value: ready ? 'ready' : 'next day', tone: ready ? 'good' : '' });
+      const left = skyUsesLeft(api, best.st.rank);
+      api.hud({ icon: 'bolt', label: 'Skyfall', value: left > 0 ? `${left}/${SKYFALL_MAX} today` : 'next day', tone: left > 0 ? 'good' : '' });
     }
   },
 

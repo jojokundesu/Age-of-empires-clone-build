@@ -35,6 +35,11 @@ function edgePoint(e, b, pad, out) {
   }
   return out;
 }
+/* Health regeneration, one place, two layers. See Unit.update. */
+export const REGEN_LIMIT = 0.35;      // plain soldiers only recover a third of the wound
+export const REGEN_RATE = 0.9;        // hp per second while that is true
+export const REGEN_DELAY = 6;         // seconds since the last blow before any of it starts
+
 const _edge = [0, 0];
 /* scratch for Unit.strideIn(): the walls near the stride, copied out of the
    shared spatial-query buffer before isPassable() can overwrite it */
@@ -76,6 +81,7 @@ export class Entity {
     this.maxHp = 1;
     this.selected = false;
     this.hitFlash = 0;
+    this.hurtAt = -99;               // last time something landed (see regen)
     this.radius = 0.5;
     this.height = 1.8;
     this.lastAttacker = null;
@@ -136,6 +142,7 @@ export class Entity {
     const hpBefore = this.hp;
     this.hp = Math.max(0, this.hp - amount);
     this.hitFlash = Math.min(1, this.hitFlash + 0.55);
+    this.hurtAt = this.game ? this.game.time : 0;
     /* the man who swung learns from the blow, whether or not it kills */
     const dealt = hpBefore - this.hp;
     if (attacker && this.game && this.game.veterancy && dealt > 0) {
@@ -550,7 +557,25 @@ export class Unit extends Entity {
     const stats = this.stats();
     if (g.directControl?.unit === this) g.directControl.prepareUnit(this);
 
-    // passive regeneration
+    /* ---- health regeneration ----
+       Two layers, both deliberately small:
+
+         · *Field stitching.* Every living man who has not been hit for six
+           seconds knits himself back together, but only up to a third of his
+           wounds. A beaten soldier recovers enough to hold a wall; he does
+           not become a new man, and a fight still ends with dead soldiers.
+         · *Trained or gifted regeneration.* Berserkers, doctors and the
+           Champion's own perk heal past that cap and much faster -- that is
+           what those things are for, and it is the reason to buy them.
+
+       The universal layer used to not exist at all: a soldier at 4 hp stayed
+       at 4 hp for the rest of the match unless a monk came by, which read as
+       a missing system rather than a design. */
+    const woundCap = this.maxHp * REGEN_LIMIT;
+    if (this.hp < this.maxHp && g.time - (this.hurtAt ?? -99) > REGEN_DELAY) {
+      if (this.hp < woundCap) this.hp = Math.min(woundCap, this.hp + REGEN_RATE * dt);
+    }
+    // passive regeneration (trained: berserkers, doctors, mod units)
     const regen = this.type === 'berserk' ? (g.hasTech(this.team, 'berserkergang') ? 3.2 : 1.4) : (this.def.regen || 0);
     if (regen && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + regen * dt);
 

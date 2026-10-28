@@ -308,19 +308,30 @@ await check('SKYFALL: one tap, one pillar, one day spent', async () => {
   return `TC ${hit.before} → ${hit.hp}, flash ${hit.flash.toFixed(2)}, shake ${hit.shock.toFixed(2)}`;
 });
 
-await check('the day is spent, and the card says so', async () => {
-  const st = await page.evaluate(() => {
+await check('an Ascendant gets three skies a day, and the card counts them down', async () => {
+  /* 6.2: the once-a-day spell is three castings at rank 6, and the card has to
+     say how many are left rather than lying about tomorrow */
+  const after = await page.evaluate(() => {
     const a = window.__imperial;
     const g = a.game;
     const u = g.units.find((x) => x.type === 'mage_ascendant');
+    const arc = a.game.modHost.mods.get('arcane');
+    const sky = arc.mod.spells().find((s) => s.id === 'skyfall');
+    const tc = g.buildings.find((b) => b.team === 2 && b.type === 'town_center');
+    for (let i = 0; i < 2; i++) {
+      u.modState.arcane.mana = 1000;
+      arc.mod.castSpell(arc.api, u, sky, tc ? tc.x : u.x, tc ? tc.z : u.z);
+    }
     g.selection = [u];
     a.ui.refreshCommands(true);
     const card = [...document.querySelectorAll('#cmdGrid .cmdBtn')].find((b) => /SKYFALL/.test(b.textContent));
-    return { has: !!card, disabled: card && card.classList.contains('poor'), text: card && card.textContent.trim() };
+    return { has: !!card, disabled: card && card.classList.contains('poor'), text: card && card.textContent.trim(),
+      uses: arc.api.state.skyuses };
   });
-  assert(st.has, 'the SKYFALL card vanished instead of dimming');
-  assert(st.disabled, 'a spent day still offers a live SKYFALL card');
-  return st.text.replace(/\s+/g, ' ');
+  assert(after.uses === 3, `the sky was used ${after.uses} times, not three`);
+  assert(after.has, 'the SKYFALL card vanished instead of dimming');
+  assert(after.disabled, 'a spent day still offers a live SKYFALL card');
+  return after.text.replace(/\s+/g, ' ');
 });
 
 /* ------------------------------------------------------------------ hybrid */

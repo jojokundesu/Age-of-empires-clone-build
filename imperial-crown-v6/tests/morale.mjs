@@ -16,6 +16,7 @@ import { generateWorld } from '../src/sim/worldgen.js';
 import { Game } from '../src/sim/game.js';
 import { UNIT_DEFS } from '../src/sim/data.js';
 import { MORALE_MAX, MORALE_FLOOR } from '../src/sim/morale.js';
+import { REGEN_LIMIT } from '../src/sim/entities.js';
 
 let passed = 0;
 const failures = [];
@@ -321,6 +322,48 @@ check('supply sources are scanned once per tick, not per unit', () => {
   run(g, 4, 30);
   assert(scans <= 2 * 30, `${scans} scans for ${total} units in 4 s (should be one per team per tick)`);
   return `${scans} scans, ${total} units`;
+});
+
+/* ============================================================
+   health regeneration: two layers, both bounded
+   ============================================================ */
+console.log('\nHEALTH REGENERATION');
+
+check('a soldier recovers to a third of his wounds, and no further', () => {
+  const g = makeGame();
+  const u = placeAt(g, 'spearman', 1, g.playerBase.x + 9, g.playerBase.z + 9);
+  assert(u, 'spearman placed');
+  u.hp = u.maxHp * 0.1;
+  u.hurtAt = g.time;                     // wounded *now*
+  run(g, 3);
+  eq(Math.round(u.hp), Math.round(u.maxHp * 0.1), 'regeneration started inside the quiet window');
+  run(g, 60);
+  const cap = u.maxHp * REGEN_LIMIT;
+  assert(Math.abs(u.hp - cap) < 0.5, `expected a stop at the cap ${cap.toFixed(1)}, got ${u.hp.toFixed(1)}`);
+  assert(u.hp < u.maxHp, 'a plain soldier healed all the way, which is not the rule');
+  return `${Math.round(u.maxHp * 0.1)} → ${u.hp.toFixed(0)} of ${u.maxHp} hp, then it stops`;
+});
+
+check('a blow restarts the clock', () => {
+  const g = makeGame();
+  const u = placeAt(g, 'spearman', 1, g.playerBase.x + 9, g.playerBase.z + 9);
+  u.hp = u.maxHp * 0.2;
+  run(g, 12);
+  const healed = u.hp;
+  u.hurtAt = g.time;
+  run(g, 1);
+  assert(u.hp <= healed + 0.01, 'health climbed straight through the quiet window');
+  return 'hit at t, nothing heals for six seconds';
+});
+
+check('trained regeneration is not capped by the wound limit', () => {
+  const g = makeGame();
+  const u = placeAt(g, 'berserk', 1, g.playerBase.x + 9, g.playerBase.z + 9);
+  if (!u) return 'this civ has no berserker to test';
+  u.hp = u.maxHp * 0.35;
+  run(g, 14);
+  assert(u.hp > u.maxHp * REGEN_LIMIT + 1, `a berserker should heal past the cap, is at ${u.hp.toFixed(0)}`);
+  return `${u.hp.toFixed(0)}/${u.maxHp} hp past the soldier cap`;
 });
 
 /* ============================================================ */

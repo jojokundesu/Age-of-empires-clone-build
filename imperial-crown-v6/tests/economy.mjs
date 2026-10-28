@@ -192,6 +192,34 @@ check('a finished farm is food a villager can actually harvest', () => {
   return `${(before - farm.amount).toFixed(0)} food in 30 s`;
 });
 
+check('ordering villagers onto a farm pins that farm as their home', () => {
+  const g = makeGame('sandbox');
+  const [x, z] = openSpot(g, 'farm');
+  const farm = g.placeBuilding('farm', 1, x, z, true);
+  complete(farm);
+  const v = g.spawnUnitRaw('villager', 1, farm.x + 9, farm.z + 9);
+  g.setSelection([v]);
+  g.orderGather([v], farm);
+  assert.equal(v.homeNode, farm, 'the field the player pointed at is not the villager\'s home');
+  assert.equal(v.gatherTarget, farm, 'the villager was not sent to the field');
+  return 'the tapped field became homeNode and gatherTarget';
+});
+
+check('a farm is not abandoned for a closer bush', () => {
+  const g = makeGame('sandbox');
+  const [x, z] = openSpot(g, 'farm');
+  const farm = g.placeBuilding('farm', 1, x, z, true);
+  complete(farm);
+  const v = g.spawnUnitRaw('villager', 1, farm.x + 4, farm.z + 4);
+  /* a berry bush two metres away, with food in it: the field must still win */
+  const bush = g.resources.find((r) => r.resKind === 'food' && !r.dead) || null;
+  if (bush) { bush.x = farm.x + 2; bush.z = farm.z + 2; bush.amount = 400; }
+  g.orderGather([v], farm);
+  run(g, 8);
+  assert.equal(v.gatherTarget, farm, `he wandered to ${v.gatherTarget && v.gatherTarget.resKind === 'food' ? 'another food source' : 'nothing'}`);
+  return 'the ordered field keeps the farmer';
+});
+
 check('a harvested field is resown for wood, not destroyed', () => {
   const g = makeGame();
   const [x, z] = openSpot(g, 'farm');

@@ -105,8 +105,15 @@ export class Input {
     const o = out || this._ground;
     o[0] = o[1] = o[2] = 0;
     const hit = this.cam.pickGround(nx, ny, this.game.heightAt, o);
+    /* Whether the finger actually landed on the ground is reported, not
+       guessed at. The old fallback ("the camera's target") put the point
+       five to ten metres away from the finger whenever the finger was on
+       sky, a panel, or past the horizon -- and a building then appeared
+       somewhere the player had not aimed at. Callers that must be literal
+       (placing, gathering, movement orders) check `_groundHit` and refuse
+       instead of using a point nobody chose. */
+    this._groundHit = !!hit;
     if (!hit) {
-      // fall back to the plane through the camera target
       const t = this.cam.target;
       o[0] = t[0]; o[1] = t[1]; o[2] = t[2];
     }
@@ -369,6 +376,40 @@ export class Input {
     this.pinch = null;
   }
 
+  /**
+   * Keep the building ghost under the finger.
+   *
+   * The ghost used to be a still picture: it was drawn wherever the camera
+   * happened to be centred when the menu card was tapped, and only a wall
+   * drag ever moved it. So the player saw a green square in one place,
+   * tapped another, and the hall went somewhere else -- with the ghost left
+   * sitting five to ten metres from the build. The ghost now follows the
+   * finger every frame, in the spell reticle's colour language (green where
+   * the footprint is legal, red where it is not and why), and the tap places
+   * exactly that point.
+   */
+  updatePlacementGhost(clientX, clientY) {
+    const p = this.game && this.game.placing;
+    if (!p || p.line) return null;
+    let cx = clientX, cy = clientY;
+    if (cx === undefined || cy === undefined) {
+      const ptr = this.pointers.size ? [...this.pointers.values()][0] : null;
+      if (ptr) { cx = ptr.x; cy = ptr.y; }
+      else {
+        const r = this.rect();
+        cx = r.left + r.width * 0.5; cy = r.top + r.height * 0.42;
+      }
+    }
+    const g = this.groundAt(cx, cy, this._ghost || (this._ghost = [0, 0, 0]));
+    if (!this._groundHit) { p.ghostInvalid = 'sky'; return p.ghost; }
+    const spot = this.game.canPlaceAt(p.type, 1, g[0], g[2], { ignoreUnits: true });
+    p.ghost = { x: g[0], z: g[2], ok: spot.ok, reason: spot.reason };
+    p.ghostInvalid = null;
+    p.x = g[0]; p.z = g[2]; p.y = g[1];
+    p.valid = spot.ok;
+    return p.ghost;
+  }
+
   /* ---------------- wall line ---------------- */
   _wallDrawing() {
     const p = this.game && this.game.placing;
@@ -513,7 +554,23 @@ export class Input {
     // 2. placement mode
     if (game.placing) {
       const p = game.placing;
-      const spot = game.canPlaceAt(p.type, 1, g[0], g[2], { ignoreUnits: true });
+      /* a wall is drawn, not ghosted: the tap places one segment wherever the
+         finger landed, and a drag lays the whole run (see _commitWall) */
+      if (p.line) {
+        if (!this._groundHit) { this.ui?.toast('Tap the ground to place the wall', 'warn'); return; }
+      } else {
+        /* the ghost is refreshed from the tap itself, so the preview and the
+           placement can never disagree by even one frame */
+        const ghost = this.updatePlacementGhost(x, y);
+        if (ghost) { g[0] = ghost.x; g[2] = ghost.z; }
+        if (!ghost || !this._groundHit) {
+          this.ui?.toast('Tap the ground to place the building', 'warn');
+          this.audio?.play?.('warn');
+          return;
+        }
+      }
+      const gx = g[0], gz = g[2];
+      const spot = game.canPlaceAt(p.type, 1, gx, gz, { ignoreUnits: true });
       if (!spot.ok) {
         this.ui?.toast(spot.reason === 'blocked' ? 'Something is already there'
           : spot.reason === 'water' ? 'Cannot build in the water'
@@ -624,6 +681,21 @@ export class Input {
         }
       }
       if (handled) { game.marker(building.x, building.z, { r: 2, r0: 0.4, g0: 0.8, b0: 1 }); return true; }
+    }
+    /* A farm (or any food building) is a workplace: tapping it with villagers
+       selected sends them to harvest it. This was the missing branch -- the
+       order fell through to "select the field", which is why feeding a town
+       from farms felt like a fight with the interface. */
+    const farm = building.def && building.def.resKind && (building.amount > 0) && building.buildProgress >= 0.99;
+    if (farm) {
+      const crew = villagers.length ? villagers : own.filter((u) => u.kind === 'unit' && u.type === 'villager');
+      if (crew.length) {
+        game.orderGather(crew, building);
+        game.marker(building.x, building.z, { r: 2.1, r0: 0.5, g0: 0.95, b0: 0.5 });
+        this.audio?.play?.('order');
+        this.ui?.toast(`${crew.length} villager${crew.length > 1 ? 's' : ''} to the ${building.def.name}`, 'info');
+        return true;
+      }
     }
     if (villagers.length && building.hp < building.maxHp && building.buildProgress >= 1) {
       game.orderRepair(villagers, building);
@@ -769,6 +841,8 @@ export class Input {
       if (this.audio) this.audio.setListener(this.cam.eye[0], this.cam.eye[2]);
       return;
     }
+    /* the building ghost follows the finger (see updatePlacementGhost) */
+    if (this.game.placing) this.updatePlacementGhost();
     // fling panning: a flick keeps the map gliding and decays smoothly
     if (this.fling && this.pointers.size === 0) {
       const f = this.fling;

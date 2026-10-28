@@ -2714,11 +2714,18 @@ export class Game {
   /** Add a fading ground ring. */
   marker(x, z, opts = {}) {
     const m = this.groundMarkers;
-    if (m.length > 24) m.shift();
+    /* `hold` marks are the ones that *stay*: a sheet of ice under a frozen
+       area has to be on the ground for the spell's whole duration, and a
+       rotating buffer of 24 marks used to drop it in a single skirmish. */
+    if (m.length > 64) {
+      let victim = 0;
+      for (let i = 0; i < m.length; i++) if (!m[i].hold) { victim = i; break; }
+      m.splice(victim, 1);
+    }
     m.push({
       x, z, y: opts.y !== undefined ? opts.y : this.heightAt(x, z),
       r: opts.r || 1.4, life: opts.life || 0.75, t: 0,
-      kind: opts.kind || 1,
+      kind: opts.kind || 1, hold: !!opts.hold,
       r0: opts.r0 ?? 0.55, g0: opts.g0 ?? 0.95, b0: opts.b0 ?? 0.7
     });
   }
@@ -2837,6 +2844,11 @@ export class Game {
         else { u.carry.kind = null; u.carry.amount = 0; }
       }
       u.gatherTarget = node;
+      /* The node the player actually pointed at is the villager's home. It
+         used to be recorded only for scenery, so a farm -- which is a
+         building -- was picked from the ground each time, and a farm next to
+         a berry bush was worth complaining about. */
+      u.homeNode = node;
       u.lastGatherKind = node.resKind;
       u.state = STATE.GATHER;
       u.buildTarget = null;

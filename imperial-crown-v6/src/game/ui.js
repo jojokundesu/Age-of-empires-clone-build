@@ -746,11 +746,15 @@ export class UI {
           g.placing = {
             type, x: this.camera.target[0], z: this.camera.target[2],
             y: g.heightAt(this.camera.target[0], this.camera.target[2]),
-            footprint: def.size || 3, valid: true,
+            footprint: def.size || 3, valid: false, ghost: null,
             /* walls (and mod traps) are drawn, not tapped: a drag lays the run */
             line: !!def.wall || !!def.dragLine, cells: null,
             builders: villagers.slice()   // the crew that opened the menu
           };
+          /* the ghost is seeded from the ground under the middle of the view
+             and then follows the finger; a stale picture here is what made
+             placement feel like a guess */
+          if (!g.placing.line) this.input?.updatePlacementGhost?.();
           this.toast(def.wall ? `Drag to draw a wall, tap for one ${def.name}` : `Tap the ground to place the ${def.name}`, 'gold');
           this._adHocUntil = 0;
           this.sig = '';
