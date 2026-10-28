@@ -248,7 +248,8 @@ try {
     assert.equal(book.shelf, true, 'the spellbook vanished after casting');
     assert.ok(book.spells.length >= 11, 'only ' + book.spells.length + ' spells left');
     assert.ok(book.spells.includes('fireball'), 'Fireball disappeared with SKYFALL');
-    assert.match(book.sky, /tomorrow/i, 'the spent daily spell says "' + book.sky + '"');
+    /* 6.2: an Ascendant gets three castings a day, so one cast leaves two */
+    assert.match(book.sky, /2 left/i, 'the daily spell count says "' + book.sky + '"');
   });
   assert.ok(await page.evaluate(() => window.__imperial.saveMatch()));
   const mode = await page.evaluate(() => JSON.parse(localStorage.getItem('imperial-crown-v6-save')).mods);
