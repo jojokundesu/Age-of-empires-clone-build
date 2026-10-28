@@ -350,12 +350,6 @@ export class Realm {
     return clamp(70 + avg * 0.55, 70, 100);
   }
 
-  /** Extra favour for a golden age, paid in the same loop as the base trickle. */
-  favorBonus(team) {
-    const s = this.teams.get(team);
-    return s && s.golden ? 0.4 : 0;
-  }
-
   band(team, estate) {
     const s = this.teams.get(team);
     return bandOf(s ? s[estate] : 50);
@@ -546,8 +540,6 @@ export class Realm {
     s.commons = clamp(s.commons + 2, 0, 100);
     s.unrestN = Math.max(0, s.unrestN - 25);
     s.endowCd = 80;
-    const st = g.teams.get(team);
-    if (st) st.favor = Math.min(400, st.favor + 25);
     if (team === P) {
       g.notify('Titles and endowments granted — the nobility rally', 'good');
       g.sound?.play('complete');
@@ -704,10 +696,6 @@ export class Realm {
         if (team === P) g.notify('The golden age fades', 'info');
         this._emit(team, 'golden_end', {});
       }
-
-      /* favour from a devoted realm */
-      const bonus = this.favorBonus(team);
-      if (bonus) g.teams.get(team).favor = Math.min(400, g.teams.get(team).favor + bonus * step);
 
       /* A mob with nowhere to go does not stand in a field. A rioter that
          has beaten its way through the yard looks around and marches on the

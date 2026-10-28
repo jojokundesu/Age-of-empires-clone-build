@@ -266,7 +266,6 @@ await check('an officer of rank II extends supply to his men', async () => {
     window.__stepSim(0.4);
     const k = window.__unit(kid), s = window.__unit(sid);
     g.teams.get(1).age = 2;
-    g.teams.get(1).favor = 300;
     /* appoint() returns the office record, which holds the unit, which holds
        the game: never hand that to page.evaluate, it cannot be serialised */
     const ok = !!g.court.appoint(1, 'marshal', k).ok;

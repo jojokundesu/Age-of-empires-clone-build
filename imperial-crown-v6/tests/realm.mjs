@@ -218,7 +218,7 @@ check('a fully built realm with a court can actually reach a golden age', () => 
   const monk = g.spawnUnitRaw('monk', TEAM_PLAYER, b.x + 2, b.z + 2);
   const knight = g.units.find((u) => u.type === 'knight' && u.team === TEAM_PLAYER);
   const st = g.teams.get(TEAM_PLAYER);
-  st.favor = 400; st.res.gold = 900;
+  st.res.gold = 900;
   g.court.appoint(TEAM_PLAYER, 'chancellor', v);
   g.court.appoint(TEAM_PLAYER, 'hierophant', monk);
   g.court.appoint(TEAM_PLAYER, 'marshal', knight);
@@ -359,17 +359,15 @@ check('a feast lifts both estates and costs real food and gold', () => {
   assert(!again.ok, 'two feasts in a row');
 });
 
-check('endowments lift the nobility and pay favour', () => {
+check('endowments lift the nobility', () => {
   const g = fresh();
   const s = g.realm.state(TEAM_PLAYER);
   const st = g.teams.get(TEAM_PLAYER);
   st.res.gold = 600;
   s.nobles = 40;
-  const before = st.favor;
   const r = g.realm.endow(TEAM_PLAYER);
   assert(r.ok, 'endowment refused: ' + r.reason);
   assert(s.nobles > 48, 'no noble lift');
-  assert(st.favor > before, 'no favour from the endowment');
 });
 
 check('both estates devoted starts a golden age, and it can end', () => {

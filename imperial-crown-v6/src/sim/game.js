@@ -32,76 +32,6 @@ export const TEAM_ENEMY = 2;
 const RES_KEYS = ['food', 'wood', 'gold', 'stone'];
 const FOW = WORLD.fowCells;
 
-/* ============================================================
-   DECREES — the council's standing offers. Each one is a short,
-   decisive swing rather than a passive bonus, so they reward timing:
-   save favour for the push you actually want to make.
-   ============================================================ */
-const DECREE_LIST = [
-  {
-    id: 'harvest', name: 'Harvest Festival', icon: 'leaf', cost: 40, age: 0,
-    desc: 'All villagers gather 40% faster for 90 s.',
-    apply(g, st, team) {
-      g.addBuff(team, 'gather', 1.4, 90, 'Harvest Festival');
-      for (const u of g.units) {
-        if (!u.dead && u.team === team && u.type === 'villager') g.fx.glowPulse(u.x, u.y + 0.6, u.z, 0.5, 1.0, 0.6);
-      }
-    }
-  },
-  {
-    id: 'rally', name: 'War Rally', icon: 'sword', cost: 55, age: 1,
-    desc: 'Every soldier deals 30% more damage for 60 s.',
-    apply(g, st, team) {
-      g.addBuff(team, 'attack', 1.3, 60, 'War Rally');
-      for (const u of g.units) {
-        if (!u.dead && u.team === team && u.def.attack > 0) g.fx.sparks(u.x, u.y + 1.2, u.z, 3, [1, 0.75, 0.35]);
-      }
-    }
-  },
-  {
-    id: 'forced_march', name: 'Forced March', icon: 'boot', cost: 45, age: 1,
-    desc: 'Your army moves 35% faster for 50 s.',
-    apply(g, st, team) {
-      g.addBuff(team, 'speed', 1.35, 50, 'Forced March');
-    }
-  },
-  {
-    id: 'blessing', name: 'Field Blessing', icon: 'heart', cost: 60, age: 2,
-    desc: 'Heal every unit to full and grant +2 armour for 70 s.',
-    apply(g, st, team) {
-      let any = false;
-      for (const u of g.units) {
-        if (u.dead || u.team !== team) continue;
-        if (u.hp < u.maxHp) { u.heal(u.maxHp); any = true; }
-        g.fx.heal(u.x, u.y + 0.9, u.z, 2);
-      }
-      g.addBuff(team, 'armor', 2, 70, 'Field Blessing');
-      g.statsVersion++;
-      return any || true;
-    }
-  },
-  {
-    id: 'conscription', name: 'Conscription', icon: 'people', cost: 80, age: 2, once: true,
-    desc: 'Instantly raise 6 spearmen at your town centre.',
-    apply(g, st, team) {
-      const tc = g.buildings.find((b) => !b.dead && b.team === team && b.type === 'town_center');
-      if (!tc) return false;
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        const u = g.spawnUnitRaw('spearman', team, tc.x + Math.cos(a) * 2.6, tc.z + Math.sin(a) * 2.6);
-        if (u) { u.state = STATE.IDLE; g.fx.dust(u.x, u.y, u.z, 4, 0.8); }
-      }
-      return true;
-    }
-  },
-  {
-    id: 'golden_age', name: 'Golden Age', icon: 'crown', cost: 120, age: 3, once: true,
-    desc: 'For 120 s: +20% damage, gathering and movement.',
-    apply(g, st, team) {
-      g.addBuff(team, 'all', 1.2, 120, 'Golden Age');
-    }
-  }
-];
 
 export class Game {
   constructor(opts) {
@@ -170,7 +100,6 @@ export class Game {
        to them until they are attacked. This map remembers who drew blood. */
     this.rebelGrudge = new Map();
     this.courtArmed = null;
-    this.courtWrit = null;
 
     this.units = [];
     this.buildings = [];
@@ -264,10 +193,7 @@ export class Game {
         losses: 0,
         gathered: 0,
         trained: 0,
-        favor: 0,
-        favorRate: 1,
         buffs: [],           // { kind, mul, time, name }
-        decreesUsed: {},
         resigned: false
       });
     }
@@ -1379,8 +1305,8 @@ export class Game {
     const st = {
       civ: null, res: { food: 0, wood: 0, gold: 0, stone: 0 }, techs: new Set(),
       age: 0, ageResearch: null, pop: 0, popCap: 0, popUsed: 0, kills: 0, losses: 0,
-      gathered: 0, trained: 0, favor: 0, favorRate: 0, buffs: [],
-      decreesUsed: {}, resigned: false, rebel: true
+      gathered: 0, trained: 0, buffs: [],
+      resigned: false, rebel: true
     };
     this.teams.set(team, st);
     return st;
@@ -1484,7 +1410,7 @@ export class Game {
   }
 
   /**
-   * The multiplier on a man's speed: decrees, the court, the mods, his own
+   * The multiplier on a man's speed: the court, the mods, his own
    * nerve, the season and the sky. Six systems consulted per unit per tick,
    * so the answer is remembered for the tick -- none of them can change
    * twice inside one thirtieth of a second.
@@ -1518,7 +1444,7 @@ export class Game {
   }
 
   /* ==========================================================
-     IMPERIAL DECREES (favour)
+     STANDING BONUSES (realm events, omen, the golden age)
      ========================================================== */
   buffMul(team, kind) {
     const st = this.teams.get(team);
@@ -1535,9 +1461,6 @@ export class Game {
     }
     return m;
   }
-
-  /** The council's standing offers. Cheap data so the HUD can list them. */
-  get decrees() { return DECREE_LIST; }
 
   /** Jump the day cycle (0-24h). Used by saves, the shot tool and tests. */
   setTimeOfDay(hour) {
@@ -1572,53 +1495,12 @@ export class Game {
   get nightRaidMul() { return 1 + 0.16 * (1 - this.daylight); }
   get sightDayMul() { return 0.84 + 0.16 * this.daylight; }
 
-  /** Everything the council panel needs to explain a decree's state. */
-  /** What a decree costs this realm, after the Hierophant's discount. */
-  decreePrice(team, def) {
-    if (!def) return 0;
-    return Math.round(def.cost * (this.court ? this.court.decreeDiscount(team) : 1));
-  }
-
-  decreeState(team, id) {
-    const st = this.teams.get(team);
-    const def = DECREE_LIST.find((d) => d.id === id);
-    if (!st || !def) return { ok: false, reason: 'Unknown decree' };
-    if (def.age !== undefined && st.age < def.age) return { ok: false, reason: `Needs ${AGES[def.age].name}`, needsAge: def.age };
-    if (def.once && st.decreesUsed[id]) return { ok: false, reason: 'Already proclaimed', used: true };
-    const price = this.decreePrice(team, def);
-    if (st.favor < price) return { ok: false, reason: `Needs ${price} favour`, short: price - Math.floor(st.favor), price };
-    return { ok: true, reason: '', affordable: true, price };
-  }
-
   /** 0..1 progress of a running buff (for the HUD countdown bars). */
   buffProgress(team, name) {
     const st = this.teams.get(team);
     const b = st && st.buffs ? st.buffs.find((x) => x.name === name) : null;
     if (!b || !b.duration) return 0;
     return Math.max(0, Math.min(1, b.time / b.duration));
-  }
-
-  activateDecree(team, id) {
-    const st = this.teams.get(team);
-    const def = DECREE_LIST.find((d) => d.id === id);
-    if (!st || !def) return { ok: false, reason: 'Unknown decree' };
-    const price = this.decreePrice(team, def);
-    if (st.favor < price) return { ok: false, reason: `Needs ${price} favour` };
-    if (def.once && st.decreesUsed[id]) return { ok: false, reason: 'Already proclaimed' };
-    st.favor -= price;
-    st.decreesUsed[id] = (st.decreesUsed[id] || 0) + 1;
-    if (this.court) this.court.onDecree(team, price);
-    const result = def.apply(this, st, team);
-    if (result === false) {
-      st.favor += price;                    // refund a no-op
-      return { ok: false, reason: 'Nothing to affect' };
-    }
-    if (team === TEAM_PLAYER) {
-      this.notify(def.name + ': ' + def.desc, 'good');
-      this.sound.play('horn');
-    }
-    this.onEvent('decree', { team, id });
-    return { ok: true, msg: def.name };
   }
 
   addBuff(team, kind, mul, time, name) {
@@ -1905,6 +1787,57 @@ export class Game {
     return words[Math.round(t / (Math.PI / 4)) % 8];
   }
 
+  /**
+   * The nearest thing of mine on the map -- the roof a villager runs to and
+   * the yard a defender is leashed to.
+   */
+  nearestOwnBuilding(team, x, z) {
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (b.dead || b.team !== team) continue;
+      const d = (b.x - x) ** 2 + (b.z - z) ** 2;
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  /**
+   * Sound the alarm in a circle.
+   *
+   * The old rule was one line long: the man being hit would fight back, and
+   * his neighbours would keep staring at the horizon. An enemy could therefore
+   * stand between six spearmen and burn down the hall they were guarding,
+   * which is exactly what the player saw. Any hostile within `radius` of the
+   * alarm is now treated as visible to every idle defender and every villager
+   * inside it: soldiers and archers acquire the attacker, villagers run for
+   * the nearest roof. It is called on every hit, not once per victim.
+   */
+  raiseAlarm(x, z, team, attacker, radius = 0) {
+    if (!attacker || attacker.dead) return 0;
+    const r = radius || (attacker.kind === 'building' ? 30 : 24);
+    const r2 = r * r;
+    let called = 0;
+    for (let i = 0; i < this.units.length; i++) {
+      const u = this.units[i];
+      if (u.dead || u.team !== team || u.garrisoned) continue;
+      if ((u.x - x) ** 2 + (u.z - z) ** 2 > r2) continue;
+      if (u.type === 'villager') {
+        /* a peasant's business is somewhere else, quickly */
+        if (u._fleeFrom !== attacker) { u._fleeFrom = attacker; u._fleeT = this.time; }
+        continue;
+      }
+      if (!(u.def.attack > 0)) continue;
+      if (u.state === STATE.ATTACK && u.target && !u.target.dead) continue;
+      if (u.state !== STATE.IDLE && u.state !== STATE.MOVE && u.state !== STATE.STAND) continue;
+      u.target = attacker;
+      u.state = STATE.ATTACK;
+      u.alarmedAt = this.time;
+      called++;
+    }
+    return called;
+  }
+
   alertAttacked(entity, attacker) {
     this.noteAttack(entity, attacker);
     if (entity.team === TEAM_PLAYER && this.time - (this._lastAlert || -99) > 6) {
@@ -1912,12 +1845,13 @@ export class Game {
       this.notify('Your forces are under attack!', 'bad');
       if (this.onAlarm) this.onAlarm(entity);
     }
-    // pull nearby idle defenders in
-    if (entity.kind === 'unit' && entity.state === STATE.IDLE) {
-      if (attacker && !attacker.dead && entity.def.attack > 0) {
-        entity.target = attacker;
-        entity.state = STATE.ATTACK;
-      }
+    /* Whoever is at the sharp end of this -- a soldier, a villager, or the
+       town hall itself -- every idle man of the same crown within earshot
+       comes running. A building under attack rings louder than a man. */
+    if (attacker && !attacker.dead) this.raiseAlarm(entity.x, entity.z, entity.team, attacker);
+    if (entity.kind === 'unit' && entity.state === STATE.IDLE && entity.def.attack > 0) {
+      entity.target = attacker;
+      entity.state = STATE.ATTACK;
     }
   }
 
@@ -1930,7 +1864,6 @@ export class Game {
     if (killer) {
       killer.kills++;
       // every fallen enemy is a small offering to the court
-      killer.favor = Math.min(400, killer.favor + 0.6);
     }
     if (this.court) this.court.onKill(attacker, unit);
     if (this.veterancy) this.veterancy.onKill(attacker, unit);
@@ -2018,7 +1951,7 @@ export class Game {
     const st = this.teams.get(team);
     if (!st) return null;
     return {
-      civ: st.civ, res: { ...st.res }, favor: st.favor,
+      civ: st.civ, res: { ...st.res },
       age: st.age, techs: [...st.techs], gathered: st.gathered,
       trained: st.trained, kills: st.kills, losses: st.losses,
       buffs: (st.buffs || []).map((b) => ({ ...b }))
@@ -2030,7 +1963,6 @@ export class Game {
     if (!st || !data) return;
     if (data.civ) st.civ = data.civ;
     if (data.res) Object.assign(st.res, data.res);
-    st.favor = data.favor || 0;
     st.age = data.age || 0;
     st.techs = new Set(data.techs || []);
     st.gathered = data.gathered || 0;
@@ -2255,18 +2187,10 @@ export class Game {
     if (this.court) this.court.update(dt);
     if (this.realm) this.realm.update(dt);
 
-    // favour and temporary decree buffs
+    // temporary standing bonuses (realm events, the golden age)
     for (const team of this.teamIds) {
       const st = this.teams.get(team);
       if (!st) continue;
-      // favour trickles in; shrines and monasteries speed it up, kills top it up
-      let rate = 0.5 + st.age * 0.18;
-      for (const b of this.buildings) {
-        if (b.dead || b.team !== team) continue;
-        if (b.type === 'outpost_shrine') rate += 0.35;
-        else if (b.type === 'monastery') rate += 0.25;
-      }
-      st.favor = Math.min(400, st.favor + rate * dt);
       if (st.buffs.length) {
         let ended = false;
         for (let i = st.buffs.length - 1; i >= 0; i--) {
@@ -2280,7 +2204,7 @@ export class Game {
         }
         /* A buff's multipliers do not change while it runs -- only its clock
            does. Bumping the stats version every tick invalidated every unit's
-           cached stats thirty times a second for as long as any decree was
+           cached stats thirty times a second for as long as any buff was
            live, which at four crowns is the entire late game. */
         if (ended) this.statsVersion++;
       }
@@ -2575,7 +2499,7 @@ export class Game {
      ----------------------------------------------------------
      When a crown falls, its lands do not become a wasteland and
      its army does not evaporate: the crown that broke it *inherits*
-     them. Treasury, techs, standing decrees and every soldier who
+     them. Treasury, techs, standing bonuses and every soldier who
      is still breathing change allegiance -- with their hard-earned
      ranks intact, because a veteran who has survived four battles
      is exactly the asset a conqueror is fighting for.
@@ -2654,7 +2578,7 @@ export class Game {
     if (!this.chronicle) this.chronicle = [];
     this.chronicle.push({ team, heir: heir && heir !== team ? heir : null, time: this.time });
     const loser = this.teams.get(team);
-    const spoils = { heir, resources: null, techs: [], units: 0, favor: 0, buffs: 0 };
+    const spoils = { heir, resources: null, techs: [], units: 0, buffs: 0 };
     const target = heir && heir !== team && this.teams.has(heir) ? heir : null;
     if (target && loser) {
       const winner = this.teams.get(target);
@@ -2666,10 +2590,6 @@ export class Game {
         loser.res[k] = 0;
         spoils.resources[k] = Math.round(amount);
       }
-      /* favour */
-      spoils.favor = Math.round(loser.favor || 0);
-      winner.favor = Math.min(400, (winner.favor || 0) + (loser.favor || 0));
-      loser.favor = 0;
       /* every technology the fallen crown had researched */
       for (const tech of loser.techs) {
         if (!winner.techs.has(tech)) { winner.techs.add(tech); spoils.techs.push(tech); }
@@ -3012,6 +2932,23 @@ export class Game {
       return null;
     }
     if (this.ageOf(team) < (opts.ageRequired ?? 0)) return null;
+    /* One rule for every caller. The AI, the wall planner, the campaign
+       scripts and the player all used to have their own idea of what a legal
+       footprint was, so a building could land on a woodpile or on the heads of
+       four spearmen and then jitter while the collision system sorted it out.
+       The ghost and the real building now ask the same question, and a unit
+       standing in the way is stepped aside rather than refusing the order. */
+    /* `free` is the scripting escape hatch -- campaign set-pieces, the
+       scenario tests and the AI's own hand-placed opening -- so only paid
+       placements are checked. What the player buys is always checked. */
+    if (!opts.force && !opts.free) {
+      const spot = this.canPlaceAt(type, team, x, z, { ignoreUnits: true });
+      if (!spot.ok) {
+        if (team === TEAM_PLAYER) this.notify(`Cannot build here: ${spot.reason}`, 'bad');
+        return null;
+      }
+    }
+    this._clearFootprint(type, x, z);
     if (!opts.free) this.spend(team, cost);
     const b = new Building(this, type, team, x, z, opts.instant);
     b.facing = opts.facing ?? (Math.atan2(-x, -z));
@@ -3022,7 +2959,7 @@ export class Game {
   }
 
   /** Is a building ghost position legal? */
-  canPlaceAt(type, team, x, z) {
+  canPlaceAt(type, team, x, z, opts = {}) {
     const def = BUILDING_DEFS[type];
     const half = (def.size || 3) * 0.5;
     if (!this.isInside(x, z)) return { ok: false, reason: 'edge' };
@@ -3054,15 +2991,63 @@ export class Game {
       const bh = (b.def.size || 3) * 0.5;
       if (Math.abs(b.x - x) < bh + half - 0.25 && Math.abs(b.z - z) < bh + half - 0.25) return { ok: false, reason: 'blocked' };
     }
+    /* Resources block with their *trunk*, not with their canopy.
+       A spruce keeps its collision radius for pathing, but only the stem is
+       solid: measure the crown and half a forest becomes unbuildable and the
+       player is told "blocked" by a tree he can see is twelve metres away. */
     if (!def.wall) {
       const near = this.resourceSpatial.query(x, z, half + 4);
       for (let i = 0; i < near.length; i++) {
         const r = near[i];
         if (r.dead) continue;
-        if (dist2(r.x, r.z, x, z) < (half + r.radius * r.scale + 0.4) ** 2) return { ok: false, reason: 'resource' };
+        const trunk = Math.max(0.5, (r.trunkRadius || 0.5));
+        if (dist2(r.x, r.z, x, z) < (half + trunk) ** 2) return { ok: false, reason: 'resource' };
+      }
+    }
+    /* A man is not a wall. He is stepped aside on placement, but the ghost has
+       to know he is there, or the player watches a hall appear on top of four
+       villagers and calls it broken. */
+    if (!opts.ignoreUnits) {
+      for (let i = 0; i < this.units.length; i++) {
+        const u = this.units[i];
+        if (u.dead || u.garrisoned || u.team === 0) continue;
+        if (Math.abs(u.x - x) < half + 0.35 && Math.abs(u.z - z) < half + 0.35) return { ok: false, reason: 'unit' };
       }
     }
     return { ok: true, reason: '' };
+  }
+
+  /**
+   * Step bystanders out of a new footprint.
+   *
+   * Refusing to build because a villager is standing on the spot is the kind
+   * of rule that reads as a bug on a phone -- the player has already chosen
+   * the place. The man is shoved to the nearest free ground instead.
+   */
+  _clearFootprint(type, x, z) {
+    const def = BUILDING_DEFS[type];
+    if (!def) return;
+    const half = (def.size || 3) * 0.5;
+    for (let i = 0; i < this.units.length; i++) {
+      const u = this.units[i];
+      if (u.dead || u.garrisoned || u.team === 0 || u.isKing) continue;
+      if (Math.abs(u.x - x) >= half + 0.35 || Math.abs(u.z - z) >= half + 0.35) continue;
+      const a = Math.atan2(u.z - z, u.x - x) || (i * 1.7);
+      let spot = null;
+      for (let r = half + 1.2; r < half + 7 && !spot; r += 1.1) {
+        for (let k = 0; k < 8 && !spot; k++) {
+          const th = a + (k * Math.PI) / 4;
+          const px = x + Math.cos(th) * r, pz = z + Math.sin(th) * r;
+          if (this.isInside(px, pz) && (!this.nav || this.isPassable(px, pz))) spot = [px, pz];
+        }
+      }
+      if (!spot) spot = [x + Math.cos(a) * (half + 1.4), z + Math.sin(a) * (half + 1.4)];
+      u.x = spot[0]; u.z = spot[1];
+      u.path = null; u.targetPos = null;
+      if (u.state === STATE.MOVE) u.state = STATE.IDLE;
+      if (u.updateY) u.updateY();
+      else u.y = this.heightAt(u.x, u.z);
+    }
   }
 
   /* ---------------------------------------------------------------

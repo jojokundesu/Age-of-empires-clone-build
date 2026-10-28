@@ -41,7 +41,6 @@ function makeGame(seed = 5150) {
   g.worldTime = 12;
   for (const st of g.teams.values()) {
     st.res.food = st.res.wood = st.res.gold = st.res.stone = 5000;
-    st.favor = 200;
     st.age = 2;
   }
   return g;

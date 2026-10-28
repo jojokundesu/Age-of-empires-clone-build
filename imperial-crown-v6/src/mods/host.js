@@ -157,6 +157,13 @@ export class ModHost {
        resources were there, and nothing was ever produced. */
     for (const [id, def] of Object.entries(units)) {
       if (!Array.isArray(def.trainAt)) continue;
+      /* A `hidden` unit is not a thing you buy. The Arcane Order's five
+         higher ranks are promotions of the mage -- they exist so the game can
+         swap the body when he rises -- but every one of them also declared the
+         Town Centre as a training hall, so the card offered six identical
+         mages, and a player could simply buy the Ascendant. Only units that
+         are not hidden join a building's queue. */
+      if (def.hidden) continue;
       for (const host of def.trainAt) {
         const hd = BUILDING_DEFS[host];
         if (!hd || !Array.isArray(hd.trains)) continue;
@@ -198,7 +205,7 @@ export class ModHost {
         }
       }
       for (const [id, def] of Object.entries(entry.mod.units || {})) {
-        if (!Array.isArray(def.trainAt)) continue;
+        if (!Array.isArray(def.trainAt) || def.hidden) continue;
         for (const host of def.trainAt) {
           const hd = BUILDING_DEFS[host];
           if (!hd || !Array.isArray(hd.trains)) continue;

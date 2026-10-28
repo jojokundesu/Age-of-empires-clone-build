@@ -9,14 +9,13 @@
      · watching a friend die within ten paces is a shock;
      · a kill within ten paces is a lift.
 
-   At low morale a unit hits softer and walks slower. At zero it
-   *breaks*: it drops its orders, turns its back and runs for the
-   nearest supply, and nothing the player taps will turn it around
-   until it has recovered. Running does not save it either -- a broken
-   man is slower than a formed one and takes half again as much damage.
-   That is the whole point of the system: a raid that outruns its tents
-   loses its teeth, and a defended town beats an army that cannot feed
-   itself.
+   Morale is a *reward*, never a punishment that takes the game away
+   from the player. A well supplied, victorious army hits a little
+   harder; an army that has outrun its tents simply stops getting the
+   bonus. It never drops below MORALE_FLOOR, no unit ever routs, and no
+   soldier ever refuses an order because of it -- the previous version
+   could empty a bar in ninety seconds and turn an entire army round in
+   the middle of a march, which is not a mechanic, it is a fault.
 
    Supply is deliberately simple to read: a radius around a building,
    drawn on the ground by the renderer, extended by a cheap Supply Tent
@@ -28,8 +27,12 @@ import { clamp } from '../core/math.js';
 const STATE_ROUT = 'rout';
 
 export const MORALE_MAX = 100;
-export const ROUT_AT = 8;          // below this a unit breaks
-export const RECOVER_AT = 45;      // and this is what it takes to come back
+/* The floor is where the multiplier is exactly 1. Nothing below it can
+   happen any more; the constants are kept because saves, the AI and the
+   Court all read them. */
+export const MORALE_FLOOR = 60;
+export const ROUT_AT = -1;         // unreachable: units do not break
+export const RECOVER_AT = 45;
 const PASS = 0.25;                 // the system ticks four times a second
 
 export class Morale {
@@ -113,25 +116,25 @@ export class Morale {
     return false;
   }
 
-  /** Damage multiplier from morale: only the bottom half of the bar bites. */
+  /**
+   * Damage multiplier from morale. It can only ever *help*: a full bar is
+   * worth +8%, the floor is worth nothing. There is no penalty branch left,
+   * because there is no state in which morale can fall below the floor.
+   */
   attackMul(unit) {
     const m = unit.morale === undefined ? MORALE_MAX : unit.morale;
-    if (m >= 60) return 1;
-    return 1 - (60 - m) * 0.004;      // 0.76 at zero
+    return 1 + Math.max(0, Math.min(1, (m - MORALE_FLOOR) / (MORALE_MAX - MORALE_FLOOR))) * 0.08;
   }
 
   speedMul(unit) {
-    /* A broken man does not outrun a formed one. Rout is a disaster, not a
-       free exit: the point of holding morale up is that you never have to
-       find out how the chase ends. */
-    if (unit.state === STATE_ROUT) return 0.9;
-    const m = unit.morale === undefined ? MORALE_MAX : unit.morale;
-    return m < 30 ? 0.94 : 1;
+    /* Speed is never taken away from a soldier for being tired: an order
+       that is slower than the player expects reads as a broken control. */
+    return 1;
   }
 
   /** Damage taken while running: the back is the softest part of a soldier. */
   damageTakenMul(unit) {
-    return unit.state === STATE_ROUT ? 1.5 : 1;
+    return 1;
   }
 
   /**
@@ -151,23 +154,15 @@ export class Morale {
     return false;
   }
 
-  /** A rout is a state change with consequences; keep it in one place. */
+  /**
+   * Kept for API compatibility with saves, mods and older call sites -- but
+   * it no longer breaks anybody. A unit the player has ordered somewhere
+   * stays ordered; losing the army's nerve is not a thing this game does.
+   */
   break_(unit) {
-    if (unit.state === STATE_ROUT) return;
-    unit.state = STATE_ROUT;
-    unit.target = null;
-    unit.targetPos = null;
-    unit.path = null;
-    unit.pathIdx = 0;
+    if (!unit || unit.state !== STATE_ROUT) return;
+    unit.state = 'idle';
     unit.routT = 0;
-    unit.aiRole = null;
-    this.routs++;
-    if (unit.team === this.game.playerTeam) {
-      this.game.notify(`${unit.name} has broken and is falling back`, 'bad');
-      this.game.sound.play('warn');
-      this.game.fx.dust(unit.x, (unit.y || 0) + 0.3, unit.z, 4, 1.0);
-    }
-    try { this.game.onEvent('rout', { unit }); } catch (e) { /* listeners are not the sim */ }
   }
 
   /** Only the fighting line has morale; the economy does not break. */
@@ -187,7 +182,7 @@ export class Morale {
       if (!this.keepsMorale(u)) continue;
       const d2 = (u.x - dead.x) ** 2 + (u.z - dead.z) ** 2;
       if (d2 > 11 * 11) continue;
-      u.morale = clamp((u.morale === undefined ? MORALE_MAX : u.morale) - (d2 < 25 ? 14 : 9), 0, MORALE_MAX);
+      u.morale = clamp((u.morale === undefined ? MORALE_MAX : u.morale) - (d2 < 25 ? 6 : 4), MORALE_FLOOR, MORALE_MAX);
     }
   }
 
@@ -199,7 +194,7 @@ export class Morale {
       const u = units[i];
       if (u.dead || u.team !== killer.team || !this.keepsMorale(u)) continue;
       if ((u.x - killer.x) ** 2 + (u.z - killer.z) ** 2 > 11 * 11) continue;
-      u.morale = clamp((u.morale === undefined ? MORALE_MAX : u.morale) + 5, 0, MORALE_MAX);
+      u.morale = clamp((u.morale === undefined ? MORALE_MAX : u.morale) + 5, MORALE_FLOOR, MORALE_MAX);
     }
   }
 
@@ -260,16 +255,14 @@ export class Morale {
       if (night) rate -= 0.12;
       /* a legend's banner steadies the line: men under it bleed morale slower */
       if (g.elites && g.elites.commanded.has(u)) rate += 0.35;
-      u.morale = clamp(u.morale + rate * step, 0, MORALE_MAX);
-      /* Last Stand: a Renowned man who has drawn his final line does not break
-         for its six seconds, whatever happens around him. */
-      const floor = u.stats ? (u.stats().moraleFloor || 0) : 0;
-      if (floor && u.morale < floor) u.morale = floor;
-      if (u.morale <= ROUT_AT) this.break_(u);
-      else if (u.state === STATE_ROUT && u.morale >= RECOVER_AT) {
+      u.morale = clamp(u.morale + rate * step, MORALE_FLOOR, MORALE_MAX);
+      /* Anything that was broken before this build is walking again: a rout
+         is no longer a state the simulation can enter, so a save from an
+         older version heals on load instead of leaving a man running. */
+      if (u.state === STATE_ROUT) {
         u.state = 'idle';
         u.routT = 0;
-        if (u.team === g.playerTeam) g.notify(`${u.name} has recovered`, 'good');
+        u.morale = MORALE_FLOOR;
       }
     }
     this._frameSources = null;

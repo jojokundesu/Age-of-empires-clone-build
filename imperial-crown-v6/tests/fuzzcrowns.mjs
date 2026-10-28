@@ -84,7 +84,6 @@ function checkWorld(game, tag) {
       if (v < -1e-6) bad.push(`team ${t} ${k} went negative: ${v.toFixed(3)}`);
     }
     if (!finite(st.popUsed) || st.popUsed < 0) bad.push(`team ${t} popUsed ${st.popUsed}`);
-    if (!finite(st.favor) || st.favor < 0) bad.push(`team ${t} favor ${st.favor}`);
     if (st.popUsed > 0 && !game.units.some((u) => !u.dead && u.team === t)) {
       bad.push(`team ${t} counts ${st.popUsed} population with no men`);
     }

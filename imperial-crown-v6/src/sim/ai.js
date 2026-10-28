@@ -204,7 +204,7 @@ export class AIController {
     // ---------- age up ----------
     this.manageAges(st, age);
 
-    // ---------- court: market + decrees ----------
+    // ---------- court: market ----------
     this.manageCourt(st, age);
 
     // ---------- the sky ----------
@@ -267,7 +267,7 @@ export class AIController {
   }
 
   /* ---------------- court ---------------- */
-  /** Appoint what can be appointed, and spend writs at the right moment. */
+  /** Appoint what can be appointed. There is nothing else to spend. */
   manageCourtOffices(st, age) {
     const g = this.game;
     if (!g.court) return;
@@ -277,25 +277,6 @@ export class AIController {
       if (g.court.canAppoint(this.team, id, unit)) continue;
       const res = g.court.appoint(this.team, id, unit);
       if (res.ok) break;
-    }
-    /* writs, in the order a general would use them */
-    const army = this.militaryUnits();
-    if (this.armyState === 'attack' && army.length >= 6) {
-      const w = g.court.writ(this.team, 'marshal');
-      if (w && w.ready) g.court.useWrit(this.team, 'marshal', null);
-    }
-    const wounded = army.filter((u) => u.hp < u.maxHp * 0.55).length;
-    if (wounded >= Math.max(3, army.length * 0.35)) {
-      const w = g.court.writ(this.team, 'hierophant');
-      if (w && w.ready) g.court.useWrit(this.team, 'hierophant', null);
-    }
-    if (age >= 1 && this.countUnits('villager') >= 10) {
-      const w = g.court.writ(this.team, 'chancellor');
-      if (w && w.ready) g.court.useWrit(this.team, 'chancellor', null);
-    }
-    if (this.huntTarget && !this.huntTarget.dead) {
-      const w = g.court.writ(this.team, 'spymaster');
-      if (w && w.ready) g.court.useWrit(this.team, 'spymaster', this.huntTarget);
     }
   }
 
@@ -319,20 +300,6 @@ export class AIController {
       // for. In Wonder Race the AI must not sell the very thing it needs.
       const savingForWonder = g.mode === 'wonder' && this.count('wonder') === 0;
       if (!savingForWonder && st.res.stone > 700 && st.res.gold < 300) g.marketTrade(this.team, 'stone', 200, false);
-    }
-    // decrees are spent the moment they pay off
-    if (st.favor < 40) return;
-    const army = this.militaryUnits();
-    const wounded = army.filter((u) => u.hp < u.maxHp * 0.6).length;
-    const inCombat = army.some((u) => u.state === STATE.ATTACK || u.state === STATE.ATTACK_MOVE || (u.target && !u.target.dead));
-    const pick = [];
-    if (age >= 2 && wounded >= Math.max(3, army.length * 0.4)) pick.push('blessing');
-    if (age >= 1 && inCombat && army.length >= 8) pick.push('rally');
-    if (age >= 1 && inCombat && st.favor > 160) pick.push('forced_march');
-    if (st.res.food < 60 && st.res.gold > 700) pick.push('harvest');
-    if (age >= 2 && army.length < 3 && st.favor > 220) pick.push('conscription');
-    for (const id of pick) {
-      if (g.activateDecree(this.team, id).ok) break;
     }
   }
 
@@ -952,6 +919,34 @@ export class AIController {
     this.foe = best || this.foe || 2;
     this.enemyBase = g.baseOf(this.foe);
     return this.foe;
+  }
+
+  /**
+   * Where the war actually is.
+   *
+   * `enemyBase` is the seat the map generator placed, and it does not move.
+   * Once a wave has burned that hall to the ground the coordinates are a
+   * field of ash, so every order drawn from them pointed at grass: the army
+   * marched in, stood in the rubble, and the war ended with two crowns
+   * staring at each other. The anchor is the nearest thing the rival still
+   * owns -- a wall, a barracks, and failing everything, a man.
+   */
+  foeAnchor() {
+    const g = this.game;
+    const foe = this.foe;
+    let best = null, bestD = Infinity;
+    for (const b of g.buildings) {
+      if (b.dead || b.team !== foe) continue;
+      const d = (b.x - this.base.x) ** 2 + (b.z - this.base.z) ** 2;
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    if (best) return best;
+    for (const u of g.units) {
+      if (u.dead || u.team !== foe || u.garrisoned) continue;
+      const d = (u.x - this.base.x) ** 2 + (u.z - this.base.z) ** 2;
+      if (d < bestD) { bestD = d; best = u; }
+    }
+    return best;
   }
 
   /**
@@ -1622,6 +1617,17 @@ export class AIController {
     }
 
     if (this.armyState === 'attack') {
+      /* If their hall is gone, the wave follows the crown instead of the
+         coordinates of a hall that no longer exists. */
+      let standingHall = false;
+      for (const b of g.buildings) {
+        if (b.dead || b.team !== this.foe || !b.def.ageAdvance) continue;
+        standingHall = true; break;
+      }
+      if (!standingHall) {
+        const anchor = this.foeAnchor();
+        if (anchor) this.enemyBase = { x: anchor.x, z: anchor.z };
+      }
       /* Men who turned back to chase a scout off the woodpile keep their
          place in the line when it is over: without this the wave quietly
          dissolves into a crowd of individuals and the AI believes it is

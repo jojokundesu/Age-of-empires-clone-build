@@ -389,7 +389,7 @@ check('insight climbs six ranks and changes the model', () => {
     eq(mage.def.name, rec.mod.ranks()[r - 1].title, `rank ${r} name`);
   }
   assert(mage.maxHp > startMax, 'a rank is worth more life');
-  eq(rec.mod.rankOf(mage).mana, 225, 'an Ascendant holds 225 mana');
+  eq(rec.mod.rankOf(mage).mana, 300, 'an Ascendant holds 300 mana');
   host.dispose();
   return `${seen.join(' → ')} (${startMax} → ${mage.maxHp} hp)`;
 });

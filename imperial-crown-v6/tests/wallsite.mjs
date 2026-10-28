@@ -252,8 +252,12 @@ await check('a gate opens for the owner, shuts for the enemy, and its leaf moves
        the gate's own cell. An 8 m line would also test whatever buildings
        happen to stand either side of it, which is not what is being asked. */
     const lineAlly = g.walkableLine(gx - nx * 1.3, gz - nz * 1.3, gx + nx * 1.3, gz + nz * 1.3, ally);
-    /* and it must settle again with the friend gone */
+    /* and it must settle again with the friend gone. The enemy goes too:
+       since 6.1 an idle defender inside its own town walks out to meet a man
+       standing in the gateway, and a guard in the gateway is a friend of the
+       gate -- the leaf is right to stay up while that fight is on. */
     ally.x = gx + nx * 26; ally.z = gz + nz * 26;
+    foe.x = gx - nx * 26; foe.z = gz - nz * 26;
     for (let i = 0; i < 240; i++) g.update(1 / 30);
     const shutAfter = gate.gateOpen;
     /* an enemy in the gateway is a different matter: it does not open it */

@@ -3,20 +3,19 @@
    ------------------------------------------------------------
    What this suite nails down:
 
-     · supply comes from buildings and is the *only* thing that
-       keeps morale up away from home;
-     · a raid that outruns its tents breaks, and a broken unit
-       cannot be ordered, cannot fight, and runs for home;
-     · terror is local — a death ten metres away matters, a death
-       across the map does not;
-     · low morale costs damage and speed before it costs control;
+     · morale is a bonus and nothing else: it never takes a man below
+       his normal strength, and it never stops him acting;
+     · supply comes from buildings and pushes morale up, not down;
+     · terror is local and small — a death ten metres away matters a
+       little, a death across the map does not;
+     · no order is ever refused and no unit ever routs, at any morale;
      · the Marshal's aura is a walking supply point;
      · all of it survives a save.
    ============================================================ */
 import { generateWorld } from '../src/sim/worldgen.js';
 import { Game } from '../src/sim/game.js';
 import { UNIT_DEFS } from '../src/sim/data.js';
-import { MORALE_MAX, ROUT_AT, RECOVER_AT } from '../src/sim/morale.js';
+import { MORALE_MAX, MORALE_FLOOR } from '../src/sim/morale.js';
 
 let passed = 0;
 const failures = [];
@@ -43,7 +42,6 @@ function makeGame(seed = 31337) {
   g.worldTime = 10;
   for (const st of g.teams.values()) {
     st.res.food = st.res.wood = st.res.gold = st.res.stone = 9000;
-    st.favor = 250;
     st.age = 3;
   }
   return g;
@@ -129,106 +127,76 @@ check('a supply tent extends the net, and can be cut down', () => {
 });
 
 /* ============================================================ */
-console.log('\nBREAKING');
-check('with no supply a unit eventually breaks and runs for home', () => {
+console.log('\nNO ONE BREAKS');
+
+/**
+ * The player's own words: "remove this morale bullshit completely... they just
+ * keep standing there". Morale used to floor a unit at zero, turn its back and
+ * march it home, which on a phone looked like an army that had stopped obeying
+ * orders. Morale now only ever adds: the floor is worth no penalty, and there
+ * is no rout at any number.
+ */
+check('morale never falls below the floor, however long a man is abandoned', () => {
   const g = makeGame();
   const [x, z] = farSpot(g, 1);
   const u = placeAt(g, 'swordsman', 1, x, z);
   assert(u, 'the swordsman');
-  u.morale = ROUT_AT + 0.5;
-  const d0 = Math.hypot(u.x - g.playerBase.x, u.z - g.playerBase.z);
-  run(g, 4);
-  eq(u.state, 'rout', 'the unit should break');
-  assert(u.target === null, 'a broken unit drops its target');
-  run(g, 5);
-  const d1 = Math.hypot(u.x - g.playerBase.x, u.z - g.playerBase.z);
-  assert(d1 < d0 - 2, `a broken unit must run home (${d0.toFixed(1)} → ${d1.toFixed(1)})`);
-  return `${d0.toFixed(0)} m → ${d1.toFixed(0)} m`;
+  u.morale = 0;                       // even a stale, corrupted value
+  for (let t = 0; t < 200 * 20; t++) g.update(1 / 20);
+  assert(u.morale >= MORALE_FLOOR, `morale fell to ${u.morale.toFixed(1)}`);
+  assert(u.state !== 'rout', 'a rout came back');
+  return `floor ${MORALE_FLOOR} held for 200 s`;
 });
 
-check('a broken unit refuses orders until it recovers', () => {
+check('a man at the floor is exactly as strong as one at full morale', () => {
   const g = makeGame();
-  const [x, z] = farSpot(g, 1);
-  const u = placeAt(g, 'swordsman', 1, x, z);
-  u.morale = 2;
-  run(g, 1);
-  eq(u.state, 'rout', 'broken');
-  const d0 = Math.hypot(u.x - g.playerBase.x, u.z - g.playerBase.z);
-  g.orderMove([u], g.playerBase.x + 40, g.playerBase.z - 40);
-  eq(u.state, 'rout', 'an order must not shake him out of a rout');
-  run(g, 3);
-  const d1 = Math.hypot(u.x - g.playerBase.x, u.z - g.playerBase.z);
-  assert(d1 < d0, `he must still be running home, not to the tap (${d0.toFixed(1)} → ${d1.toFixed(1)})`);
-  return 'orders ignored while broken';
+  const u = placeAt(g, 'swordsman', 1, g.playerBase.x + 5, g.playerBase.z + 5);
+  assert(u, 'the swordsman');
+  u.morale = MORALE_FLOOR;
+  near(g.morale.attackMul(u), 1, 1e-9, 'the floor must not cost damage');
+  near(g.morale.speedMul(u), 1, 1e-9, 'the floor must not cost speed');
+  near(g.morale.damageTakenMul(u), 1, 1e-9, 'the floor must not cost toughness');
+  u.morale = MORALE_MAX;
+  assert(g.morale.attackMul(u) > 1, 'full morale should be a bonus');
+  near(g.morale.speedMul(u), 1, 1e-9, 'morale never touches speed');
+  near(g.morale.damageTakenMul(u), 1, 1e-9, 'morale never makes a man softer');
+  return `floor ×1.00, full ×${g.morale.attackMul(u).toFixed(2)} damage`;
 });
 
-check('every order refuses a broken man, not just move', () => {
+check('every order is obeyed at zero morale', () => {
   const g = makeGame();
   const [x, z] = farSpot(g, 1);
   const u = placeAt(g, 'swordsman', 1, x, z);
   const tree = g.resources.find((r) => !r.dead && r.resKind === 'wood');
   const b = g.buildings.find((bd) => !bd.dead && bd.team === 1);
-  u.morale = 2;
+  u.morale = 0;
   run(g, 1);
-  eq(u.state, 'rout', 'broken');
-  if (tree) g.orderGather([u], tree);
-  eq(u.state, 'rout', 'a gather order was accepted');
-  if (b) g.orderRepair([u], b);
-  eq(u.state, 'rout', 'a repair order was accepted');
-  g.orderAttack([u], g.enemyBase);
-  eq(u.state, 'rout', 'an attack order was accepted');
-  g.orderMove([g.units.find((e) => e.team === 1 && e.state !== 'rout') || u], x, z);
-  return 'move, gather, repair and attack all ignored';
-});
-
-check('a recovered unit returns to the line', () => {
-  const g = makeGame();
-  const u = placeAt(g, 'swordsman', 1, g.playerBase.x + 5, g.playerBase.z + 5);
-  u.morale = 2;
-  run(g, 1);
-  eq(u.state, 'rout', 'broken');
-  run(g, 26);
-  eq(u.state, 'idle', 'recovered near the town centre');
-  assert(u.morale >= RECOVER_AT, `morale is back (${u.morale.toFixed(1)})`);
   g.orderMove([u], u.x + 4, u.z + 4);
-  eq(u.state, 'move', 'orders work again');
-  return `back at ${u.morale.toFixed(0)} morale`;
+  eq(u.state, 'move', 'a move order was refused');
+  run(g, 1);
+  if (tree) { g.orderGather([u], tree); assert(u.state !== 'idle', 'a gather order was refused'); }
+  if (b) { g.orderRepair([u], b); assert(u.state !== 'idle', 'a repair order was refused'); }
+  g.orderAttack([u], g.enemyBase);
+  assert(u.state !== 'idle', 'an attack order was refused');
+  return 'move, gather, repair and attack all accepted';
 });
-
-check('a broken man is slower and softer in the back', () => {
-  const g = makeGame();
-  const u = placeAt(g, 'swordsman', 1, g.playerBase.x + 5, g.playerBase.z + 5);
-  assert(u, 'the swordsman');
-  near(g.morale.damageTakenMul(u), 1, 1e-9, 'a formed man takes normal damage');
-  u.state = 'rout';
-  assert(g.morale.speedMul(u) < 0.95, 'running is slower than walking');
-  assert(g.morale.damageTakenMul(u) > 1.4, 'a fleeing man is cut down from behind');
-  return `speed ×${g.morale.speedMul(u)}, damage taken ×${g.morale.damageTakenMul(u)}`;
-});
-
-/* ============================================================ */
-console.log('\nTHE MARCH');
 
 /**
  * The bug that made v6 unplayable: every state away from supply bled the same
  * -1.05 a second, so an army ordered to march 200 m turned its back and ran
  * home inside a minute and a half -- "units turning away for no reason".
- * Marching is now a slow cost, not a rout sentence.
  */
 check('a marching column keeps its nerve all the way to the enemy', () => {
   const g = makeGame();
   const base = g.playerBase;
   const squad = [];
   for (let i = 0; i < 6; i++) {
-    const [x, z] = [base.x + 40 + i * 2, base.z + 40];
-    const u = placeAt(g, 'spearman', 1, x, z);
+    const u = placeAt(g, 'spearman', 1, base.x + 40 + i * 2, base.z + 40);
     if (u) { u.stance = 'aggressive'; squad.push(u); }
   }
   assert(squad.length === 6, 'six spearmen');
   const goal = [base.x + 200, base.z + 200];
   for (const u of squad) g.orderMove([u], goal[0], goal[1]);
-  /* three minutes of marching: longer than the walk to the far side of the
-     island, and far longer than the old numbers allowed */
   for (let t = 0; t < 180 * 30; t++) {
     g.update(1 / 30);
     for (const u of squad) if (u.state === 'idle') g.orderMove([u], goal[0], goal[1]);
@@ -236,21 +204,20 @@ check('a marching column keeps its nerve all the way to the enemy', () => {
   const routed = squad.filter((u) => u.state === 'rout').length;
   assert(routed === 0, `${routed} of ${squad.length} broke on the march`);
   const worst = Math.min(...squad.map((u) => u.morale));
-  assert(worst > 20, `the column should still have some nerve left (${worst.toFixed(0)})`);
+  assert(worst >= MORALE_FLOOR, `the column lost its nerve (${worst.toFixed(0)})`);
   return `${squad.length} men, 3 min, worst morale ${worst.toFixed(0)}`;
 });
 
-check('an army parked in the open still eventually loses its nerve', () => {
+check('an army parked in the open keeps its nerve indefinitely', () => {
   const g = makeGame();
   const [x, z] = farSpot(g, 1);
   const u = placeAt(g, 'swordsman', 1, x, z);
   assert(u, 'the swordsman');
   u.stance = 'stand';
-  let broke = 0;
-  for (let t = 0; t < 260 * 30 && !broke; t++) { g.update(1 / 30); if (u.state === 'rout') broke = t / 30; }
-  assert(broke, 'standing in the wilderness forever must cost him his nerve');
-  assert(broke > 90, `it should take minutes, not seconds (${broke.toFixed(0)} s)`);
-  return `broke after ${broke.toFixed(0)} s in the open`;
+  for (let t = 0; t < 300 * 20; t++) g.update(1 / 20);
+  assert(u.state !== 'rout', 'a parked army broke');
+  assert(u.morale >= MORALE_FLOOR, `morale fell to ${u.morale.toFixed(1)}`);
+  return `five minutes in the open, morale ${u.morale.toFixed(0)}, still standing`;
 });
 
 /* ============================================================ */
@@ -297,17 +264,16 @@ check('a villager never breaks', () => {
   return 'the economy does not panic';
 });
 
-check('low morale costs damage and speed before it costs control', () => {
+check('morale is a bonus, and only a small one', () => {
   const g = makeGame();
   const u = placeAt(g, 'swordsman', 1, g.playerBase.x + 5, g.playerBase.z + 5);
   assert(u, 'the swordsman');
-  near(g.morale.attackMul(u), 1, 1e-6, 'full morale: no penalty');
-  near(g.morale.speedMul(u), 1, 1e-6, 'full morale: full speed');
-  u.morale = 30;
-  assert(g.morale.attackMul(u) < 0.95 && g.morale.attackMul(u) > 0.8, 'a shaken unit hits ~12 % softer');
-  u.morale = 0;
-  assert(g.morale.attackMul(u) < 0.8, 'a broken unit barely fights');
-  return `attack ×${g.morale.attackMul(u).toFixed(2)} at 0 morale`;
+  u.morale = MORALE_FLOOR;
+  near(g.morale.attackMul(u), 1, 1e-9, 'the floor is exactly neutral');
+  u.morale = MORALE_MAX;
+  const top = g.morale.attackMul(u);
+  assert(top > 1.02 && top < 1.15, `full morale should be a small bonus (${top.toFixed(3)})`);
+  return `attack ×${top.toFixed(2)} at full morale`;
 });
 
 /* ============================================================ */

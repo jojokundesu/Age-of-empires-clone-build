@@ -42,7 +42,6 @@ function makeGame(seed = 4242) {
   g.worldTime = 10;                 // broad daylight: no night-raid multiplier
   for (const st of g.teams.values()) {
     st.res.food = st.res.wood = st.res.gold = st.res.stone = 8000;
-    st.favor = 200;
     st.age = 3;
   }
   return g;

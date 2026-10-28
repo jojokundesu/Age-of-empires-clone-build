@@ -122,7 +122,6 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .resChip[data-res="wood"] .ic { color: #a8c98a; }
 .resChip[data-res="gold"] .ic { color: #f0cb6a; }
 .resChip[data-res="stone"] .ic { color: #b9c0c6; }
-.resChip[data-res="favor"] .ic { color: #d9a8ff; }
 .resChip.pop .ic { color: #e6cfa6; }
 .resChip b { font-weight: 700; font-variant-numeric: tabular-nums; min-width: 22px; font-size: 12.5px; }
 .resChip.pop b { min-width: 40px; }
@@ -181,7 +180,6 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
   display: grid; place-items: center; border: 1px solid rgba(255, 190, 150, 0.5);
   font-family: var(--sans); letter-spacing: 0;
 }
-.iconBtn .badge.favor { background: #4a2a6b; }
 .iconBtn .badge.zero { display: none; }
 
 /* ---- the top-centre stack ----

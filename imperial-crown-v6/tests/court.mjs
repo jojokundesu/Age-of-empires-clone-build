@@ -42,7 +42,6 @@ function makeGame(seed = 909, age = 2) {
   g.running = true;
   for (const st of g.teams.values()) {
     st.res.food = st.res.wood = st.res.gold = st.res.stone = 5000;
-    st.favor = 400;
     st.age = age;
   }
   return g;
@@ -59,14 +58,18 @@ function place(g, type, team, dx = 6, dz = 6) {
 
 /* ============================================================ */
 console.log('\nTHE FOUR OFFICES');
-check('four offices, each with a class, a cost and a writ', () => {
+check('four offices, each with a class and a purse-price, and nothing else', () => {
   eq(OFFICES.length, 4, 'office count');
   const ids = OFFICES.map((o) => o.id);
   eq(ids.join(','), 'marshal,chancellor,spymaster,hierophant', 'office ids');
   for (const o of OFFICES) {
     assert(o.age >= 1, `${o.id} needs an age`);
-    assert(o.cost.gold > 0 && o.cost.favor > 0, `${o.id} is free`);
-    assert(o.writ && o.writ.cd > 0 && o.writ.name, `${o.id} has no writ`);
+    assert(o.cost.gold > 0, `${o.id} is free`);
+    /* the court is an appointment and its passive. Writs and favour were
+       removed at the player's request; a second currency creeping back in
+       is a regression, not a feature. */
+    assert(!('favor' in o.cost), `${o.id} still costs favour`);
+    assert(!o.writ, `${o.id} still has a writ`);
     assert(o.passive.length === 3, `${o.id} needs three ranks of text`);
     assert(RANK_AT.length === 3, 'three rank thresholds');
   }
@@ -97,8 +100,7 @@ check('an office refuses the wrong subject, the poor, and the young', () => {
   assert(/Feudal|Castle Age/.test(young.court.canAppoint(1, 'spymaster', squire)), 'a Dark Age realm has no Spymaster');
   assert(!young.court.canAppoint(1, 'marshal', squire), 'but a Marshal rides in the Feudal Age');
   g.teams.get(1).res.gold = 0;
-  g.teams.get(1).res.favor = 0;
-  assert(/cost/.test(g.court.canAppoint(1, 'marshal', knight)), 'poverty blocks an appointment');
+  assert(/afford/.test(g.court.canAppoint(1, 'marshal', knight)), 'poverty blocks an appointment');
   return 'class, age and purse all hold';
 });
 
@@ -187,62 +189,52 @@ check('kills raise the rank, and the rank raises the aura', () => {
   return `+18% → +26% → +34%, ${(soldier.hp - hp0).toFixed(1)} hp mended`;
 });
 
-check('Forced March spends favour and moves the line', () => {
+check('the Chancellor makes the villagers beside her carry more', () => {
   const g = makeGame();
-  const marshal = place(g, 'knight', 1, 8, 0);
-  const soldier = place(g, 'swordsman', 1, 8, 4);
-  assert(g.court.appoint(1, 'marshal', marshal).ok, 'appointed');
-  const favour0 = g.teams.get(1).favor;
-  const speed0 = g.unitSpeedMul(soldier);
-  const res = g.court.useWrit(1, 'marshal', null);
-  assert(res.ok, `writ failed: ${res.reason}`);
-  const speed1 = g.unitSpeedMul(soldier);
-  assert(speed1 > speed0 + 0.2, `the march did nothing (${speed0} → ${speed1})`);
-  assert(g.teams.get(1).favor < favour0, 'the writ costs favour');
-  const ready = g.court.writ(1, 'marshal');
-  assert(!ready.ready && ready.cooldown > 90, `the writ should be on cooldown (${ready.cooldown})`);
-  run(g, 13);
-  near(g.unitSpeedMul(soldier), speed0, 0.05, 'the march ends after 12 s');
-  return `${speed0.toFixed(2)} → ${speed1.toFixed(2)} speed, cd ${ready.cooldown | 0}s`;
+  const steward = place(g, 'villager', 1, 8, 0);
+  const worker = place(g, 'villager', 1, 10, 0);
+  const before = g.court.gatherMul(worker, 'food');
+  near(before, 1, 0.001, 'no chancellor, no bonus');
+  assert(g.court.appoint(1, 'chancellor', steward).ok, 'appointed');
+  assert(g.court.gatherMul(worker, 'food') > 1.09, 'the steward does nothing for her people');
+  g.court.deed(1, 'chancellor', RANK_AT[1] + RANK_AT[2] + 2);
+  eq(g.court.rank(1, 'chancellor'), 3, 'rank III');
+  assert(g.court.carryBonus(worker) >= 4, 'rank III carries four more');
+  return `gather ×${g.court.gatherMul(worker, 'food').toFixed(2)}, +${g.court.carryBonus(worker)} carry`;
 });
 
-check('Whisper marks one enemy and only that enemy', () => {
+check('the Spymaster widens every eye in the realm', () => {
   const g = makeGame();
   const spy = place(g, 'archer', 1, 8, 0);
-  const attacker = place(g, 'swordsman', 1, 10, 0);
-  const marked = place(g, 'spearman', 2, 14, 0);
-  const other = place(g, 'spearman', 2, 14, 4);
+  place(g, 'swordsman', 1, 10, 0);
+  eq(g.court.sightBonus(1), 0, 'no spymaster, no sight');
   assert(g.court.appoint(1, 'spymaster', spy).ok, 'appointed');
-  assert(g.court.useWrit(1, 'spymaster', marked).ok, 'whisper cast');
-  eq(marked.markedBy, 1, 'the target is marked');
-  assert(marked.markedUntil > g.time, 'the mark has a lifetime');
-  attacker.target = marked;
-  const mul = g.court.damageMul(attacker);
-  near(mul, 1.3, 0.01, 'marked targets take +30%');
-  attacker.target = other;
-  near(g.court.damageMul(attacker), 1, 0.01, 'an unmarked target takes normal damage');
-  const bad = g.court.useWrit(1, 'spymaster', place(g, 'swordsman', 1, 3, 3));
-  assert(!bad.ok, 'an ally cannot be whispered');
-  return '+30% against the mark only';
+  const r1 = g.court.sightBonus(1);
+  assert(r1 >= 2, 'the realm sees no further');
+  g.court.deed(1, 'spymaster', RANK_AT[1] + 2);
+  assert(g.court.sightBonus(1) > r1, 'rank II sees further still');
+  return `+${g.court.sightBonus(1)} m sight`;
 });
 
-check('Benediction mends the circle around the Hierophant', () => {
+check('the Hierophant heals harder, ranks on healing, and mends the circle', () => {
   const g = makeGame();
   const monk = place(g, 'monk', 1, 8, 0);
-  const hurtNear = place(g, 'swordsman', 1, 10, 0);
-  const hurtFar = place(g, 'swordsman', 1, -30, 20);
+  const hurt = place(g, 'swordsman', 1, 10, 0);
+  const far = place(g, 'swordsman', 1, -30, 20);
+  near(g.court.healMul(1), 1, 0.001, 'no hierophant, no healing bonus');
   assert(g.court.appoint(1, 'hierophant', monk).ok, 'appointed');
-  hurtNear.hp = hurtNear.maxHp * 0.3;
-  hurtFar.hp = hurtFar.maxHp * 0.3;
-  const near0 = hurtNear.hp, far0 = hurtFar.hp;
-  assert(g.court.useWrit(1, 'hierophant', null).ok, 'benediction cast');
-  assert(hurtNear.hp > near0 + hurtNear.maxHp * 0.2, `the circle is not mended (${near0} → ${hurtNear.hp})`);
-  eq(hurtFar.hp, far0, 'outside the circle is untouched');
-  /* and the rank III passive cuts decree prices */
-  g.court.deed(1, 'hierophant', RANK_AT[1] + RANK_AT[2] + 2);
-  eq(g.court.rank(1, 'hierophant'), 3, 'rank III');
-  near(g.court.decreeDiscount(1), 0.8, 0.001, 'decrees are 20% cheaper');
-  return `+${(hurtNear.hp - near0).toFixed(0)} hp inside, 0 outside`;
+  assert(g.court.healMul(1) > 1.2, 'the hierophant does not heal harder');
+  /* a monk at work feeds the office its rank */
+  g.court.onHeal(monk, RANK_AT[1] * 45 + 5);
+  eq(g.court.rank(1, 'hierophant'), 2, 'healing carries the office to rank II');
+  /* rank II mends the men around him without a spell */
+  hurt.hp = hurt.maxHp * 0.4;
+  far.hp = far.maxHp * 0.4;
+  const n0 = hurt.hp, f0 = far.hp;
+  run(g, 8);
+  assert(hurt.hp > n0 + 1, `the circle is not mended (${n0.toFixed(0)} → ${hurt.hp.toFixed(0)})`);
+  near(far.hp, f0, 0.01, 'outside the circle is untouched');
+  return `heal ×${g.court.healMul(1).toFixed(2)}, +${(hurt.hp - n0).toFixed(1)} hp beside him`;
 });
 
 /* ============================================================ */
@@ -279,7 +271,7 @@ check('an officer counts as a high-value target for the AI', () => {
 
 /* ============================================================ */
 console.log('\nTHE AI COURT');
-check('the opponent fills its court and spends its writs', () => {
+check('the opponent fills its court', () => {
   const g = makeGame(321, 2);
   const ai = new AIController(g, 2, {});
   for (let i = 0; i < 8; i++) place(g, 'knight', 2, 4 + i * 2, 4);
@@ -290,8 +282,6 @@ check('the opponent fills its court and spends its writs', () => {
   const filled = OFFICES.filter((o) => g.court.holder(2, o.id)).map((o) => o.id);
   assert(filled.length >= 2, `the AI court is empty (${filled.join(',')})`);
   assert(filled.includes('marshal'), 'the AI should appoint a Marshal first');
-  const favour = g.teams.get(2).favor;
-  assert(favour <= 400, 'san sanity');
   return filled.join(', ');
 });
 

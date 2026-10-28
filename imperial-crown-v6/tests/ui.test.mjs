@@ -242,21 +242,19 @@ check('multi selection', () => {
   ui.refreshCommands(); ui.update(0.1);
   assert(document.getElementById('inspName').textContent.length > 0, 'no inspector text');
 });
-check('tech / decrees / market modals', () => {
+check('tech / court / market modals', () => {
   ui.openTech(); menu.closeModal();
-  ui.openDecrees(); menu.closeModal();
+  ui.openCourt(); menu.closeModal();
   ui.openMarket(); menu.closeModal();
 });
-check('a decree can be proclaimed from the council', () => {
-  const t = game.teams.get(1);
-  t.favor = 400;
-  ui.openDecrees();
-  const row = document.querySelector('#modalBody [data-decree]');
-  assert(row, 'no decree buttons rendered');
-  assert(!row.disabled, 'decree button disabled with 400 favour');
-  row.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
-  assert(t.buffs.length > 0, 'no buff after proclaiming a decree');
-  assert(t.favor < 400, 'favour was not spent');
+check('the court panel is appointments and perks, with nothing to spend', () => {
+  ui.openCourt();
+  const body = document.getElementById('modalBody');
+  assert(body, 'no modal body');
+  assert(!body.querySelector('[data-writ]'), 'a writ button came back');
+  assert(!/favour|decree/i.test(body.textContent), 'the panel still mentions favour or decrees');
+  const app = body.querySelector('[data-appoint]');
+  assert(app || /Appoint|Unlocks|vacant|mourning/i.test(body.textContent), 'no appointment affordance');
   menu.closeModal();
 });
 check('market sells and buys at a moving price', () => {

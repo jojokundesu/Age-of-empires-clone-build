@@ -1,16 +1,16 @@
 /* ============================================================
    courtsite.mjs — the Court of Offices, through the real interface
    ------------------------------------------------------------
-   tests/court.mjs proves the simulation: the aura, the deed, the writ,
-   the mourning. This suite proves the parts only a rendered frame and a
+   tests/court.mjs proves the simulation: the aura, the deed, the mourning. This suite proves the parts only a rendered frame and a
    real tap can show:
 
      · the Court button is in the top bar and opens on a phone-sized HUD;
      · the four offices say why they are closed in the Dark Age;
      · the appointment is armed by a button and *completed by a tap on a
        man on the battlefield* — no invisible state, no drag;
-     · the writs land on the field with a visual (a march, a mark, a heal);
-     · a rank III Marshal is worth looking at, and his death empties the
+     · the panel offers the four appointments and the perks, and nothing
+       else -- no writs, no favour, no second economy;
+     · a rank III officer is worth looking at, and his death empties the
        office and takes a rank with it;
      · the save carries the court, the AI fills its own court, and quitting
        leaves nothing behind.
@@ -168,7 +168,6 @@ await check('in the Feudal Age the offices are open and the badge counts them', 
     const t = a.game.teams.get(1);
     t.age = 1;
     t.res.gold = t.res.wood = t.res.food = t.res.stone = 4000;
-    t.favor = 300;
     a.game.statsVersion++;
     a.ui.update(0.2, true);
     a.ui.openCourt();
@@ -275,36 +274,27 @@ await check('the Marshal is visible on the field and in the HUD', async () => {
   return `${hud.name} · ${hud.sub.slice(0, 60)}`;
 });
 
-await check('Forced March is a real speed buff with a card that reflects it', async () => {
+await check('the panel offers appointments and perks, and nothing to spend', async () => {
   const st = await page.evaluate(() => {
     const a = window.__imperial;
     const g = a.game;
-    const holder = g.court.office(1, 'marshal').holder;
-    const soldier = g.units.find((u) => u.team === 1 && u.type === 'knight' && u !== holder) ||
-      g.spawnUnitRaw('knight', 1, holder.x + 2, holder.z + 2);
-    soldier.x = holder.x + 2; soldier.z = holder.z + 2;
-    const before = g.unitSpeedMul(soldier);
     a.ui.openCourt();
-    const btn = document.querySelector('#modalBody [data-writ="marshal"]');
-    if (!btn) return { noButton: true, labels: document.getElementById('modalBody').textContent.slice(0, 200) };
-    btn.click();
-    const rec = g.court.office(1, 'marshal');
+    const body = document.getElementById('modalBody');
+    const text = body ? body.textContent : '';
     return {
-      before,
-      after: g.unitSpeedMul(soldier),
-      buffUntil: rec.buffUntil,
-      time: g.time,
-      cooldown: g.court.writ(1, 'marshal').cooldown,
-      ready: g.court.writ(1, 'marshal').ready
+      writs: body ? body.querySelectorAll('[data-writ]').length : -1,
+      favour: /favour|writ|decree/i.test(text),
+      appoint: body ? body.querySelectorAll('[data-appoint]').length : -1,
+      passive: /Rank (II|III)|strike for|gather|sees|heal/i.test(text)
     };
   });
-  assert(!st.noButton, `no Forced March button (${st.labels || ''})`);
-  assert(st.after > st.before + 0.2, `the march did not speed the line (${st.before} → ${st.after})`);
-  assert(st.buffUntil > st.time, 'the march has no duration');
-  assert(!st.ready && st.cooldown > 60, `the writ is not on cooldown (${st.cooldown})`);
+  assert(st.appoint > 0, 'the panel offers no appointments');
+  assert(st.writs === 0, `the panel still offers ${st.writs} writs`);
+  assert(!st.favour, 'the panel still mentions favour, writs or decrees');
+  assert(st.passive, 'the panel does not explain the perks');
   await page.evaluate(() => window.__imperial.menu.closeModal());
   await frame(2);
-  return `${st.before.toFixed(2)} → ${st.after.toFixed(2)} speed, cd ${st.cooldown | 0}s`;
+  return 'four appointments, zero writs';
 });
 
 await check('a rank III Marshal mends his line, and the panel says so', async () => {
@@ -339,7 +329,7 @@ await check('all four offices can stand in a line with their sigils', async () =
     const g = a.game;
     const t = g.teams.get(1);
     t.age = 2;
-    t.res.gold = 4000; t.favor = 400;
+    t.res.gold = 4000;
     const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
     const cx = tc.x + 14, cz = tc.z + 20;
     const casts = [
@@ -386,48 +376,29 @@ await check('all four offices can stand in a line with their sigils', async () =
   return colors.join(' ');
 });
 
-await check('Whisper arms on a card and marks the enemy you tap', async () => {
+await check('a rank III Hierophant mends the circle around him on the field', async () => {
   const st = await page.evaluate(() => {
     const a = window.__imperial;
     const g = a.game;
-    const t = g.teams.get(1);
-    t.age = 2;
-    t.favor = 300;
-    const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
-    const spot = g.freeSpotNear(tc.x - 12, tc.z + 12, { radius: 0.8, def: {} }, 8) || [tc.x - 12, tc.z + 12];
-    const spy = g.spawnUnitRaw('archer', 1, spot[0] - 2.5, spot[1]);
-    const enemy = g.spawnUnitRaw('spearman', 2, spot[0] + 1.5, spot[1]);
-    enemy.noAggro = true;
-    if (spy) { spy.noAggro = true; spy.stance = 'stand'; }
-    const res = g.court.appoint(1, 'spymaster', spy);
-    for (let i = 0; i < 4; i++) g.update(1 / 30);
-    window.__look(spot[0], spot[1], 10, 0.36, 0.3);
-    a.ui.openCourt();
-    const btn = document.querySelector('#modalBody [data-writ="spymaster"]');
-    if (!btn) return { noButton: true, text: document.getElementById('modalBody').textContent.slice(0, 200) };
-    btn.click();
-    const armed = g.courtWrit ? g.courtWrit.office : null;
-    const screen = window.__screenOf(enemy);
-    const hit = a.input.pick(screen[0], screen[1]);
-    return { ok: res.ok, armed, screen, id: enemy.id, alive: !enemy.dead, hit: hit ? `${hit.kind}:${hit.type}` : null };
+    const rec = g.court.office(1, 'hierophant');
+    const holder = rec.holder;
+    if (!holder) return { noHolder: true };
+    g.court.deed(1, 'hierophant', 260);
+    const hurt = g.units.find((u) => u.team === 1 && u.type === 'knight' && u !== holder);
+    if (!hurt) return { noSoldier: true };
+    hurt.x = holder.x + 3; hurt.z = holder.z + 2;
+    hurt.hp = hurt.maxHp * 0.4;
+    const hp0 = hurt.hp;
+    for (let i = 0; i < 40; i++) window.__stepSim(0.25);
+    return { rank: g.court.rank(1, 'hierophant'), hp0, hp: hurt.hp };
   });
-  assert(st.ok, 'the spymaster could not be appointed');
-  assert(!st.noButton, `no Whisper button (${st.text || ''})`);
-  assert(st.armed === 'spymaster', `the whisper did not arm (${st.armed})`);
-  assert(st.hit === 'unit:spearman', `the enemy is not under the finger (${st.hit})`);
-  await page.evaluate(([x, y]) => window.__imperial.input.tap(x, y), st.screen);
-  await wait(200);
-  const after = await page.evaluate((id) => {
-    const g = window.__imperial.game;
-    const e = g.units.find((u) => u.id === id);
-    return { marked: e ? e.markedBy : null, until: e ? e.markedUntil : 0, time: g.time, armed: !!g.courtWrit };
-  }, st.id);
-  assert(after.marked === 1, `the spearman was not marked (${after.marked})`);
-  assert(after.until > after.time, 'the mark has no lifetime');
-  assert(!after.armed, 'the whisper stayed armed');
+  assert(!st.noHolder, 'no hierophant appointed');
+  assert(!st.noSoldier, 'no soldier to mend');
+  assert(st.rank === 3, `the hierophant did not rank up (${st.rank})`);
+  assert(st.hp > st.hp0 + 2, `the circle is not mended (${st.hp0} → ${st.hp})`);
+  await page.evaluate(() => window.__imperial.menu.closeModal());
   await frame(2);
-  await shot('05-whisper');
-  return 'spearman marked for 40 s';
+  return `${st.hp0.toFixed(0)} → ${st.hp.toFixed(0)} hp beside the hierophant`;
 });
 
 await check('the office dies with its holder, and mourns before it reopens', async () => {
@@ -481,7 +452,7 @@ await check('the AI fills its own court', async () => {
     const g = a.game;
     const t = g.teams.get(2);
     t.age = 2;
-    t.res.gold = 4000; t.res.food = 4000; t.res.wood = 4000; t.favor = 300;
+    t.res.gold = 4000; t.res.food = 4000; t.res.wood = 4000;
     const base = g.enemyBase;
     for (let i = 0; i < 6; i++) g.spawnUnitRaw('knight', 2, base.x + 3 + i * 2, base.z + 3);
     for (let i = 0; i < 3; i++) g.spawnUnitRaw('villager', 2, base.x + 3 + i, base.z + 8);

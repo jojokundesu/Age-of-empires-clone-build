@@ -255,7 +255,7 @@ export class Menu {
       const crowns = this.state.mode === 'kingdoms' ? this.state.kingdoms : 2;
       const lines = [`<b>${v.name}</b> — ${v.desc}`];
       if (this.state.mode === 'kingdoms') {
-        lines.push(`${crowns} crowns. A fallen kingdom's treasury, learning, standing decrees and surviving soldiers pass to the crown that broke it.`);
+        lines.push(`${crowns} crowns. A fallen kingdom's treasury, learning, standing bonuses and surviving soldiers pass to the crown that broke it.`);
       }
       el.victoryBrief.innerHTML = lines.join(' ');
     }

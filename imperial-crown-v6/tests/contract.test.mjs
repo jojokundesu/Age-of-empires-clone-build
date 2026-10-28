@@ -8,6 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { generateWorld } from '../src/sim/worldgen.js';
 import { Game } from '../src/sim/game.js';
+import { officeCatalogue } from '../src/sim/court.js';
 import { STATE } from '../src/sim/entities.js';
 
 let pass = 0;
@@ -110,7 +111,7 @@ check('Game exposes the documented public surface', () => {
   const required = [
     'start', 'update', 'updateFog', 'endGame', 'checkVictory',
     'placeBuilding', 'canPlaceAt', 'canAfford', 'spend',
-    'startAgeAdvance', 'activateDecree', 'marketTrade', 'marketPrice',
+    'startAgeAdvance', 'marketTrade', 'marketPrice',
     'findNearestResource', 'spawnUnitRaw', 'explodeArea', 'garrisonUnit', 'convertUnit',
     'isPassable', 'walkableLine', 'unstick', 'heightAt', 'getHeightFn',
     'notify', 'marker', 'setSelection', 'popFree', 'recomputePop', 'unitCost', 'unitBuildTime',
@@ -120,26 +121,29 @@ check('Game exposes the documented public surface', () => {
   assert(!missing.length, 'missing: ' + missing.join(', '));
 });
 
-check('decrees are well formed and affordable', () => {
+check('the court is appointments and passives, with no second currency', () => {
   const g = new Game({ world: generateWorld(20261), civ: 'franks', mode: 'sandbox', difficulty: 'sandbox' });
   g.start();
-  const list = g.decrees;
-  assert(Array.isArray(list) && list.length >= 5, 'expected at least five decrees');
-  const ids = new Set();
-  for (const d of list) {
-    assert(d.id && !ids.has(d.id), 'duplicate decree id ' + d.id + ' (the UI keys buttons by it)');
-    ids.add(d.id);
-    assert(d.name && d.desc && d.icon, `decree ${d.id} is missing display fields`);
-    assert(d.cost > 0 && d.cost <= 200, `decree ${d.id} costs ${d.cost}`);
-    assert(typeof d.apply === 'function', `decree ${d.id} has no apply()`);
+  /* The player asked for the court to be an appointment and the perk that
+     comes with it. Writs, decrees and favour are gone: if any of them comes
+     back, the panel grows a second economy nobody asked for. */
+  assert(g.decrees === undefined, 'decrees are back');
+  assert(typeof g.activateDecree === 'undefined', 'activateDecree is back');
+  for (const t of g.teamIds) {
+    assert(!('favor' in g.teams.get(t)), 'the favour pool is back on team ' + t);
   }
-  const res = g.activateDecree(1, 'harvest');
-  assert(res.ok === false, 'decree fired with no favour');
-  g.teams.get(1).favor = 500;
-  const ok = g.activateDecree(1, 'harvest');
-  assert(ok.ok === true, 'harvest decree failed with full favour');
-  assert(g.buffMul(1, 'gather') > 1.3, 'gather buff not applied');
-  assert(g.activateDecree(1, 'nope').ok === false, 'unknown decree accepted');
+  const off = g.court.summary(1);
+  assert(off.length === 4, 'the court should have four offices');
+  for (const o of off) {
+    assert(o.id && o.name && o.icon, 'office ' + o.id + ' is missing display fields');
+    assert(o.writ === undefined, `office ${o.id} still offers a writ`);
+  }
+  const cat = officeCatalogue();
+  for (const o of cat) {
+    assert(o.cost && o.cost.gold > 0, `office ${o.id} is free`);
+    assert(!('favor' in o.cost), `office ${o.id} still costs favour`);
+    assert(o.passive.length === 3, `office ${o.id} has no per-rank perks`);
+  }
 });
 
 check('FX presets used by the sim all exist', () => {

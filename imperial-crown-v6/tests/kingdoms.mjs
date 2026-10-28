@@ -121,7 +121,6 @@ check('every crown has a court, and a rival can be appointed over', () => {
   const g = match(3);
   for (const t of g.teamIds) assert(g.court.rec(t), `crown ${t} has no court`);
   const u = g.spawnUnitRaw('knight', 3, g.baseOf(3).x + 2, g.baseOf(3).z + 2);
-  g.teams.get(3).favor = 400;
   g.teams.get(3).res.gold = 400;
   g.teams.get(3).age = 2;
   const r = g.court.appoint(3, 'marshal', u);
@@ -221,7 +220,7 @@ check('a fallen crown\u2019s treasury, learning and soldiers pass to its conquer
   const g = match(3);
   const loser = g.teams.get(3);
   const winner = g.teams.get(1);
-  loser.res.gold = 500; loser.res.food = 300; loser.favor = 60;
+  loser.res.gold = 500; loser.res.food = 300;
   loser.techs.add('forging'); loser.techs.add('scale_armor');
   loser.buffs.push({ kind: 'attack', mul: 1.3, time: 40, name: 'Rally' });
   const loserArmy = g.units.filter((u) => !u.dead && u.team === 3 && !u.isKing).length;
@@ -231,8 +230,7 @@ check('a fallen crown\u2019s treasury, learning and soldiers pass to its conquer
   assert(r.ok, 'the collapse failed');
   assert(winner.res.gold >= winnerGold + 500, `gold did not transfer (${winnerGold} -> ${winner.res.gold})`);
   assert(winner.techs.has('forging') && winner.techs.has('scale_armor'), 'technologies did not transfer');
-  assert(winner.favor >= 60, 'favour did not transfer');
-  assert(winner.buffs.some((b) => b.name === 'Rally'), 'the standing decree did not transfer');
+  assert(winner.buffs.some((b) => b.name === 'Rally'), 'the standing bonus did not transfer');
   assert(g.units.filter((u) => !u.dead && u.team === 3).length === 0, 'the fallen crown still commands men');
   assert(g.units.filter((u) => !u.dead && u.team === 1).length === winnerArmy + loserArmy, 'soldiers were lost in the transition');
   assert(g.fallenTeams.has(3), 'the crown is not marked fallen');

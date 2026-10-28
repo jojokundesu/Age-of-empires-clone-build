@@ -35,7 +35,6 @@ export const RES_META = {
   wood: { name: 'Wood', icon: 'tree', color: '#a8c98a' },
   gold: { name: 'Gold', icon: 'coin', color: '#f0cb6a' },
   stone: { name: 'Stone', icon: 'stone', color: '#c2c8ce' },
-  favor: { name: 'Favour', icon: 'bolt', color: '#d9a8ff' }
 };
 
 export const AGES = {

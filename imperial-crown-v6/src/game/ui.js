@@ -32,7 +32,7 @@ function rankTarget(rank) { return RANK_AT[Math.min(RANK_AT.length - 1, rank)] |
 function costText(cost) {
   if (!cost) return '';
   const parts = [];
-  for (const k of ['food', 'wood', 'gold', 'stone', 'favor']) {
+  for (const k of ['food', 'wood', 'gold', 'stone']) {
     if (cost[k]) parts.push(`${cost[k]}${k[0].toUpperCase()}`);
   }
   return parts.join(' ');
@@ -53,10 +53,10 @@ export class UI {
     this.app = opts.app || {};
     this.root = document.getElementById('hud');
     this.el = {};
-    const ids = ['resFood', 'resWood', 'resGold', 'resStone', 'resFavor', 'resPop',
+    const ids = ['resFood', 'resWood', 'resGold', 'resStone', 'resPop',
       'dotFood', 'dotWood', 'dotGold', 'dotStone',
       'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer', 'seasonChip', 'realmChip', 'climateChip',
-      'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnDecrees', 'decreeBadge', 'btnCourt', 'courtBadge',
+      'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnCourt', 'courtBadge',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
       'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
       'minimap', 'miniStamp', 'btnGotoTC', 'btnMiniMode', 'btnFormation',
@@ -72,7 +72,7 @@ export class UI {
     this.miniMode = 0;
     this.cmdButtons = [];
     this.sig = '';
-    this.last = { food: -1, wood: -1, gold: -1, stone: -1, favor: -1, pop: '', age: -1, clock: '', idle: -1 };
+    this.last = { food: -1, wood: -1, gold: -1, stone: -1, pop: '', age: -1, clock: '', idle: -1 };
     this.tAcc = 0;
     this.mAcc = 0;
     this.alertT = 0;
@@ -101,7 +101,6 @@ export class UI {
     click(el.btnIdle, () => this.cycleIdleVillager());
     click(el.btnArmy, () => this.selectArmy());
     click(el.btnTech, () => this.openTech());
-    click(el.btnDecrees, () => this.openDecrees());
     click(el.btnCourt, () => this.openCourt());
     click(el.realmChip, () => this.openCourt());
     click(el.climateChip, () => this.openClimate());
@@ -244,7 +243,7 @@ export class UI {
   setGame(game) {
     this.game = game;
     this.sig = '';
-    this.last = { food: -1, wood: -1, gold: -1, stone: -1, favor: -1, pop: '', age: -1, clock: '', idle: -1 };
+    this.last = { food: -1, wood: -1, gold: -1, stone: -1, pop: '', age: -1, clock: '', idle: -1 };
     /* A new match gets a new UI instance, but the DOM grid survives the one
        before it: without this, quitting to the menu and starting again left two
        sets of command cards stacked in the same grid, and the top ones still
@@ -382,7 +381,7 @@ export class UI {
       out.push({ icon: 'villager', label: 'Idle', action: () => this.cycleIdleVillager() });
       out.push({ icon: 'home', label: 'Town', action: () => this.centreOnTownCentre() });
       out.push({ icon: 'scroll', label: 'Tech', action: () => this.openTech() });
-      out.push({ icon: 'crown', label: 'Decrees', action: () => this.openDecrees() });
+      out.push({ icon: 'people', label: 'Court', action: () => this.openCourt() });
       out.push({ icon: 'map', label: 'Explore', action: () => this.sendScout() });
       return out;
     }
@@ -533,7 +532,7 @@ export class UI {
     const g = this.game;
     this.input.armed = null;
     g.placing = null;
-    g.courtArmed = null; g.courtWrit = null;
+    g.courtArmed = null;
     if (g.modCast) g.modHost?.cancelCast();
     g.clearSelection();
     this._adHocUntil = 0; this.sig = '';
@@ -910,47 +909,12 @@ export class UI {
       '<span class="dim tiny">Research at the matching building. Click a building to see what it can research.</span>');
   }
 
-  openDecrees() {
-    const g = this.game;
-    const t = g.teams.get(1);
-    const favor = t.favor || 0;
-    const list = g.decrees || [];
-    const buffs = (t.buffs || []);
-    const buffRows = buffs.length ? `<div class="buffStrip">${buffs.map((b) => `
-      <span class="buffPill" title="${b.name}"><i style="width:${Math.round((g.buffProgress ? g.buffProgress(1, b.name) : 0) * 100)}%"></i>
-        ${b.name} · ${Math.ceil(b.time)}s</span>`).join('')}</div>` : '';
-    const rows = list.map((d) => {
-      const st = g.decreeState ? g.decreeState(1, d.id) : { ok: favor >= d.cost };
-      const price = Math.round(d.cost * (g.court ? g.court.decreeDiscount(1) : 1));
-      const why = st.ok ? `${price} favour` : st.used ? 'Already done' : (st.reason || 'Not yet');
-      const cls = st.ok ? '' : 'locked';
-      const saved = price < d.cost ? ` <em class="gold tiny">Hierophant −${Math.round((1 - price / d.cost) * 100)}%</em>` : '';
-      return `
-      <div class="row ${cls}" data-decree-row="${d.id}">
-        <b>${icon(d.icon)} ${d.name}</b>
-        <span>${d.desc}${saved}<br>
-          <button class="ghostBtn" data-decree="${d.id}" ${st.ok ? '' : 'disabled'} title="${why}">${why}</button>
-        </span>
-      </div>`;
-    }).join('');
-    this.menu?.openModal('COUNCIL', `Imperial Decrees · ${Math.floor(favor)} favour`,
-      `${buffRows}<div class="decreeList">${rows || '<p class="dim">No decrees available.</p>'}</div>`,
-      '<span class="dim tiny">Favour accrues over time and from every kill.</span>');
-    const body = document.getElementById('modalBody');
-    if (body) body.onclick = (e) => {
-      const b = e.target.closest('[data-decree]');
-      if (!b) return;
-      const res = g.activateDecree(1, b.dataset.decree);
-      if (res && res.ok) { this.audio?.play('horn'); this.toast(res.msg || 'Decree proclaimed', 'good'); this.openDecrees(); }
-      else { this.toast(res?.reason || 'Not enough favour', 'warn'); this.audio?.play('warn'); }
-    };
-  }
-
   /* ---------------- the Court ----------------
      Four offices, each held by a person on the map. The panel only *arms*
-     an appointment or a writ: the next tap on the battlefield chooses the
-     subject, which keeps the whole system inside the grammar the player
-     already knows (pick a card, tap a target). */
+     an appointment: the next tap on the battlefield chooses the subject,
+     which keeps the whole system inside the grammar the player already
+     knows (pick a card, tap a target). There are no writs and no favour --
+     an office is who holds it, and the passive that follows. */
   /* ---------------- the slow sky ----------------
      The climate panel is deliberately small: what the era is, what it is
      doing to every number, how much strain has built, and *when* the next
@@ -1035,8 +999,6 @@ export class UI {
       const locked = age < def.age;
       const holder = o.holder;
       const rankPips = '●'.repeat(o.rank) + '○'.repeat(3 - o.rank);
-      const writ = o.writ;
-      const writWhy = !holder ? 'No holder' : (!writ.ready ? (writ.cooldown > 0 ? `${Math.ceil(writ.cooldown)}s` : `${def.writ.cost.favor} favour`) : '');
       const deedBar = `<div class="deedBar"><i style="width:${Math.round(o.progress * 100)}%"></i></div>`;
       return `
       <div class="courtRow ${locked ? 'locked' : ''} ${holder ? 'on' : ''}" data-office-row="${o.id}">
@@ -1051,7 +1013,6 @@ export class UI {
             ? `<button class="ghostBtn" data-appoint="${o.id}">Replace · ${costText(def.cost)}</button>
                <button class="ghostBtn" data-dismiss="${o.id}">Dismiss</button>`
             : `<button class="ghostBtn" data-appoint="${o.id}" ${o.vacantFor > 0 ? 'disabled' : ''}>Appoint · ${costText(def.cost)}</button>`}
-          <button class="ghostBtn" data-writ="${o.id}" ${writ.ready ? '' : 'disabled'} title="${writWhy}">${def.writ.name}${writWhy ? ` · ${writWhy}` : ''}</button>
         </span>
       </div>`;
     }).join('');
@@ -1079,7 +1040,6 @@ export class UI {
       const app = e.target.closest('[data-appoint]');
       if (app) {
         g.courtArmed = { office: app.dataset.appoint };
-        g.courtWrit = null;
         this.menu?.closeModal();
         const def = COURT_OFFICES.find((d) => d.id === app.dataset.appoint);
         this.toast(`Tap one of your ${def.class === 'military' ? 'soldiers' : def.class === 'villager' ? 'villagers' : def.class === 'monk' ? 'monks' : 'units'} to raise them to ${def.name}`, 'gold');
@@ -1091,22 +1051,6 @@ export class UI {
         this.refreshCommands(true);
         this.openCourt();
         return;
-      }
-      const w = e.target.closest('[data-writ]');
-      if (w) {
-        const id = w.dataset.writ;
-        const info = g.court.writ(1, id);
-        if (!info || !info.ready) { this.toast('That writ is not ready', 'warn'); return; }
-        if (info.target === 'unit') {
-          g.courtWrit = { office: id };
-          g.courtArmed = null;
-          this.menu?.closeModal();
-          this.toast(`${info.name} — tap an enemy unit`, 'gold');
-          return;
-        }
-        const res = g.court.useWrit(1, id, null);
-        if (res.ok) { this.toast(`${info.name} is proclaimed`, 'good'); this.audio?.play('horn'); this.openCourt(); }
-        else this.toast(res.reason || 'The writ fails', 'warn');
       }
     };
   }
@@ -1375,7 +1319,6 @@ export class UI {
     setNum(el.resWood, Math.floor(t.res.wood), 'wood');
     setNum(el.resGold, Math.floor(t.res.gold), 'gold');
     setNum(el.resStone, Math.floor(t.res.stone), 'stone');
-    setNum(el.resFavor, Math.floor(t.favor || 0), 'favor');
     const popStr = `${t.popUsed}/${t.popCap}`;
     if (last.pop !== popStr) { last.pop = popStr; if (el.resPop) el.resPop.textContent = popStr; }
     if (last.age !== t.age) {
@@ -1570,10 +1513,6 @@ export class UI {
         el.idleBadge.style.display = idle ? '' : 'none';
       }
     }
-    if (el.decreeBadge) {
-      const n = String(Math.floor(t.favor || 0));
-      if (el.decreeBadge.textContent !== n) el.decreeBadge.textContent = n;
-    }
     if (el.courtBadge && g.court) {
       /* the badge is a nudge, not a census: only seats the player could fill
          this instant, i.e. unlocked by age and not in mourning */
@@ -1606,7 +1545,7 @@ export class UI {
     const g = this.game;
     const el = this.el;
     const sel = g.selection.filter((e) => !e.dead);
-    const canClear = !!(sel.length || this.input.armed || g.placing || g.modCast || g.courtArmed || g.courtWrit);
+    const canClear = !!(sel.length || this.input.armed || g.placing || g.modCast || g.courtArmed);
     if (el.btnDeselect) el.btnDeselect.style.display = canClear ? '' : 'none';
     el.btnQuickDeselect?.classList.toggle('hidden', !this.panelsCollapsed || !canClear);
     if (!sel.length) {

@@ -34,12 +34,12 @@ const MAX_BASE_MAGES = 4;
 const DAY = 240;
 
 const RANKS = [
-  { rank: 1, title: 'Apprentice', xp: 0, mana: 100, regen: 3.4, type: MAGE },
-  { rank: 2, title: 'Adept', xp: 80, mana: 118, regen: 3.9, type: 'mage_adept' },
-  { rank: 3, title: 'Magus', xp: 220, mana: 138, regen: 4.5, type: 'mage_magus' },
-  { rank: 4, title: 'Archmage', xp: 430, mana: 162, regen: 5.2, type: 'mage_archmage' },
-  { rank: 5, title: 'Sage', xp: 720, mana: 190, regen: 6.0, type: 'mage_sage' },
-  { rank: 6, title: 'Ascendant', xp: 1100, mana: 225, regen: 7.0, type: 'mage_ascendant' }
+  { rank: 1, title: 'Apprentice', xp: 0, mana: 120, regen: 4.2, type: MAGE },
+  { rank: 2, title: 'Adept', xp: 60, mana: 145, regen: 5.0, type: 'mage_adept' },
+  { rank: 3, title: 'Magus', xp: 160, mana: 172, regen: 5.9, type: 'mage_magus' },
+  { rank: 4, title: 'Archmage', xp: 320, mana: 205, regen: 6.9, type: 'mage_archmage' },
+  { rank: 5, title: 'Sage', xp: 560, mana: 245, regen: 8.1, type: 'mage_sage' },
+  { rank: 6, title: 'Ascendant', xp: 900, mana: 300, regen: 9.5, type: 'mage_ascendant' }
 ];
 const RANK_BY_TYPE = new Map(RANKS.map((r) => [r.type, r]));
 
@@ -49,6 +49,23 @@ const ELEMENTS = {
   storm: { name: 'Storm', icon: 'bolt', color: [0.75, 0.8, 1] },
   arcane: { name: 'Arcane', icon: 'relic', color: [0.75, 0.5, 1] }
 };
+
+/**
+ * A spell's power grows with the caster's rank.
+ *
+ * Every damaging spell used to be a fixed number, so the Ascendant threw
+ * exactly the same fireball as the apprentice who had just been trained --
+ * six ranks, one spell, and a "progression" that changed nothing but the hp
+ * bar's label. This multiplier is the ladder: rank 1 is the baseline, and a
+ * rank 6 Ascendant hits for 3.4x. It is applied to every damage number in
+ * the book, so a high-rank mage is not a slightly better soldier but the
+ * strongest single card a crown can put on the field.
+ */
+const RANK_POWER = 0.48;
+function power(api, u) {
+  const r = (u && u.modState && u.modState.arcane && u.modState.arcane.rank) || 1;
+  return 1 + RANK_POWER * (r - 1);
+}
 
 function ustate(api, u) {
   return api.unitState(u, () => ({
@@ -193,20 +210,21 @@ function performCast(api, unit, spell, x, z) {
    ============================================================ */
 const SPELLS = [
   {
-    id: 'fireball', name: 'Fireball', icon: 'flame', rank: 1, cost: 30, cd: 7, range: 15, radius: 2.8,
+    id: 'fireball', name: 'Fireball', icon: 'flame', rank: 1, cost: 22, cd: 3.2, range: 15, radius: 3.4,
     color: [1, 0.55, 0.2],
-    desc: 'Area damage plus a burn.',
+    desc: 'A blast that burns: 62 damage and a five-second fire, all ranks.',
     cast(api, unit, x, z) {
-      const r = 3.2;
+      const r = 3.4;
+      const pw = power(api, unit);
       let hit = 0;
       for (const e of enemiesIn(api, unit, x, z, r)) {
         const d = Math.hypot(e.x - x, e.z - z);
-        api.damage(e, 46 * (1 - d / (r * 1.7)), unit);
+        api.damage(e, 62 * pw * (1 - 0.55 * (d / r)), unit);
         const es = api.unitState(e);
-        es.burn = { until: api.time + 5, dps: 5, source: unit.team };
+        es.burn = { until: api.time + 5, dps: 8 * pw, source: unit.team };
         hit++;
       }
-      for (const b of buildingsIn(api, unit.team, x, z, r)) { api.damage(b, 20, unit); hit++; }
+      for (const b of buildingsIn(api, unit.team, x, z, r)) { api.damage(b, 26 * pw, unit); hit++; }
       api.fx.explosion(x, api.height(x, z) + 0.6, z, 1.2);
       api.fx.beamBetween(unit.x, unit.y + 1.3, unit.z, x, api.height(x, z) + 0.5, z,
         { color: [1, 0.6, 0.25], scale: 1.1, life: 0.3, jag: 0.22, width: 0.22 });
@@ -234,7 +252,7 @@ const SPELLS = [
     }
   },
   {
-    id: 'ice_lance', name: 'Ice Lance', icon: 'mountain', rank: 2, cost: 26, cd: 8, range: 13,
+    id: 'ice_lance', name: 'Ice Lance', icon: 'mountain', rank: 2, cost: 22, cd: 4.5, range: 13,
     color: [0.6, 0.85, 1],
     desc: 'A spear of ice that pierces a line of enemies and slows them.',
     cast(api, unit, x, z) {
@@ -245,10 +263,14 @@ const SPELLS = [
       for (const e of enemiesIn(api, unit, (unit.x + x) / 2, (unit.z + z) / 2, len * 0.6 + 2)) {
         const px = e.x - unit.x, pz = e.z - unit.z;
         const along = px * ux + pz * uz;
-        if (along < 0 || along > len) continue;
+        /* The body standing *at* the aim point is the whole reason for the
+           spell, and `along > len` excluded it by a floating-point hair --
+           an Ice Lance aimed at a man did nothing at all. The line now runs a
+           stride past its target. */
+        if (along < -0.5 || along > len + 1.6) continue;
         const perp = Math.abs(px * uz - pz * ux);
-        if (perp > 1.35) continue;
-        api.damage(e, 38, unit);
+        if (perp > 1.6) continue;
+        api.damage(e, 52 * power(api, unit), unit);
         const es = api.unitState(e);
         es.slow = { mul: 0.5, until: api.time + 2.5 };
         api.fx.sparks(e.x, e.y + 1, e.z, 6, [0.7, 0.9, 1]);
@@ -278,17 +300,17 @@ const SPELLS = [
     }
   },
   {
-    id: 'chain', name: 'Chain Lightning', icon: 'bolt', rank: 3, cost: 42, cd: 13, range: 12,
+    id: 'chain', name: 'Chain Lightning', icon: 'bolt', rank: 3, cost: 34, cd: 7, range: 12,
     color: [0.8, 0.85, 1],
     desc: 'Leaps between up to five enemies.',
     cast(api, unit, x, z) {
       const pool = enemiesIn(api, unit, x, z, 7);
       if (!pool.length) { api.say('No one to chain', 'info'); return false; }
       let from = { x, z };
-      let dmg = 36;
+      let dmg = 48 * power(api, unit);
       let hits = 0;
       const used = new Set();
-      for (let i = 0; i < 5 && pool.length; i++) {
+      for (let i = 0; i < 6 && pool.length; i++) {
         let best = null, bestD = Infinity;
         for (const e of pool) {
           if (used.has(e)) continue;
@@ -321,7 +343,7 @@ const SPELLS = [
     }
   },
   {
-    id: 'meteor', name: 'Meteor', icon: 'flame', rank: 4, cost: 62, cd: 26, range: 16, radius: 4.5,
+    id: 'meteor', name: 'Meteor', icon: 'flame', rank: 4, cost: 52, cd: 14, range: 16, radius: 4.5,
     color: [1, 0.42, 0.16],
     desc: 'A rock from the sky. It takes a moment to arrive.',
     cast(api, unit, x, z) {
@@ -346,13 +368,13 @@ const SPELLS = [
     }
   },
   {
-    id: 'nova', name: 'Frost Nova', icon: 'mountain', rank: 5, cost: 70, cd: 30, range: 1, radius: 7.5,
+    id: 'nova', name: 'Frost Nova', icon: 'mountain', rank: 5, cost: 55, cd: 14, range: 1, radius: 7.5,
     color: [0.65, 0.9, 1],
     desc: 'Everything around the caster freezes solid.',
     cast(api, unit) {
       let n = 0;
       for (const e of enemiesIn(api, unit, unit.x, unit.z, 7.5)) {
-        api.damage(e, 34, unit);
+        api.damage(e, 44 * power(api, unit), unit);
         const es = api.unitState(e);
         es.freeze = api.time + 1.9;
         es.slow = { mul: 0.4, until: api.time + 3.5 };
@@ -366,7 +388,7 @@ const SPELLS = [
     }
   },
   {
-    id: 'thunderstorm', name: 'Thunderstorm', icon: 'bolt', rank: 5, cost: 80, cd: 40, range: 16, radius: 7,
+    id: 'thunderstorm', name: 'Thunderstorm', icon: 'bolt', rank: 5, cost: 62, cd: 20, range: 16, radius: 7,
     color: [0.8, 0.85, 1],
     desc: 'A storm cell that keeps striking for eight seconds.',
     cast(api, unit, x, z) {
@@ -410,7 +432,7 @@ const HYBRIDS = [
         const along = px * ux + pz * uz;
         if (along < 0 || along > len) continue;
         if (Math.abs(px * uz - pz * ux) > 1.6) continue;
-        api.damage(e, 95, unit);
+        api.damage(e, 105 * power(api, unit), unit);
         const es = api.unitState(e);
         es.burn = { until: api.time + 4, dps: 6, source: unit.team };
         hit++;
@@ -483,7 +505,7 @@ const HYBRIDS = [
       for (const e of enemiesIn(api, unit, unit.x, unit.z, 4.5)) {
         const es = api.unitState(e);
         es.freeze = api.time + 1.5;
-        api.damage(e, 18, unit);
+        api.damage(e, 26 * power(api, unit), unit);
         n++;
       }
       api.fx.sparks(unit.x, unit.y + 1.4, unit.z, 18, [0.9, 0.95, 1]);
@@ -498,7 +520,7 @@ const HYBRIDS = [
     cast(api, unit, x, z) {
       let n = 0;
       for (const e of enemiesIn(api, unit, x, z, 6)) {
-        api.damage(e, 48, unit);
+        api.damage(e, 55 * power(api, unit), unit);
         const es = api.unitState(e);
         es.slow = { mul: 0.45, until: api.time + 4.5 };
         api.fx.sparks(e.x, e.y + 1, e.z, 6, [1, 0.7, 0.6]);
@@ -857,7 +879,7 @@ export const arcane = {
       api.mark(m.x, m.z, { kind: 0, r0: 1, g0: 0.4, b0: 0.1, r: 9, life: 1 });
       api.shake(0.5);
       for (const e of enemiesIn(api, m.by || { team: m.team, x: m.x, z: m.z }, m.x, m.z, 4.8)) {
-        api.damage(e, 105, m.by);
+        api.damage(e, 135 * power(api, m.by), m.by);
         const es = api.unitState(e);
         es.burn = { until: time + 5, dps: 7, source: m.team };
       }
@@ -889,7 +911,7 @@ export const arcane = {
         api.fx.sparks(tx, ty + 4.5, tz, 6, [0.85, 0.9, 1]);
         api.fx.explosion(tx, ty + 0.6, tz, 0.9);
         api.mark(tx, tz, { kind: 1, r0: 0.9, g0: 0.95, b0: 1, r: 1.8, life: 0.25 });
-        if (victim) api.damage(victim, 26, s.by);
+        if (victim) api.damage(victim, 34 * power(api, s.by), s.by);
         for (const b of buildingsIn(api, s.team, tx, tz, 1.6)) api.damage(b, 8, s.by);
       }
     }

@@ -182,7 +182,7 @@ check('minimap click recentres', () => {
   assert(Math.abs(app.camera.desired[0] - before) > 5, 'minimap did not move the camera');
 });
 check('HUD buttons do not throw', () => {
-  for (const id of ['btnIdle', 'btnArmy', 'btnTech', 'btnDecrees', 'btnSound', 'btnPause', 'ageBtn', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'btnGotoTC', 'btnMiniMode', 'btnFormation', 'inspMultiBtn']) {
+  for (const id of ['btnIdle', 'btnArmy', 'btnTech', 'btnCourt', 'btnSound', 'btnPause', 'ageBtn', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'btnGotoTC', 'btnMiniMode', 'btnFormation', 'inspMultiBtn']) {
     const el = document.getElementById(id);
     if (!el) throw new Error('missing #' + id);
     el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));

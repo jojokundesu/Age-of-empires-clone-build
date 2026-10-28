@@ -2,6 +2,36 @@
 
 Version 6 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-v4/); v5 is kept beside it. The v4 and v5 source, assets, Android packages and save slots remain untouched. V6 keeps the same procedural art, custom WebGL2 renderer, strategy simulation, 30 Hz fixed tick, LOD, and adaptive quality governor; its controls operate on the actual units in that simulation rather than a second game.
 
+## What changed in 6.1.0
+
+This round is the list that came back after 6.0.1, answered one item at a time.
+
+- **Morale cannot stop a unit any more.** It is bonus-only: the floor (60) is worth exactly no penalty
+  -- same damage, same speed, same toughness -- the ceiling (100) is +8% damage, and the rout
+  threshold is unreachable. `break()` heals any stale rout back to `idle`. Every order is obeyed at
+  every morale, and the suite proves it at 0, in the field, for 300 s.
+- **Your side fights for its ground.** Idle and stand-ground defenders acquire at 13-16 m (archers
+  16 m, villagers none) with a 26-34 m leash to their building. `Game.raiseAlarm()` pulls every idle
+  defender within 24 m of a hit -- 30 m when a building is hit -- and villagers drop their load and run
+  for the nearest roof. Six raiders against six idle spearmen: 0 engaged and a chipped hall before;
+  first kill at ~6 s, all six dead by 28 s, hall untouched after.
+- **The court is an appointment and its perk.** Writs, decrees, the favour pool and the council panel
+  are gone. Four offices (Marshal, Chancellor, Spymaster, Hierophant) cost gold, are held by a person
+  on the map and rank up on deeds; death empties the office for 25 s and costs a rank. The Hierophant
+  now ranks on healing, which is what a monk actually does.
+- **Placement is predictable.** Trees block with their trunk (`ResourceNode.trunkRadius`), not their
+  canopy; a bystander is a `unit` reason in the ghost and is stepped aside by `_clearFootprint()`
+  rather than refusing the order; the ghost and `placeBuilding` share one rule; first person refuses to
+  put a footprint on the builder.
+- **One mage, six ranks, and rank 6 is a war-ender.** The five hidden rank defs no longer appear as
+  trainable cards. Damage scales with rank (`1 + 0.48 * (rank - 1)`, 3.4x at Ascendant), the book
+  casts on real cooldowns, and the spells that did nothing now work: Fireball 62 + a five-second burn
+  on a 3.2 s cooldown, Ice Lance hits the man it was aimed at, Chain Lightning leaps six times, Frost
+  Nova freezes the circle. Casting uses the tapped lock first, then the reticle.
+- **Two long-standing bugs closed.** A unit kept the first-person camera's yaw as its facing after
+  you left it; and an AI wave whose target hall had been razed marched to the empty coordinates and
+  stood there for ever -- it now follows the nearest thing that crown still owns.
+
 ## What changed in 6.0.1
 
 Everything here came from playing 6.0.0 on the phone, and each one has a check in the suite now
@@ -96,9 +126,9 @@ See [docs-browser-tests.md](docs-browser-tests.md) for Chromium libraries on min
 
 ## Android builds and signing
 
-[Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.0.1-preview/imperial-crown-3d-v6.apk) — the same file CI builds and verifies on every push, published as the `v6.0.1-preview` release with a matching `apk-sha256.txt`. It is signed with the repository's **public demo key** for testing and has not been performance-tested on a physical Realme 9i.
+[Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.1.0-preview/imperial-crown-3d-v6.apk) — the same file CI builds and verifies on every push, published as the `v6.1.0-preview` release with a matching `apk-sha256.txt`. It is signed with the repository's **public demo key** for testing and has not been performance-tested on a physical Realme 9i.
 
-The v6 Android application ID is `ai.arena.imperialcrown.v6` (versionCode 60001), distinct from v5's `ai.arena.imperialcrown.v5` and v4's `ai.arena.imperialcrown`, so it installs **beside** v5 without replacing it and without inheriting its save slot. A local build needs JDK 17+, an Android SDK platform and build-tools, and produces `build/imperial-crown-6.0.1.apk`:
+The v6 Android application ID is `ai.arena.imperialcrown.v6` (versionCode 60100), distinct from v5's `ai.arena.imperialcrown.v5` and v4's `ai.arena.imperialcrown`, so it installs **beside** v5 without replacing it and without inheriting its save slot. A local build needs JDK 17+, an Android SDK platform and build-tools, and produces `build/imperial-crown-6.1.0.apk`:
 
 ```sh
 ANDROID_HOME=/path/to/android-sdk npm run apk
@@ -106,7 +136,7 @@ ANDROID_HOME=/path/to/android-sdk npm run apk
 
 Signing is unchanged from v4/v5: the repository's v4 PKCS#12 key is a **public demo key**, and the v6 script reuses the sibling `imperial-crown-v4/android/imperial.p12` without copying it. Provide your own key through `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_PASSWORD` and `KEY_ALIAS` for anything real, and keep the same certificate for future v6 upgrades or Android will refuse the update. Never commit a production signing key. If neither key is available the script warns and generates a throwaway key that cannot provide stable upgrades.
 
-`.github/workflows/android-v6.yml` is the only supported path to a published v6 APK. On every push that touches `imperial-crown-v6/**` it installs the SDK, builds `dist/`, runs the whole regression suite, the Chromium first-person/panel test and the 892x412 phone-layout check, builds and signs the APK, then verifies the v1+v2 signatures, `zipalign`, the manifest identity (`ai.arena.imperialcrown.v6`, 60001, 6.0.1) and that every byte of `dist/` is inside `assets/www`. It publishes the release only from a dispatch or from a commit message containing `[release v6]`, and it refuses to overwrite the tag if it already belongs to another commit.
+`.github/workflows/android-v6.yml` is the only supported path to a published v6 APK. On every push that touches `imperial-crown-v6/**` it installs the SDK, builds `dist/`, runs the whole regression suite, the Chromium first-person/panel test and the 892x412 phone-layout check, builds and signs the APK, then verifies the v1+v2 signatures, `zipalign`, the manifest identity (`ai.arena.imperialcrown.v6`, 60100, 6.1.0) and that every byte of `dist/` is inside `assets/www`. It publishes the release only from a dispatch or from a commit message containing `[release v6]`, and it refuses to overwrite the tag if it already belongs to another commit.
 
 Installation and sustained performance on a physical handset are still unverified here. Use in-game **Menu → Check device**, then play a long battle and first-person run on the phone to judge frame rate, heat and battery.
 

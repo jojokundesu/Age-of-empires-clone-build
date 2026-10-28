@@ -124,47 +124,68 @@ jobs:
           set -euo pipefail
           TAG="v${VERSION}-preview"
           cat > "$RUNNER_TEMP/v6-release-notes.md" <<'NOTES'
-          ## Imperial Crown 3D v6.0.1 — Android preview
+          ## Imperial Crown 3D v6.1.0 — Android preview
 
           Built from this commit and verified in this run: the whole regression suite, the Chromium
           first-person and panel pass, the 892x412 phone-layout check, the signatures, the alignment,
           the package identity and every byte of the bundled web app.
 
-          **This build is a patch on 6.0.0.** It is the same game with five things that were broken
-          fixed -- and they were all reported from a real game on the phone, not from a test.
+          **This build is the answer to the list you sent after 6.0.1**, point for point.
 
-          ### What was wrong, and what it does now
+          ### Morale is gone as a penalty
 
-          - **Whole armies turned round and walked home.** Morale treated every unit away from a
-            supply tent the same way: -1.05 a second, whether it was fighting, marching or standing
-            guard. A march to the enemy takes about three minutes, so no army ever arrived -- your men
-            dropped their orders, turned their backs and ran, "for no reason, from the very
-            beginning". Fighting now costs almost nothing, marching costs a slow bleed, and standing
-            in the open is what really wears an army down. Your own buildings steady the men around
-            them, so defending a gate is no longer a rout waiting to happen.
-          - **Villagers stopped working after a while.** Two causes. Standing still to chop a tree was
-            counted as being stuck, so every three and a half seconds a woodcutter lost his tree and
-            was put back to idle; and when the trees near the town were gone, the 26 m search found
-            nothing and the villager simply retired, for ever. Working is no longer a stall, the
-            search widens until it finds something, and a villager with no orders goes back to work on
-            his own -- returning to his own field or grove rather than drifting to a new one.
-          - **Farms produced nothing at all.** The farm's card promised food and the code never
-            turned the building into something a villager could harvest; 60 wood bought a decoration.
-            A finished field is now a real food source, the inspector shows what is left in it, and
-            when it is bare it is resown for 60 wood instead of being destroyed by its own harvest.
-          - **The spellbook vanished after the once-a-day spell.** SKYFALL is cast from the world map,
-            and the map closed the book without ever opening it again -- so every other spell looked
-            gone. The book comes back where you left it, with only the spent spell greyed to
-            "Tomorrow".
-          - **You never saw the enemy coming.** A wave walks 400 m of empty island before anything
-            tells you it exists. The watch now calls out a body of enemy soldiers near anything you
-            own, with a direction, at most every 40 s.
+          Morale can now only ever *add*: the floor is worth exactly no penalty (same damage, same
+          speed, same toughness), it tops out at +8% damage, and no unit can rout at any number. Every
+          order is obeyed at every morale. The system that turned your army round is dead; what is
+          left is a small bonus for a well-supplied army.
 
-          Everything else from 6.0.0 is unchanged: two thumbs and no keyboard, the Champion and his
-          perks, squads, the mage, and optional Workshop mods.
+          ### Your side defends itself
 
-          It installs **over 6.0.0** (same key, versionCode 60001) and stays beside v5. Signed with
-          the repository's public demo key for testing. Sustained frame rate, heat and battery on the
+          Idle and stand-ground defenders now engage anything inside 13-16 m instead of waiting for a
+          man to walk into their faces, with a leash so they do not chase a scout across the island.
+          Anything hit -- a soldier, a villager, or a building -- rings an alarm that pulls in every
+          idle man within 24 m (30 m for a building). Villagers drop their load and run for the nearest
+          roof instead of standing at a tree. Measured: six raiders against six idle spearmen used to
+          lose 0 raiders in 40 s while the town centre was chipped down; now the first raider dies at
+          ~6 s and all six are dead by 28 s, with the hall untouched.
+
+          ### The court is an appointment and a perk, nothing else
+
+          Writs, decrees, favour, Whispers, Census, Benediction and the council panel are all gone, and
+          so is the favour resource -- there is no second currency. Four offices remain, each held by a
+          person on the map, each costing gold and ranking up on deeds: Marshal (kills), Chancellor
+          (resources), Spymaster (enemy losses), Hierophant (healing). Keep them alive or the office
+          stands empty for 25 s and loses a rank.
+
+          ### Building placement is predictable
+
+          Trees now block with their trunk, not their canopy, so a buildable yard no longer reads
+          "blocked" because of a tree twelve metres away. A man standing on the spot is reported as
+          `unit` in the ghost, and on a real placement he is stepped aside instead of the order being
+          refused. The ghost and the building ask the same question, and a footprint can never land on
+          the builder in first person.
+
+          ### One mage, six ranks, and rank 6 is a war-ender
+
+          The six duplicate mage cards are gone: one mage is trainable, and it promotes in place. Spell
+          damage now scales with rank (`1 + 0.48 * (rank - 1)`, so 3.4x at Ascendant), the whole book
+          casts on a real cooldown instead of once a battle, and the spells that did nothing now do
+          something: Fireball is 62 damage plus a five-second burn in a 3.4 m blast on a 3.2 s
+          cooldown, Ice Lance actually hits the man you aimed it at (its line test excluded the
+          target), Chain Lightning leaps six times, Frost Nova freezes what surrounds you, and a rank-6
+          Ascendant kills a swordsman with one fireball before the burn even starts. A spell also goes
+          where you pointed: the tapped lock beats the crosshair. Ward and Nova were never broken --
+          they are self-centred and simply had no target to aim at.
+
+          ### Also fixed
+
+          - A unit kept the camera's yaw as its facing after you left first person, so it walked away
+            staring at a spot on the ground ("units turning away for no reason").
+          - An AI wave whose target hall had been razed marched to a field of ash and stood in it
+            forever. With the hall gone the wave now follows the nearest thing the crown still owns.
+
+          It installs **over 6.0.1** (same key, versionCode 60100) and stays beside v5. Signed with the
+          repository's public demo key for testing. Sustained frame rate, heat and battery on the
           physical Realme 9i are still unmeasured -- that needs the phone.
 
           Download `imperial-crown-3d-v6.apk` below; the SHA-256 file lets you verify it.

@@ -475,9 +475,8 @@ export class Input {
     const now = performance.now();
     const doubleTap = now - this.lastTapTime < 320 && this.lastTapEntity === hit;
 
-    /* 0a. an armed court appointment or writ: the next tap picks the person */
-    if (game.courtArmed || game.courtWrit) {
-      if (game.courtArmed) {
+    /* 0a. an armed court appointment: the next tap picks the person */
+    if (game.courtArmed) {
         const office = game.courtArmed.office;
         game.courtArmed = null;
         if (hit && hit.kind === 'unit' && hit.team === game.playerTeam) {
@@ -494,18 +493,6 @@ export class Input {
         }
         this.lastTapTime = 0;
         return;
-      }
-      const office = game.courtWrit.office;
-      game.courtWrit = null;
-      if (hit && hit.kind === 'unit' && hit.team !== game.playerTeam && hit.team !== 0) {
-        const res = game.court.useWrit(game.playerTeam, office, hit);
-        if (res.ok) this.ui?.toast('The whisper is on its way', 'good');
-        else this.ui?.toast(res.reason || 'The writ fails', 'warn');
-      } else {
-        this.ui?.toast('No enemy marked', 'warn');
-      }
-      this.lastTapTime = 0;
-      return;
     }
 
     /* 0. an armed mod spell takes the tap before anything else: the player has
@@ -526,12 +513,13 @@ export class Input {
     // 2. placement mode
     if (game.placing) {
       const p = game.placing;
-      const spot = game.canPlaceAt(p.type, 1, g[0], g[2]);
+      const spot = game.canPlaceAt(p.type, 1, g[0], g[2], { ignoreUnits: true });
       if (!spot.ok) {
         this.ui?.toast(spot.reason === 'blocked' ? 'Something is already there'
           : spot.reason === 'water' ? 'Cannot build in the water'
           : spot.reason === 'slope' ? 'The ground is too steep'
           : spot.reason === 'resource' ? 'Resources are in the way'
+          : spot.reason === 'unit' ? 'Someone is standing there'
           : spot.reason === 'edge' ? 'That is the edge of the world'
           : spot.reason === 'contested' ? 'Enemies are too close to raise a town centre' : 'Cannot build there', 'warn');
         this.audio?.play('warn');

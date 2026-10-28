@@ -711,10 +711,19 @@ export class Unit extends Entity {
        never before a manual order has had a moment to land. */
     if (this.type === 'villager' && !this.noAggro && this.team !== 0) this._selfTask(dt);
     // auto-acquire targets based on stance
-    if (this.stance === 'stand' || this.noAggro) return;
-    if (this.attackCooldown > 0) return;
+    if (this.noAggro) return;
     if (this.def.classes.includes('monk')) return;
-    if (this.type === 'villager' && this.stance !== 'aggressive') return;
+    /* A villager runs rather than fights -- see _flee -- and a soldier on
+       "stand" holds his ground but still swings at whatever walks into him. */
+    if (this.type === 'villager') { this._flee(dt); return; }
+    if (this.stance === 'stand') {
+      if (this.attackCooldown <= 0 && this.def.attack > 0) {
+        const near = this.game.findEnemyNear(this, Math.max(2.5, this.stats().range + 0.5));
+        if (near) { this.target = near; this.state = STATE.ATTACK; }
+      }
+      return;
+    }
+    if (this.attackCooldown > 0) return;
     /* A standing man does not need to re-scan the horizon thirty times a
        second. Each idle unit looks around on its own eighth of a second,
        staggered by id, so the whole crowd costs an eighth as much and no
@@ -722,11 +731,57 @@ export class Unit extends Entity {
        enemy walking into a spear wall is still noticed inside a quarter of
        a second, and it is the *wall* that notices, not one man. */
     if ((((this.game.frame || 0) + this.id) & 7) !== 0) return;
-    const range = this.stance === 'defensive' ? 6 : (this.def.classes.includes('archer') ? Math.min(9, stats.range + 1.5) : 7);
+    /* How far an idle soldier will look for a fight. This used to be 7 m,
+       which meant that a raider standing eight metres away, burning your
+       town hall, was invisible to the six men guarding it -- they had killed
+       their first target and then simply watched. A man guarding his own
+       town now looks as far as he can shoot plus a wide margin, and a town
+       under attack calls him further still (see Game.raiseAlarm). */
+    const base = this.stance === 'defensive' ? 10 : (this.def.classes.includes('archer') ? 16 : 13);
+    const range = Math.max(base, stats.range + 5);
     const enemy = this.game.findEnemyNear(this, range);
     if (enemy) {
-      this.state = STATE.ATTACK;
-      this.target = enemy;
+      /* a man does not abandon the gate to chase a scout across the map */
+      const leash = this.homeBuilding && !this.homeBuilding.dead ? 26 : 34;
+      const home = this.homeBuilding || this.game.nearestOwnBuilding(this.team, this.x, this.z);
+      if (!home || dist2(home.x, home.z, enemy.x, enemy.z) < leash * leash) {
+        this.state = STATE.ATTACK;
+        this.target = enemy;
+      }
+    }
+  }
+
+  /**
+   * A villager's answer to an armed man is not a hoe.
+   *
+   * They used to stand at their tree and be cut down one by one while the
+   * player watched, which on a phone means losing an economy you cannot even
+   * see happening. Now they drop the load and run for the nearest roof, and
+   * go back to work once the ground is clear.
+   */
+  _flee(dt) {
+    const g = this.game;
+    const threat = g.findEnemyNear(this, 10);
+    if (threat) {
+      this._fleeFrom = threat;
+      const home = g.nearestOwnBuilding(this.team, this.x, this.z);
+      this.gatherTarget = null;
+      this.buildTarget = null;
+      this.carry.amount = 0;
+      this.carry.kind = null;
+      this.state = STATE.MOVE;
+      this.noAggro = true;
+      if (home) {
+        if (!this.path || g.frame % 8 === 0) this.approachBuilding(home, 1.4);
+        if (this.targetPos) this.stepMovement(dt, this.stats());
+      }
+      return;
+    }
+    if (this._fleeFrom) {
+      this._fleeFrom = null;
+      this.noAggro = false;
+      this.retaskT = 0;
+      this.state = STATE.IDLE;
     }
   }
 
@@ -930,7 +985,7 @@ export class Unit extends Entity {
       if (this.type === 'villager') dmg += 2 + (g.hasTech(this.team, 'sappers') ? 13 : 0);
       if (this.def.siege) dmg = stats.attack + (bonus.building || 0);
     }
-    // aura and decree buffs
+    // aura and realm buffs
     const aura = g.auraBonusFor(this);
     dmg *= 1 + aura;
     if (this.squad && g.squads) dmg *= g.squads.attackMul(this);
@@ -1311,6 +1366,7 @@ export class Unit extends Entity {
     const beforeHeal = target.hp;
     target.heal(heal);
     if (g.veterancy) g.veterancy.onHeal(this, target.hp - beforeHeal);
+    if (g.court) g.court.onHeal(this, target.hp - beforeHeal);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 3) * 0.35 + 0.3);
     if (g.rng() < dt * 3) g.fx.heal(target.x, target.y, target.z, 1);
   }
@@ -1907,6 +1963,10 @@ export class ResourceNode extends Entity {
     this.amount = amount;
     this.maxAmount = amount;
     this.radius = opts.radius || 1.0;
+    /* The solid part. A tree's collision radius is its canopy (bushes and
+       deer get a generous one so villagers can path around them), but a
+       building only loses the ground its trunk stands on -- see canPlaceAt. */
+    this.trunkRadius = opts.trunkRadius || Math.max(0.5, this.radius * 0.34);
     this.scale = opts.scale || 1;
     this.variant = opts.variant || 0;
     this.facing = opts.facing !== undefined ? opts.facing : (this.game ? this.game.rng() : Math.random()) * 6.28;

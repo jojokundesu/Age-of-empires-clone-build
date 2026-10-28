@@ -11,9 +11,13 @@
                   grows on the resources her people bring in.
      Spymaster    a rider or archer. The realm simply sees further
                   and earns a little intelligence money; kills feed
-                  the rank, and Whisper marks a man for death.
-     Hierophant   a monk. Favour flows, monks heal harder, and
-                  Benediction is a battlefield miracle.
+                  the rank.
+     Hierophant   a monk. Monks heal harder, and at rank III the
+                  men around him mend on their own.
+
+   There is nothing else. An office is an appointment and the
+   passive it grants -- no writs, no favour, no second currency to
+   manage. The court is a decision about *who*, made once.
 
    The holder is the point. Appoint your best knight and he becomes
    the most valuable unit you own — and the AI knows it, because an
@@ -32,7 +36,7 @@ export const OFFICES = [
     icon: 'sword',
     color: [1.0, 0.82, 0.36],
     age: 1,
-    cost: { gold: 90, favor: 12 },
+    cost: { gold: 90 },
     class: 'military',
     blurb: 'A soldier who leads from the front.',
     passive: [
@@ -41,16 +45,7 @@ export const OFFICES = [
       'Rank III: +34%, +10% speed, and they mend 1 hp/s.'
     ],
     deed: 'kills',
-    deedLabel: 'kills by your soldiers',
-    writ: {
-      id: 'forced_march',
-      name: 'Forced March',
-      icon: 'boot',
-      cd: 95,
-      target: null,
-      cost: { favor: 20 },
-      desc: 'Every soldier moves 45% faster for 12 s.'
-    }
+    deedLabel: 'kills by your soldiers'
   },
   {
     id: 'chancellor',
@@ -58,7 +53,7 @@ export const OFFICES = [
     icon: 'wheat',
     color: [0.62, 0.9, 0.52],
     age: 1,
-    cost: { gold: 90, favor: 12 },
+    cost: { gold: 90 },
     class: 'villager',
     blurb: 'A steward who makes the land pay.',
     passive: [
@@ -67,16 +62,7 @@ export const OFFICES = [
       'Rank III: 26%, +4 carry, and farms reseed themselves.'
     ],
     deed: 'gathered',
-    deedLabel: 'resources gathered',
-    writ: {
-      id: 'census',
-      name: 'Census',
-      icon: 'scroll',
-      cd: 110,
-      target: null,
-      cost: { favor: 20 },
-      desc: 'Every villager delivers a full load at once, and all gathering is 40% faster for 12 s.'
-    }
+    deedLabel: 'resources gathered'
   },
   {
     id: 'spymaster',
@@ -84,7 +70,7 @@ export const OFFICES = [
     icon: 'eye',
     color: [0.72, 0.62, 1.0],
     age: 2,
-    cost: { gold: 140, favor: 22 },
+    cost: { gold: 140 },
     class: 'any',
     blurb: 'Someone who sees what the fog is hiding.',
     passive: [
@@ -93,16 +79,7 @@ export const OFFICES = [
       'Rank III: 7 m, 0.8 gold/s, and enemies near the Spymaster are marked.'
     ],
     deed: 'kills',
-    deedLabel: 'enemy losses',
-    writ: {
-      id: 'whisper',
-      name: 'Whisper',
-      icon: 'warning',
-      cd: 60,
-      target: 'unit',
-      cost: { favor: 15 },
-      desc: 'Mark an enemy unit for 40 s: it is revealed, and your troops deal +30% damage to it.'
-    }
+    deedLabel: 'enemy losses'
   },
   {
     id: 'hierophant',
@@ -110,25 +87,16 @@ export const OFFICES = [
     icon: 'relic',
     color: [1.0, 0.94, 0.78],
     age: 2,
-    cost: { gold: 140, favor: 30 },
+    cost: { gold: 140 },
     class: 'monk',
     blurb: 'The voice the gods answer.',
     passive: [
-      '+0.5 favour/s for the realm.',
-      'Rank II: +0.8 favour/s, and your monks heal 40% faster.',
-      'Rank III: +1.2 favour/s, monks heal 80% faster, and decrees cost 20% less.'
+      'Your monks heal 30% faster.',
+      'Rank II: heal 60% faster, and wounded men near him mend 0.4 hp/s.',
+      'Rank III: heal 100% faster, and they mend 1 hp/s.'
     ],
-    deed: 'favour',
-    deedLabel: 'favour spent on decrees',
-    writ: {
-      id: 'benediction',
-      name: 'Benediction',
-      icon: 'heart',
-      cd: 100,
-      target: null,
-      cost: { favor: 25 },
-      desc: 'Every unit within 12 m of the Hierophant is healed for a third of its health and mends for 5 s.'
-    }
+    deed: 'healed',
+    deedLabel: 'health restored by your monks'
   }
 ];
 export const OFFICE_BY_ID = new Map(OFFICES.map((o) => [o.id, o]));
@@ -139,7 +107,7 @@ const VACANCY = 25;          // seconds an office stands empty after a death
 const MAX_RANK = 3;
 
 function emptyOffice() {
-  return { holder: null, rank: 1, deeds: 0, writUntil: 0, vacantUntil: 0, buffUntil: 0, gathered: 0 };
+  return { holder: null, rank: 1, deeds: 0, vacantUntil: 0, gathered: 0, healed: 0 };
 }
 
 export class Court {
@@ -185,29 +153,14 @@ export class Court {
   /** A court change invalidates every cached unit stat (sight, speed...). */
   _dirty() { this.game.statsVersion++; }
 
-  /** Gold, wood, stone *and* favour: canAfford only knows about st.res. */
   _afford(team, cost) {
     const st = this.game.teams.get(team);
     if (!st) return false;
-    for (const k in cost) {
-      if (k === 'favor') { if ((st.favor || 0) < cost[k]) return false; }
-      else if ((st.res[k] || 0) < cost[k]) return false;
-    }
+    for (const k in cost) if ((st.res[k] || 0) < cost[k]) return false;
     return true;
   }
 
-  _pay(team, cost) {
-    const st = this.game.teams.get(team);
-    if (!st) return;
-    const res = {};
-    let favor = 0;
-    for (const k in cost) {
-      if (k === 'favor') favor += cost[k];
-      else res[k] = cost[k];
-    }
-    if (Object.keys(res).length) this.game.spend(team, res);
-    if (favor) st.favor = Math.max(0, (st.favor || 0) - favor);
-  }
+  _pay(team, cost) { this.game.spend(team, cost); }
 
   /* ---------------- appointment ---------------- */
   /** Why an appointment would fail, or '' when it can go ahead. */
@@ -228,7 +181,7 @@ export class Court {
     }
     if (def.class === 'villager' && unit.type !== 'villager') return 'the Chancellor must be a villager';
     if (def.class === 'monk' && !cls.includes('monk')) return 'the Hierophant must be a monk';
-    if (!this._afford(team, def.cost)) return 'the appointment costs gold and favour';
+    if (!this._afford(team, def.cost)) return 'you cannot afford the appointment';
     /* one office per person */
     for (const o of OFFICES) {
       const other = this.office(team, o.id);
@@ -306,15 +259,11 @@ export class Court {
     return this.office(team, id).rank;
   }
 
-  /** Damage multiplier for an attacker (marshal aura + whisper mark). */
+  /** Damage multiplier for an attacker: the Marshal's aura, nothing else. */
   damageMul(attacker) {
     if (!attacker || !attacker.team) return 1;
-    let m = 1;
     const r = this._aura(attacker.team, 'marshal', attacker.x, attacker.z, 16 + this.rank(attacker.team, 'marshal') * 2);
-    if (r) m += 0.1 + 0.08 * r;
-    const target = attacker.target;
-    if (target && target.markedBy === attacker.team && target.markedUntil > this.game.time) m *= 1.3;
-    return m;
+    return r ? 1 + 0.1 + 0.08 * r : 1;
   }
 
   rank(team, id) {
@@ -327,8 +276,6 @@ export class Court {
     const classes = (unit.def && unit.def.classes) || [];
     const soldier = !!(unit.def && unit.def.attack > 0) && !classes.includes('villager');
     if (!soldier) return 1;
-    const rec = this.office(unit.team, 'marshal');
-    if (rec && rec.buffUntil > this.game.time) return 1.45;      // Forced March
     const r = this._aura(unit.team, 'marshal', unit.x, unit.z, 16 + this.rank(unit.team, 'marshal') * 2);
     return r >= 3 ? 1.10 : (r >= 2 ? 1.06 : 1);                  // +6% / +10%
   }
@@ -353,99 +300,7 @@ export class Court {
 
   healMul(team) {
     const r = this.rank(team, 'hierophant');
-    return r ? 1 + 0.4 * r : 1;
-  }
-
-  decreeDiscount(team) {
-    return this.rank(team, 'hierophant') >= 3 ? 0.8 : 1;
-  }
-
-  /* ---------------- writs ---------------- */
-  writ(team, id) {
-    const def = OFFICE_BY_ID.get(id);
-    const rec = this.office(team, id);
-    if (!def || !rec) return null;
-    const holder = this.holder(team, id);
-    const now = this.game.time;
-    return {
-      id: def.writ.id,
-      name: def.writ.name,
-      icon: def.writ.icon,
-      desc: def.writ.desc,
-      target: def.writ.target,
-      cost: def.writ.cost,
-      holder,
-      ready: !!holder && now >= rec.writUntil && this.game.teams.get(team).favor >= (def.writ.cost.favor || 0),
-      cooldown: Math.max(0, rec.writUntil - now)
-    };
-  }
-
-  useWrit(team, id, target) {
-    const def = OFFICE_BY_ID.get(id);
-    const rec = this.office(team, id);
-    const holder = this.holder(team, id);
-    if (!def || !rec) return { ok: false, reason: 'no such office' };
-    if (!holder) return { ok: false, reason: `the ${def.name} is dead or unappointed` };
-    if (this.game.time < rec.writUntil) return { ok: false, reason: 'the writ is still being written' };
-    const st = this.game.teams.get(team);
-    if (!this._afford(team, def.writ.cost)) return { ok: false, reason: 'not enough favour' };
-    const t = def.writ.target;
-    if (t === 'unit' && (!target || target.dead || target.team === team)) {
-      return { ok: false, reason: 'choose an enemy unit' };
-    }
-    this._pay(team, def.writ.cost);
-    rec.writUntil = this.game.time + def.writ.cd;
-    const g = this.game;
-    switch (def.writ.id) {
-      case 'forced_march': {
-        rec.buffUntil = g.time + 12;
-        g.notify('Forced March — the line moves', 'good');
-        for (const u of g.units) {
-          if (u.dead || u.team !== team || !u.def.attack || ((u.def.classes) || []).includes('villager')) continue;
-          g.fx.dust(u.x, u.y + 0.2, u.z, 3, 1.2);
-        }
-        break;
-      }
-      case 'census': {
-        let n = 0;
-        for (const u of g.units) {
-          if (u.dead || u.team !== team || u.type !== 'villager') continue;
-          const kind = u.carry && u.carry.kind;
-          const amount = u.carry ? u.carry.amount : 0;
-          if (kind && amount > 0) { g.addResource(team, kind, amount); u.carry.amount = 0; u.carry.kind = null; }
-          n++;
-        }
-        rec.buffUntil = g.time + 12;
-        g.addBuff(team, 'gather', 1.4, 12, 'court:census');
-        g.notify(`Census — ${n} villagers surveyed`, 'good');
-        break;
-      }
-      case 'whisper': {
-        target.markedBy = team;
-        target.markedUntil = g.time + 40;
-        g.marker(target.x, target.z, { kind: 1, r0: 1, g0: 0.35, b0: 0.3, r: 2.2, life: 3 });
-        g.fx.sparks(target.x, target.y + 1.2, target.z, 8, [1, 0.4, 0.35]);
-        g.notify(`${target.def.name} has been marked`, 'warn');
-        break;
-      }
-      case 'benediction': {
-        let n = 0;
-        for (const u of g.units) {
-          if (u.dead || u.team !== team) continue;
-          if (Math.hypot(u.x - holder.x, u.z - holder.z) > 12) continue;
-          u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.34);
-          u.courtMend = g.time + 5;
-          g.fx.heal(u.x, u.y + 1.2, u.z, 4);
-          n++;
-        }
-        g.fx.shock?.(holder.x, holder.y + 0.6, holder.z, 1.6, [1, 0.95, 0.7]);
-        g.notify(`Benediction — ${n} mended`, 'good');
-        break;
-      }
-      default: break;
-    }
-    if (team === g.playerTeam) g.audio?.play?.('click');
-    return { ok: true };
+    return r ? 1 + 0.45 * r : 1;
   }
 
   /* ---------------- events ---------------- */
@@ -464,7 +319,23 @@ export class Court {
       } else if (o.id === 'spymaster') {
         const other = victim.team;
         if (other === 1 || other === 2) this.deed(team, 'spymaster', 1);
+      } else if (o.id === 'hierophant' && classes.includes('monk') && near) {
+        /* the corpse on the floor is the healer's failure; every man who
+           lived is not counted here, so healing is credited below */
       }
+    }
+  }
+
+  /** Every point of health a monk restores feeds the Hierophant's rank. */
+  onHeal(unit, amount) {
+    if (!unit || !(amount > 0) || !this.teams.has(unit.team)) return;
+    const rec = this.teams.get(unit.team).offices.hierophant;
+    if (!rec || !rec.holder || rec.holder.dead) return;
+    rec.healed += amount;
+    if (rec.healed >= 45) {
+      const n = Math.floor(rec.healed / 45);
+      rec.healed -= n * 45;
+      this.deed(unit.team, 'hierophant', n);
     }
   }
 
@@ -479,11 +350,6 @@ export class Court {
       rec.gathered -= n * 40;
       this.deed(unit.team, 'chancellor', near ? n * 2 : n);
     }
-  }
-
-  onDecree(team, favorSpent) {
-    if (!this.teams.has(team)) return;
-    this.deed(team, 'hierophant', Math.max(1, Math.round(favorSpent / 4)));
   }
 
   /* ---------------- tick ---------------- */
@@ -513,14 +379,13 @@ export class Court {
           r.rank = Math.max(1, r.rank - 1);
           changed = true;
           r.deeds = Math.min(r.deeds, RANK_AT[Math.min(MAX_RANK, r.rank)] || Infinity);
-          r.buffUntil = 0;
           if (team === this.game.playerTeam) {
             this.game.notify(`Your ${o.name} has fallen — the office stands empty`, 'bad');
           }
         }
       }
       if (changed) this._dirty();
-      /* spymaster's informants and the hierophant's favour */
+      /* the spymaster's informants */
       const spy = this.rank(team, 'spymaster');
       if (spy) {
         this.game.courtGold[team] += (0.2 + 0.2 * spy) * dt;
@@ -530,8 +395,17 @@ export class Court {
           this.game.addResource(team, 'gold', whole);
         }
       }
+      /* the hierophant's rank III mend, and the rank II trickle */
       const hier = this.rank(team, 'hierophant');
-      if (hier) st.favor = Math.min(400, st.favor + (0.2 + 0.3 * hier) * dt);
+      if (hier >= 2) {
+        const h = this.holder(team, 'hierophant');
+        const rate = hier >= 3 ? 1 : 0.4;
+        for (const u of this.game.units) {
+          if (u.dead || u.team !== team) continue;
+          if (Math.hypot(u.x - h.x, u.z - h.z) > 14) continue;
+          if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + rate * dt);
+        }
+      }
       /* the marshal's rank III mend */
       const marshalRank = this.rank(team, 'marshal');
       if (marshalRank >= 3) {
@@ -540,13 +414,6 @@ export class Court {
           if (u.dead || u.team !== team || !u.def.attack || ((u.def.classes) || []).includes('villager')) continue;
           if (Math.hypot(u.x - h.x, u.z - h.z) > 20) continue;
           if (u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + dt);
-        }
-      }
-      /* benediction's mending tail */
-      for (const u of this.game.units) {
-        if (u.dead || u.team !== team) continue;
-        if (u.courtMend && u.courtMend > now && u.hp < u.maxHp) {
-          u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.02 * dt * 6);
         }
       }
     }
@@ -584,8 +451,7 @@ export class Court {
         id: o.id, name: o.name, icon: o.icon, rank: rec.rank, deeds: rec.deeds,
         holder: rec.holder && !rec.holder.dead ? rec.holder : null,
         vacantFor: Math.max(0, rec.vacantUntil - this.game.time),
-        progress: rec.rank >= MAX_RANK ? 1 : Math.min(1, rec.deeds / RANK_AT[rec.rank]),
-        writ: this.writ(team, o.id)
+        progress: rec.rank >= MAX_RANK ? 1 : Math.min(1, rec.deeds / RANK_AT[rec.rank])
       };
     });
   }
@@ -659,8 +525,7 @@ export class Court {
 export function officeCatalogue() {
   return OFFICES.map((o) => ({
     id: o.id, name: o.name, icon: o.icon, age: o.age, blurb: o.blurb,
-    passive: o.passive.slice(), cost: o.cost, deedLabel: o.deedLabel,
-    writ: { name: o.writ.name, desc: o.writ.desc, cd: o.writ.cd, target: o.writ.target, icon: o.writ.icon }
+    passive: o.passive.slice(), cost: o.cost, deedLabel: o.deedLabel
   }));
 }
 

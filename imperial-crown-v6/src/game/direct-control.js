@@ -320,6 +320,12 @@ export class DirectControl {
     this.unit = null;
     this.champion = null;
     if (!unit.dead && !unit.garrisoned && unit.team === this.game.playerTeam && unit.state === STATE.CONTROLLED) unit.stop();
+    /* The body kept the last first-person yaw as its "where I want to face".
+       Left behind, a spearman walked away from a fight staring at a spot on
+       the ground the camera had pointed at minutes ago -- "units turning away
+       for no reason". The facing belongs to the camera while it is in the
+       head, and to nobody after that. */
+    if (!unit.dead) { unit.desiredFacing = null; unit.facing = unit.facing; }
     document.body.classList.remove('firstPerson');
     this.el.fpLayer?.classList.add('hidden');
     this.el.fpSpellShelf?.classList.add('hidden');
@@ -1039,7 +1045,13 @@ export class DirectControl {
     const range = spell.range || 14;
     if (range <= 2) return [u.x, u.z];
     const mobility = spell.id === 'construction' || spell.id === 'blink' || spell.id === 'tempest' || spell.id === 'golem' || spell.id === 'phoenix';
-    const target = mobility ? null : this.findAim('enemy', Math.min(range, 70));
+    /* A spell goes where the player is pointing. That means the target he has
+       tapped and locked, first; then whatever the reticle is on; and only
+       then the ground under the crosshair. Casting at a soldier you had
+       already marked used to depend on whether he happened to be the nearest
+       body to the camera -- which is how a fireball "did nothing". */
+    const locked = this.lockTarget();
+    const target = mobility ? null : (locked && !locked.dead ? locked : this.findAim('enemy', Math.min(range, 70)));
     let x, z;
     if (target) { x = target.x; z = target.z; }
     else if (cam.pickGround(0.5, 0.5, g.heightAt, this._ground)) { x = this._ground[0]; z = this._ground[2]; }
@@ -1125,13 +1137,40 @@ export class DirectControl {
     this.updateHud();
   }
 
+  /**
+   * Where the ghost stands in first person.
+   *
+   * A build used to land wherever the lens was looking, which could be the
+   * villager's own feet: the new walls closed around him and the rescue pass
+   * teleported him out. The ghost now keeps a stride of clearance from the
+   * builder, and the same point is used by the preview and by the place.
+   */
+  _buildSpot() {
+    const u = this.unit, g = this.game;
+    this.camera.update(0);
+    const [x, z] = this.aimPoint({ id: 'construction', range: 10 });
+    const dx = x - u.x, dz = z - u.z;
+    const d = Math.hypot(dx, dz);
+    const min = 2.6;
+    if (d >= min || d < 1e-3) return [x, z];
+    const k = min / d;
+    return [clamp(u.x + dx * k, -250, 250), clamp(u.z + dz * k, -250, 250)];
+  }
+
   placeBuild() {
     if (!this.canAct() || !this.game.placing) return false;
     const u = this.unit, g = this.game, type = g.placing.type;
-    this.camera.update(0);
-    const [x, z] = this.aimPoint({ id: 'construction', range: 10 });
-    const spot = g.canPlaceAt(type, u.team, x, z);
-    if (!spot.ok) { this.ui.toast(`Cannot build here: ${spot.reason || 'blocked'}`, 'warn'); return false; }
+    const [x, z] = this._buildSpot();
+    const spot = g.canPlaceAt(type, u.team, x, z, { ignoreUnits: true });
+    if (!spot.ok) {
+      const why = spot.reason === 'unit' ? 'someone is standing there'
+        : spot.reason === 'resource' ? 'resources are in the way'
+        : spot.reason === 'blocked' ? 'something is already there'
+        : spot.reason === 'slope' ? 'the ground is too steep'
+        : spot.reason === 'water' ? 'that is water' : spot.reason || 'blocked';
+      this.ui.toast(`Cannot build here: ${why}`, 'warn');
+      return false;
+    }
     const b = g.placeBuilding(type, u.team, x, z);
     if (!b) { this.ui.toast('Cannot place that building', 'warn'); return false; }
     g.placing = null;
@@ -1148,9 +1187,9 @@ export class DirectControl {
     const p = this.game.placing, u = this.unit;
     if (!p || !u || u.type !== 'villager') return;
     this.camera.update(0);
-    const [x, z] = this.aimPoint({ id: 'construction', range: 10 });
+    const [x, z] = this._buildSpot();
     p.x = x; p.z = z; p.y = this.game.heightAt(x, z);
-    p.valid = this.game.canPlaceAt(p.type, u.team, x, z).ok;
+    p.valid = this.game.canPlaceAt(p.type, u.team, x, z, { ignoreUnits: true }).ok;
   }
 
   /** Show the spellbook (and only the spellbook) with fresh rows. */

@@ -37,7 +37,7 @@ for (let i = 0; i < maxTicks; i++) {
     console.log(
       `t=${(i * dt).toFixed(0)}s | P: v${game.units.filter((u) => !u.dead && u.team === 1 && u.type === 'villager').length} mil${mil(1)} pop${s1.popUsed}/${s1.popCap} age${s1.age} ${['food', 'wood', 'gold', 'stone'].map((k) => Math.round(s1.res[k])).join('/')} b${game.buildings.filter((b) => !b.dead && b.team === 1).length}` +
       ` | E: v${game.units.filter((u) => !u.dead && u.team === 2 && u.type === 'villager').length} mil${mil(2)} pop${s2.popUsed}/${s2.popCap} age${s2.age} ${['food', 'wood', 'gold', 'stone'].map((k) => Math.round(s2.res[k])).join('/')} b${game.buildings.filter((b) => !b.dead && b.team === 2).length}` +
-      ` | proj${game.projectiles.activeCount} favour ${Math.floor(s1.favor)}/${Math.floor(s2.favor)} buffs ${(s1.buffs||[]).length}/${(s2.buffs||[]).length}`
+      ` | proj${game.projectiles.activeCount} buffs ${(s1.buffs||[]).length}/${(s2.buffs||[]).length}`
     );
   }
   if (i % 30 === 0) {
