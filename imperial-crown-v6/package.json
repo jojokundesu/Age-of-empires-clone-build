@@ -1,7 +1,7 @@
 {
   "name": "imperial-crown-3d-v6",
   "private": true,
-  "version": "6.2.0",
+  "version": "6.3.0",
   "description": "Imperial Crown 3D v6 \u2014 the mobile-first strategy game: a Champion you command in person, on a phone, with two thumbs.",
   "type": "module",
   "scripts": {
@@ -18,6 +18,7 @@
     "test:app": "node tests/app.test.mjs",
     "test:v5": "node tests/v5.test.mjs",
     "test:v6": "node tests/champion.test.mjs",
+    "test:party": "node tests/party.test.mjs",
     "test:v5-browser": "eval \"$(node scripts/browser-libs.mjs --export)\" && node tests/v5-browser.mjs",
     "test:geo": "node tests/geo.test.mjs",
     "test:audio": "node tests/audio.test.mjs",

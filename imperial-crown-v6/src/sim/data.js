@@ -29,6 +29,19 @@ export const TEAM_COLORS = {
 export const NEUTRAL_COLOR = { ring: [1, 0.86, 0.4], unit: [0.85, 0.72, 0.42], css: '#d9b86b', name: 'gold' };
 export const teamColor = (team) => TEAM_COLORS[team] || NEUTRAL_COLOR;
 
+/* ============================================================
+   THE SANDBOX'S THIRD PARTY
+   A kingdom that is not at war with you. It builds, it gathers,
+   it keeps a watch on its own gate -- and it does not raise a
+   hand until one is raised against it. Purple, so it is never
+   mistaken for the enemy red or for your own blue.
+   ============================================================ */
+export const PARTY_NAME = 'The Free Company';
+export const PARTY_COLOR = TEAM_COLORS[4];
+/** The colour a crown wears: the third party is purple, everyone else as printed. */
+export const teamColorFor = (team, game) =>
+  (game && game.partyTeam === team ? PARTY_COLOR : teamColor(team));
+
 export const RES = ['food', 'wood', 'gold', 'stone'];
 export const RES_META = {
   food: { name: 'Food', icon: 'wheat', color: '#c8e07a' },
@@ -551,6 +564,15 @@ export const DIFFICULTY = {
     name: 'Peaceful', gather: 1.0, aggression: 0.0, buildSpeed: 1.0, reaction: 2.0,
     maxPop: 60, startRes: 10000, startVillagers: 6, villagerTarget: 14,
     firstWave: 99999, waveEvery: 99999, maxArmy: 0, towerChance: 0
+  },
+  /* The Free Company of a sandbox: a working town, a watch on the gate, and
+     no appetite for a war it did not start. It never marches on the clock
+     (firstWave is unreachable); it answers the moment it is struck, which is
+     `canFight`, not a timer. */
+  company: {
+    name: 'Free Company', gather: 1.0, aggression: 0.3, buildSpeed: 0.95, reaction: 1.1,
+    maxPop: 50, startRes: 3000, startVillagers: 5, villagerTarget: 12,
+    firstWave: 99999, waveEvery: 99999, maxArmy: 14, towerChance: 0.25
   }
 };
 

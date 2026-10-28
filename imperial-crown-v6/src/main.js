@@ -441,7 +441,16 @@ class App {
        idea of who the real enemy is. `this.ai` stays the first one so every
        older caller and test keeps working. */
     const ais = [];
-    if (opts.mode !== 'sandbox') {
+    if (opts.mode === 'sandbox') {
+      /* The Free Company keeps its own council: a real town, a real economy,
+         and a temper. It does not march on the clock -- it answers the first
+         blow, which is what `game.canFight` decides. */
+      if (game.partyTeam) {
+        ais.push(new AIController(game, game.partyTeam, {
+          diff: DIFFICULTY.company, aggression: 0.4
+        }));
+      }
+    } else {
       for (const t of game.teamIds) {
         if (t === game.playerTeam) continue;
         ais.push(new AIController(game, t, {
@@ -449,7 +458,9 @@ class App {
         }));
       }
     }
-    const ai = ais[0] || null;
+    /* `this.ai` is the war council that runs the match. A sandbox has none --
+       its one controller belongs to a party that is not at war. */
+    const ai = opts.mode === 'sandbox' ? null : (ais[0] || null);
     this.ais = ais;
     this.fx = fx;
     this.game = game;
@@ -685,10 +696,12 @@ class App {
     const t = g.teams.get(1);
     const terms = VICTORIES[g.victory] || VICTORIES.conquest;
     const crowns = (g.crowns || 2) > 2 ? `<div class="metricRow"><span>Crowns</span><b>${g.teamIds.filter((x) => !g.fallenTeams.has(x)).length} of ${g.crowns} still standing</b></div>` : '';
+    /* the sandbox's third party, and the state of its temper, in one line */
+    const party = g.partyTeam ? `<div class="metricRow"><span>${g.partyName}</span><b>${g.atPeace(g.partyTeam) ? 'at peace — will not strike first' : 'at war with you'}</b></div>` : '';
     this.menu.openModal('CAMPAIGN', 'Paused', `
       <div class="metricRow"><span>Terms of war</span><b>${terms.name}</b></div>
       <div class="dim tiny" style="margin:0 0 6px">${terms.desc}</div>
-      ${crowns}
+      ${crowns}${party}
       <div class="metricRow"><span>Age</span><b>${AGES[t.age].name}</b></div>
       <div class="metricRow"><span>Army</span><b>${g.units.filter((u) => !u.dead && u.team === 1 && u.def.attack > 0 && !u.def.classes.includes('villager')).length}</b></div>
       <div class="metricRow"><span>Villagers</span><b>${g.units.filter((u) => !u.dead && u.team === 1 && u.type === 'villager').length}</b></div>

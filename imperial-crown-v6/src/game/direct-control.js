@@ -780,7 +780,9 @@ export class DirectControl {
     const consider = (e) => {
       if (!e || e === u || e.dead || e.garrisoned) return;
       if (kind === 'enemy') {
-        if (!g.isHostile(u.team, e.team)) return;
+        /* auto-aim never picks a fight with a party at peace; an explicit tap
+           (tapLock) still can, because that is the player deciding */
+        if (!g.canFight(u.team, e.team)) return;
         if (g.showFog && !g.isVisible(e.x, e.z)) return;
       } else if (kind === 'interact') {
         const villager = u.type === 'villager';

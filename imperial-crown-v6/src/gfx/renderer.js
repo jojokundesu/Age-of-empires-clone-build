@@ -37,7 +37,7 @@ import { buildTextures, uploadBaked, MAT, SPRITE } from './textures.js';
 import { bakeTerrain } from './bake.js';
 import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
 import { extractPlanes, sphereInFrustum } from './camera.js';
-import { BUILDING_DEFS, teamColor, TEAM_COLORS, NEUTRAL_COLOR } from '../sim/data.js';
+import { BUILDING_DEFS, teamColorFor, PARTY_COLOR, TEAM_COLORS, NEUTRAL_COLOR } from '../sim/data.js';
 import { OFFICE_BY_ID } from '../sim/court.js';
 import { STATE } from '../sim/entities.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
@@ -68,6 +68,12 @@ const TEAM_LINEAR = (() => {
   }
   return out;
 })();
+
+const PARTY_LINEAR = PARTY_COLOR.unit.map((c) => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+
+/** A crown's colour in linear space. The sandbox's third party is purple. */
+const teamLinear = (team, game) =>
+  (game && game.partyTeam === team ? PARTY_LINEAR : (TEAM_LINEAR[team] || TEAM_LINEAR[0]));
 
 /** Models that should not sway in the wind (masonry, ships, siege). */
 const NO_SWAY = new Set(['stone_wall', 'palissade_wall', 'stone_gate', 'castle', 'wonder',
@@ -1054,7 +1060,7 @@ export class Renderer {
       if (!this._inFrustum(b.x, (b.y || 0) + meta.height * 0.5, b.z, rad)) { st.culled++; continue; }
       const batch = this.buildingBatches.get(b.type);
       if (!batch) continue;
-      const tc = TEAM_LINEAR[b.team] || TEAM_LINEAR[0];
+      const tc = teamLinear(b.team, game);
       const prog = b.buildProgress !== undefined ? clamp(b.buildProgress, 0.02, 1) : 1;
       const dmg = 1 - clamp(b.hp / Math.max(1, b.maxHp), 0, 1);
       const scale = (b.dead ? Math.max(0.02, 1 - (b.deadT || 0) / 4.5) : 1);
@@ -1099,7 +1105,7 @@ export class Renderer {
       const batch = this.unitBatches.get(u.type);
       if (!batch) continue;
       const meta = this.unitMeta.get(u.type) || UNIT_META_FALLBACK;
-      const tc = TEAM_LINEAR[u.team] || TEAM_LINEAR[0];
+      const tc = teamLinear(u.team, game);
       const anim = u.anim || NO_ANIM;
       const swing = Math.sin(anim.phase);
       const spd = clamp(anim.speed, 0, 1);
@@ -1611,7 +1617,7 @@ export class Renderer {
       if (!e || e.dead || cam.firstPerson?.unit === e) continue;
       const meta = this.buildingMeta.get(e.type);
       const r = e.kind === 'building' ? (meta ? meta.footprint * 0.72 : 2.6) : (e.radius || 0.5) * 1.9;
-      const tc = teamColor(e.team).ring;
+      const tc = teamColorFor(e.team, game).ring;
       d.push(e.x, e.y + 0.07, e.z, r, tc[0], tc[1], tc[2], 0.9, 0, 1, 0, 0);
     }
     /* Arcane wards: a standing ring around every shielded body. Read straight
@@ -1794,7 +1800,7 @@ export class Renderer {
          over every commander would be noise, not information */
       if (selected || ratio <= 0.995) {
         b.push(u.x, y, u.z, w + 0.06, 0.02, 0.02, 0.02, 0.45, 0.12, 0, 0.6, 0);
-        const col = teamColor(u.team).unit;
+        const col = teamColorFor(u.team, game).unit;
         b.push(u.x - (w * (1 - ratio)) * 0.5, y, u.z, w * ratio, col[0], col[1], col[2], 0.95, 0.1, 0, 0.9, 0);
       }
     }
@@ -1811,7 +1817,7 @@ export class Renderer {
       const w = clamp(meta.footprint * 0.5, 1.3, 3.2);
       if (!this._inFrustum(bd.x, y, bd.z, w + 2)) continue;
       b.push(bd.x, y, bd.z, w + 0.08, 0.02, 0.02, 0.02, 0.45, 0.16, 0, 0.6, 0);
-      const col = teamColor(bd.team).unit;
+      const col = teamColorFor(bd.team, game).unit;
       b.push(bd.x - (w * (1 - ratio)) * 0.5, y, bd.z, w * ratio, col[0], col[1], col[2], 0.95, 0.13, 0, 0.9, 0);
     }
     b.flush();

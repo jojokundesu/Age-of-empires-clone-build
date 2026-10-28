@@ -2,6 +2,24 @@
 
 Version 6 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-v4/); v5 is kept beside it. The v4 and v5 source, assets, Android packages and save slots remain untouched. V6 keeps the same procedural art, custom WebGL2 renderer, strategy simulation, 30 Hz fixed tick, LOD, and adaptive quality governor; its controls operate on the actual units in that simulation rather than a second game.
 
+## What changed in 6.3.0
+
+Two things: the download, and a neighbour in the sandbox.
+
+- **A third party in the Grand Sandbox.** The sandbox now seats two crowns: you, and **The Free Company**
+  (purple) -- a working town with a hall, houses, woodcutters and a watch on its own gate. It is not
+  your enemy. Nobody strikes first: `Game.canFight()` is the rule every automatic decision asks --
+  auto-acquire, attack-move, raiders, guards, first-person aim assist -- and while a party is in
+  `game.peace` it answers false for both sides. `Game.isHostile()` still says yes, so *an order you
+  give is obeyed*: tap one of their men and your soldiers attack him. The first blow ends the peace
+  for good (`noteAttack` → `breakPeace`, announced once), after which the war is mutual and their
+  council puts men in the field. Their council still works while at peace -- it builds, hires and
+  ranks up -- it simply does not march, because its campaign clock is unreachable and its soldiers
+  answer to `canFight`. The pause panel names the party and its temper: *at peace -- will not strike
+  first* / *at war with you*. While at peace the party shares its map with you, so its town is
+  visible instead of being a fog-shaped hole. `tests/party.test.mjs` (10 checks) proves all of it
+  headless, and `tests/app.test.mjs` proves the browser wiring.
+
 ## What changed in 6.2.0
 
 The second list that came back from playing on the phone, answered one item at a time.

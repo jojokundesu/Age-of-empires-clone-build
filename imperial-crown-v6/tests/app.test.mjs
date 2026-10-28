@@ -280,10 +280,11 @@ check('quit to menu', () => {
 });
 
 /* Sandbox is the mode a player uses to look at the game, build freely and try
-   a fight. It has no opponent, so it must not start an AI controller: that
-   controller had no base to defend, adopted the first team-2 unit it saw and
-   marched a hand-placed sparring partner off across the island. */
-await acheck('a sandbox match has no opponent and leaves your sparring partners alone', async () => {
+   a fight. 6.3 seats a third party there -- the Free Company -- so the match
+   does have a council, but not a war council: `app.ai` stays null (it is the
+   controller that runs an opponent), the party sits at peace, and a man
+   placed in their yard is neither attacked nor marched off. */
+await acheck('a sandbox seats a third party at peace, and leaves men alone until a blow', async () => {
   // startMatch waits on one animation frame, and the harness stubbed rAF out
   // after the first match; give it a real one back for the boot, then take it
   // away again so the test drives the loop itself
@@ -294,16 +295,23 @@ await acheck('a sandbox match has no opponent and leaves your sparring partners 
   globalThis.requestAnimationFrame = () => 0;
   window.requestAnimationFrame = () => 0;
   assert(app.running && app.game, 'the sandbox match did not start');
-  assert(app.ai === null, 'a sandbox match started an AI controller');
+  assert(app.ai === null, 'a sandbox match started a war council');
+  assert(app.ais.length === 1 && app.ais[0].team === 2, 'the party has no council');
   const g = app.game;
-  assert(!g.buildings.some((b) => b.team === 2 && !b.dead), 'the sandbox has an enemy town');
+  assert(g.partyTeam === 2, 'the sandbox has no third party');
+  assert(g.atPeace(2), 'the sandbox party starts at war');
+  assert(g.buildings.some((b) => b.team === 2 && !b.dead), 'the party has no town');
   const base = g.world.playerBase;
   const u = g.spawnUnitRaw('huskarl', 2, base.x + 20, base.z + 15);
   assert(u, 'could not place a sparring partner');
-  const x0 = u.x, z0 = u.z;
   for (let i = 0; i < 600; i++) step();
-  const moved = Math.hypot(u.x - x0, u.z - z0);
-  assert(moved < 5, `the sandbox enemy walked ${moved.toFixed(1)} m without being ordered to`);
+  /* it may walk home to its own gate -- it must not walk at you */
+  const atYou = (e) => e && e.team === 1;
+  assert(!atYou(u.target), 'the party man picked a target of yours without being attacked');
+  const yoursHurt = g.units.filter((x) => x.team === 1 && !x.dead && (x.dead || x.hp < x.maxHp * 0.999)).length;
+  assert(yoursHurt === 0, `${yoursHurt} of yours were hurt by the party`);
+  assert(g.atPeace(2), 'the peace broke by itself');
+  assert(g.canFight(2, 1) === false, 'the party may engage without a blow');
 });
 check('quit the sandbox', () => {
   app.quitToMenu();

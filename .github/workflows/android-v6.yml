@@ -124,85 +124,43 @@ jobs:
           set -euo pipefail
           TAG="v${VERSION}-preview"
           cat > "$RUNNER_TEMP/v6-release-notes.md" <<'NOTES'
-          ## Imperial Crown 3D v6.2.0 — Android preview
+          ## Imperial Crown 3D v6.3.0 — Android preview
 
           Built from this commit and verified in this run: the whole regression suite, the Chromium
           first-person and panel pass, the 892x412 phone-layout check, the signatures, the alignment,
           the package identity and every byte of the bundled web app.
 
-          **This is the answer to the list you sent after playing 6.1.0**, point for point.
+          6.2.0 answered the balance list; 6.3.0 adds the thing you asked for after it: **a third
+          party in the Grand Sandbox.**
 
-          ### Mana and cooldowns: the ladder now changes how you fight
+          ### The Free Company
 
-          Mana is 250 at Apprentice and 1000 at Ascendant, regenerating 14 to 64 per second, so an
-          empty bar is never the reason a fight is lost. Every rank also takes a bite out of every
-          cooldown: an Ascendant pays a tenth of the printed number, so a fireball comes back in
-          0.32 s and the long spells return *inside* the same fight. SKYFALL is three castings a day
-          at Ascendant, chosen on the world map, and the book says "2 left" rather than lying about
-          tomorrow.
+          The sandbox now seats two crowns: you, and the Free Company, in purple. It is a working
+          town -- a hall, houses, woodcutters, and a watch on its own gate -- and it is **not your
+          enemy**. Nobody strikes first. Your soldiers walk past its fields, your army stands in its
+          yard, and nothing happens: the rule every automatic decision asks (`canFight`) says no
+          while the party is at peace.
 
-          ### One mage, and he comes back
+          **Hit one of them and the truce is over.** Tap one of their men and your soldiers attack
+          him -- an order is always obeyed. The first blow ends the peace for good, announced once,
+          and then the fight is real in both directions: their watch answers, and their council
+          starts putting companies in the field. Until that happens their council still builds,
+          hires and ranks up; it simply does not march.
 
-          Exactly one mage walks the field per team — the tower no longer raises the cap, it teaches
-          faster. When he falls the Order sends another out of the nearest hall 45 seconds later, at
-          **Apprentice** rank, with a full bar: the ladder is climbed again.
+          The pause panel names the party and its temper: *at peace -- will not strike first*, or
+          *at war with you*. While at peace the party shares its map with you, so its town is
+          visible rather than being a fog-shaped hole.
 
-          ### The book has no duplicates any more
+          ### Still in the box from 6.2.0
 
-          One single-target and one area spell per element, and every other spell earns its slot:
-          Fireball (one body, burning) and Meteor (delayed 5 m blast); Ice Lance (freezes the man it
-          hits) and Frost Nova (freezes what surrounds you). The old second area-freeze, Stasis, is now
-          **Shatterfrost**: triple damage against anything already frozen or slowed — the finisher the
-          ice book was missing.
+          Mana 250 → 1000 with cooldowns collapsing to a tenth at Ascendant; three SKYFALLs a day;
+          one mage per team, returning at Apprentice rank 45 s after he falls; no duplicate spells
+          (Shatterfrost replaced the second freeze); golems that multiply and specialise by rank;
+          a 30 m blink; casting while running; ice crystals on frozen men and a sheet of ice on the
+          ground for the whole duration; health regeneration; the Codex on the main menu; the farm
+          order and literal building placement.
 
-          ### Golems grow with rank
-
-          Rank 4 raises one Stone Golem; rank 5 adds a Granite Colossus that slams the ground and slows
-          everything around it; rank 6 adds an Obsidian Titan that hurls molten rock at range and sets
-          what it lands on alight. The lifetime timer stays — they are a siege tool, not an army.
-
-          ### Blink is a teleport
-
-          30 metres, in any direction, and it lands as close as the ground allows instead of refusing
-          because the last centimetre of the line is a wall.
-
-          ### You can cast while you run
-
-          Spells fire on the touch itself, not on a click the browser may never deliver while the other
-          thumb is holding the stick. Measured with the body walking and sprinting: mana is spent, the
-          spell lands, the run continues. An armed spell can also be released with a tap in first
-          person, which it could not do at all before.
-
-          ### Ice you can see
-
-          A frozen man is encased in a crystal of ice for the whole freeze, and an area freeze sheets
-          the ground under it until the spell expires. Time Warp, Thunderstorm, Hailstorm, the golems'
-          footprint, and every Arcane Ward now hold their own mark on the ground for their real
-          duration instead of a flash and nothing.
-
-          ### Health regeneration, written down
-
-          Every soldier who has not been hit for 6 seconds recovers up to a third of his health at
-          0.9 hp/s — enough to hold a wall again, never enough to become a new man. Berserkers and the
-          Champion's **Field Medic** perk heal past that cap; monks heal others. All of it is in the
-          new **Codex**.
-
-          ### The Codex
-
-          A new section on the main menu: every spell with its mana, cooldown and range, the whole rank
-          ladder, the mana and cooldown rules, the golems, the ice, the regeneration numbers, and every
-          Champion perk in the game — read from the live data, so it cannot drift from the rules.
-
-          ### Farms and building placement
-
-          Tapping a finished farm with villagers selected now sends them to harvest it (this is the
-          order that was simply missing), and the field they are sent to stays their home instead of
-          being re-picked from scratch. The building ghost follows your finger every frame and turns
-          red where the footprint is illegal, and the build lands exactly on the point the ghost is
-          standing on; a tap that misses the ground is refused with a reason instead of raising the
-          building five to ten metres away.
-
-          It installs **over 6.1.0** (same key, versionCode 60200) and stays beside v5. Signed with the
+          It installs **over 6.2.0** (same key, versionCode 60300) and stays beside v5. Signed with the
           repository's public demo key for testing. Sustained frame rate, heat and battery on the
           physical Realme 9i are still unmeasured -- that needs the phone.
 

@@ -54,8 +54,10 @@ export class AIController {
        rolls its own dice makes the whole match unreproducible. */
     this.rng = () => (game && game.rng ? game.rng() : Math.random());
     this.team = team;
-    this.diff = game.difficulty;
-    this.aggression = this.diff.aggression;
+    /* A controller may be given its own council preset: the sandbox's third
+       party is not run by the sandbox's own (peaceful) numbers. */
+    this.diff = opts.diff || game.difficulty;
+    this.aggression = opts.aggression ?? this.diff.aggression;
     /* Councils are staggered by crown. Four controllers created in the same
        frame used to think on the same frame, and their census -- which reads
        every man on the field against every man they own -- landed as a spike
@@ -649,7 +651,7 @@ export class AIController {
       return false;
     };
     for (const u of g.units) {
-      if (u.dead || u.garrisoned || u.wild || !g.isHostile(this.team, u.team)) continue;
+      if (u.dead || u.garrisoned || u.wild || !g.canFight(this.team, u.team)) continue;
       if (!seenAt(u.x, u.z)) continue;
       c.total++;
       const cls = u.def.classes || [];
@@ -662,7 +664,7 @@ export class AIController {
       if ((u.renown || 0) >= 4) c.legend++;
     }
     for (const b of g.buildings) {
-      if (b.dead || !g.isHostile(this.team, b.team)) continue;
+      if (b.dead || !g.canFight(this.team, b.team)) continue;
       c.roofs++;
       if (b.def.tower || b.type === 'watch_tower' || b.type === 'castle') c.towers++;
     }
@@ -987,7 +989,7 @@ export class AIController {
     const g = this.game;
     const out = [];
     for (const u of this.game.units) {
-      if (u.dead || u.team === 0 || u.wild || !g.isHostile(this.team, u.team)) continue;
+      if (u.dead || u.team === 0 || u.wild || !g.canFight(this.team, u.team)) continue;
       if (this.threatOf(u) >= 4) out.push(u);
     }
     return out;
@@ -1050,7 +1052,7 @@ export class AIController {
     const around = g.spatial.query(cx, cz, 22);
     for (let i = 0; i < around.length; i++) {
       const e = around[i];
-      if (e.dead || e.garrisoned || !g.isHostile(this.team, e.team)) continue;
+      if (e.dead || e.garrisoned || !g.canFight(this.team, e.team)) continue;
       if (!e.def || e.def.attack <= 0) continue;
       const d = (e.x - cx) ** 2 + (e.z - cz) ** 2;
       if (d > bestD) continue;
@@ -1100,7 +1102,7 @@ export class AIController {
           const e = close[k];
           if (e.dead || e.garrisoned || !e.def || e.def.attack <= 0) continue;
           if (e.def.classes.includes('villager')) continue;  // a siege is not a peasant hunt
-          if (!g.isHostile(this.team, e.team)) continue;
+          if (!g.canFight(this.team, e.team)) continue;
           const d = (e.x - u.x) ** 2 + (e.z - u.z) ** 2;
           if (d < md) { md = d; man = e; }
         }
@@ -1124,7 +1126,7 @@ export class AIController {
       if (u.state === STATE.ATTACK) continue;      // already shooting
       let danger = null, dd = 3.6 * 3.6;
       for (const e of g.units) {
-        if (e.dead || e.garrisoned || !g.isHostile(this.team, e.team)) continue;
+        if (e.dead || e.garrisoned || !g.canFight(this.team, e.team)) continue;
         if (!e.def || e.def.attack <= 0 || (e.def.range || 0) > 2.5) continue;
         const d = (e.x - u.x) ** 2 + (e.z - u.z) ** 2;
         if (d < dd) { dd = d; danger = e; }
@@ -1328,7 +1330,7 @@ export class AIController {
     let best = null;
     let bestScore = -Infinity;
     for (const u of g.units) {
-      if (u.dead || u.team === 0 || u.wild || !g.isHostile(this.team, u.team)) continue;
+      if (u.dead || u.team === 0 || u.wild || !g.canFight(this.team, u.team)) continue;
       let score = 10;
       if (u.def.classes.includes('villager')) score += 16;
       const th = unitThreat(u);
@@ -1338,7 +1340,7 @@ export class AIController {
     }
     if (best) return best;
     for (const b of g.buildings) {
-      if (b.dead || b.team === 0 || !g.isHostile(this.team, b.team)) continue;
+      if (b.dead || b.team === 0 || !g.canFight(this.team, b.team)) continue;
       const score = 8 - Math.sqrt(dist2(b.x, b.z, this.base.x, this.base.z)) * 0.28;
       if (score > bestScore) { bestScore = score; best = b; }
     }
@@ -1414,7 +1416,7 @@ export class AIController {
        a mage or a ram behind your woodline matters more than a scout. */
     const intruders = [];
     for (const u of g.units) {
-      if (u.dead || u.team === 0 || u.wild || !g.isHostile(this.team, u.team)) continue;
+      if (u.dead || u.team === 0 || u.wild || !g.canFight(this.team, u.team)) continue;
       if (dist2(u.x, u.z, base.x, base.z) < 34 * 34) intruders.push(u);
     }
     if (intruders.length && army.length) {

@@ -16,7 +16,7 @@ import { Champions } from './champion.js';
 import { Guards } from './guards.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
-  RES, POP_CAP, isUniqueUnit, VICTORIES, victoryFor
+  RES, POP_CAP, isUniqueUnit, VICTORIES, victoryFor, PARTY_NAME
 } from './data.js';
 import { Unit, Building, ResourceNode, STATE } from './entities.js';
 import { PathFinder } from './pathfind.js';
@@ -174,9 +174,16 @@ export class Game {
        and rebel warbands are allocated from TEAM_REBEL_P upwards. */
     /* A War of Crowns seats three or four kingdoms on one island; every other
        mode is the classic duel. `kingdoms` is the number of *crowns*. */
+    /* A sandbox seats two: the player, and the Free Company -- a third party
+       that is not at war with anybody until somebody makes it one. */
     const crowns = this.mode === 'kingdoms' ? Math.max(2, Math.min(4, opts.kingdoms | 0 || 3))
-      : (this.mode === 'sandbox' ? 1 : 2);
+      : (this.mode === 'sandbox' ? 2 : 2);
     this.crowns = crowns;
+    this.partyTeam = this.mode === 'sandbox' ? TEAM_ENEMY : null;
+    this.partyName = PARTY_NAME;
+    /* teams that have not raised a hand: see canFight() below. A party leaves
+       this set for good the first time blood is drawn. */
+    this.peace = new Set(this.partyTeam ? [this.partyTeam] : []);
     this.teamIds = [];
     for (let t = TEAM_PLAYER; t < TEAM_PLAYER + crowns; t++) this.teamIds.push(t);
     for (const t of this.teamIds) {
@@ -380,6 +387,19 @@ export class Game {
       const u = this.spawnUnitRaw('villager', team, tx + Math.cos(a) * 5.4, tz + Math.sin(a) * 5.4);
       if (u) u.facing = a;
     }
+    /* The Free Company is not scenery: five woodcutters and a market stall
+       would be a massacre the day somebody drew a blade. It keeps a watch on
+       its own gate, and those men hold their ground until an order or a blow
+       tells them otherwise. */
+    if (this.mode === 'sandbox' && team === this.partyTeam) {
+      const watch = ['spearman', 'spearman', 'archer', 'swordsman'];
+      for (let i = 0; i < watch.length; i++) {
+        const a = (i / watch.length) * Math.PI * 2 + 0.7;
+        const u = this.spawnUnitRaw(watch[i], team, tx + Math.cos(a) * 7.4, tz + Math.sin(a) * 7.4);
+        if (u) { u.stance = 'defensive'; u.facing = a + Math.PI; }
+      }
+    }
+
     // a scout to explore
     if (team === TEAM_PLAYER && this.mode !== 'sandbox') {
       const s = this.spawnUnitRaw('scout_cavalry', team, tx + 4, tz + 3);
@@ -990,7 +1010,9 @@ export class Game {
     /* A sparring partner is not an opponent: in the sandbox the second team
        exists to be drilled against, and a dummy that wanders off to chase a
        woodcutter is not a dummy. It holds its ground until it is ordered. */
-    if (this.mode === 'sandbox' && team !== TEAM_PLAYER) u.stance = 'stand';
+    if (this.mode === 'sandbox' && team === this.partyTeam) {
+      u.stance = u.type === 'villager' ? 'stand' : 'defensive';
+    }
     u.statsCache = null;
     this.units.push(u);
     if (this.elites) this.elites.enrol(u);
@@ -1267,6 +1289,45 @@ export class Game {
      a revolt from being a free lunch for the player: kick the mob
      and it kicks back.
      ========================================================== */
+  /** Has this crown kept its hands to itself so far? */
+  atPeace(team) {
+    return this.peace.size > 0 && this.peace.has(team);
+  }
+
+  /* Two questions, kept apart on purpose.
+     `isHostile` is the law of the map: which crowns may be struck. It is true
+     between any two crowns, including a party at peace -- so an order the
+     player gives is always obeyed.
+     `canFight` is what a man does without being told. Nobody of either side
+     picks a fight with a party that has not raised a hand: no auto-aim, no
+     raiders, no "engage anything hostile in sight". The first blow is a
+     decision, and only a decision. */
+  canFight(a, b) {
+    if (!this.isHostile(a, b)) return false;
+    if (this.peace.size === 0) return true;
+    return !(this.peace.has(a) || this.peace.has(b));
+  }
+
+  /** What a crown is called in a message to the player. */
+  teamNameOf(team) {
+    if (team === this.partyTeam) return this.partyName;
+    return CIVS[this.teams.get(team)?.civ]?.name || (team === TEAM_PLAYER ? 'Your crown' : `Crown ${team}`);
+  }
+
+  /** Blood was drawn, and it was not theirs: the party takes up arms. */
+  breakPeace(team, by) {
+    if (!this.peace.delete(team)) return false;
+    this.peaceAnnounced = (this.peaceAnnounced || 0) + 1;
+    const theirs = team === this.partyTeam;
+    const name = this.teamNameOf ? this.teamNameOf(team) : this.partyName;
+    if (theirs) {
+      this.notify(`${name} has taken up arms against you`, 'bad');
+      this.partyWarAt = this.time;
+      if (this.onPartyWar) this.onPartyWar(team, by);
+    }
+    return true;
+  }
+
   isHostile(a, b) {
     if (a === b) return false;
     if (a === TEAM_NEUTRAL || a === undefined || b === undefined) return false;
@@ -1291,6 +1352,11 @@ export class Game {
     if (attacker.team === undefined || victim.team === undefined) return;
     const a = attacker.team, v = victim.team;
     if (a === v || a === TEAM_NEUTRAL) return;
+    /* a party is only a neighbour until the first blow lands on it */
+    if (this.peace.size) {
+      if (this.peace.has(v)) this.breakPeace(v, a);
+      else if (this.peace.has(a)) this.breakPeace(a, v);
+    }
     const va = crownOfRebel(v);
     if (va && a !== va) {
       let set = this.rebelGrudge.get(v);
@@ -1330,7 +1396,7 @@ export class Game {
     let best = null, bestD = r2;
     for (let i = 0; i < near.length; i++) {
       const o = near[i];
-      if (o === entity || o.dead || !this.isHostile(team, o.team)) continue;
+      if (o === entity || o.dead || !this.canFight(team, o.team)) continue;
       const d = dist2(entity.x, entity.z, o.x, o.z);
       if (d < bestD) { bestD = d; best = o; }
     }
@@ -1339,7 +1405,7 @@ export class Game {
     const bn = this.buildingSpatial.query(entity.x, entity.z, range + 4);
     for (let i = 0; i < bn.length; i++) {
       const o = bn[i];
-      if (o.dead || !this.isHostile(team, o.team)) continue;
+      if (o.dead || !this.canFight(team, o.team)) continue;
       const half = (o.def.size || 3) * 0.5;
       const d = dist2(entity.x, entity.z, o.x, o.z) - half * half;
       if (d < r2 && d < bestD) { bestD = d; best = o; }
@@ -2389,7 +2455,8 @@ export class Game {
     for (let i = 0; i < units.length; i++) {
       if ((i % 3) !== this.fogCursor) continue;
       const u = units[i];
-      if (u.dead || u.team !== TEAM_PLAYER) continue;
+      /* a party at peace shares its map with you: neighbours talk */
+      if (u.dead || (u.team !== TEAM_PLAYER && !this.atPeace(u.team))) continue;
       if (u.garrisoned) continue;
       this._fogStamp(u.x, u.z, (u.def.sight || 9) * sightMul);
     }
@@ -2397,7 +2464,7 @@ export class Game {
     for (let i = 0; i < buildings.length; i++) {
       const b = buildings[i];
       if (b.dead) continue;
-      if (b.team === TEAM_PLAYER || b.team === TEAM_NEUTRAL) this._fogStamp(b.x, b.z, (b.def.sight || 8) * (b.buildProgress >= 1 ? 1 : 0.5));
+      if (b.team === TEAM_PLAYER || b.team === TEAM_NEUTRAL || this.atPeace(b.team)) this._fogStamp(b.x, b.z, (b.def.sight || 8) * (b.buildProgress >= 1 ? 1 : 0.5));
     }
     this.fowDirty = true;
     this.fowTimer = 0.18;
@@ -2558,7 +2625,7 @@ export class Game {
   scoreboard() {
     const rows = this.teamIds.map((team) => ({
       team,
-      name: CIVS[this.civOf(team)]?.name || `Crown ${team}`,
+      name: team === this.partyTeam ? this.partyName : (CIVS[this.civOf(team)]?.name || `Crown ${team}`),
       score: this.scoreOf(team),
       alive: this.aliveTeam(team),
       fallen: this.fallenTeams ? this.fallenTeams.has(team) : false

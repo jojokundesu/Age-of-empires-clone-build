@@ -6,7 +6,7 @@
    ============================================================ */
 import {
   AGES, CIVS, RES_META, TECH_DEFS, UNIT_DEFS, BUILDING_DEFS, BUILDING_AGE, UNIT_AGE,
-  POP_CAP, unitForCiv, teamColor, TEAM_COLORS
+  POP_CAP, unitForCiv, teamColor, TEAM_COLORS, PARTY_COLOR
 } from '../sim/data.js';
 import { clamp, fmtTime } from '../core/math.js';
 import { iconFor } from './menu.js';
@@ -18,6 +18,10 @@ const TEAM_NEUTRAL = 0;
    parchment ground; that is part of the map's look, so the extra crowns take
    colours that read well at six pixels rather than reusing the 3D palette. */
 const MINIMAP_TEAM = { 1: TEAM_COLORS[1].css, 2: TEAM_COLORS[2].css, 3: TEAM_COLORS[3].css, 4: TEAM_COLORS[4].css };
+/* The sandbox's third party is purple on the map too, so the one army that is
+   not at war with you never reads as the enemy. */
+const mapColour = (team, game) =>
+  (game && game.partyTeam === team ? PARTY_COLOR.css : (MINIMAP_TEAM[team] || '#b9a678'));
 import { OFFICES as COURT_OFFICES, RANK_AT } from '../sim/court.js';
 import { TAX_RATES } from '../sim/realm.js';
 
@@ -1430,7 +1434,7 @@ export class UI {
         if (this._lastCrownKey !== sig) {
           this._lastCrownKey = sig;
           el.crownStrip.innerHTML = rows.map((r) => {
-            const col = MINIMAP_TEAM[r.team] || '#b9a678';
+            const col = mapColour(r.team, g);
             const label = r.name.split(' ')[0];
             return `<span class="crown${r.team === 1 ? ' me' : ''}${r.alive ? '' : ' fallen'}" title="${r.name} · ${r.alive ? `${Math.round(r.score)} strength` : 'fallen'}">
               <i style="background:${col}"></i>${label}<b>${r.alive ? Math.round(r.score) : '✕'}</b></span>`;
@@ -1849,7 +1853,7 @@ export class UI {
       const b = build[i];
       if (b.dead) continue;
       if (b.team === 1 || g.isVisible(b.x, b.z)) {
-        ctx.fillStyle = b.team === TEAM_NEUTRAL ? '#b9a678' : (MINIMAP_TEAM[b.team] || '#b9a678');
+        ctx.fillStyle = b.team === TEAM_NEUTRAL ? '#b9a678' : mapColour(b.team, g);
         const s = b.def.ageAdvance ? 5 : 3.4;
         ctx.fillRect(px(b.x) - s / 2, pz(b.z) - s / 2, s, s);
       }
@@ -1863,8 +1867,8 @@ export class UI {
       /* the player keeps the blue/green it always had; rivals carry their
          crown's colour so four armies can be told apart on one map */
       ctx.fillStyle = u.type === 'villager'
-        ? (u.team === 1 ? '#9adfe8' : MINIMAP_TEAM[u.team] || '#e0564b')
-        : (u.team === 1 ? '#7ac25b' : MINIMAP_TEAM[u.team] || '#e0564b');
+        ? (u.team === 1 ? '#9adfe8' : mapColour(u.team, g))
+        : (u.team === 1 ? '#7ac25b' : mapColour(u.team, g));
       ctx.fillRect(px(u.x) - 1.2, pz(u.z) - 1.2, 2.6, 2.6);
     }
     // camera view
