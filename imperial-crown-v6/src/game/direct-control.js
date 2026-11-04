@@ -1077,14 +1077,18 @@ export class DirectControl {
      Arcane Order (unchanged rules, unchanged implementation)
      ========================================================== */
   arcane() {
-    if (!this.unit?.modState?.arcane || !this.unit.def?.caster) return null;
+    /* The book belongs to the caster, not to the state object: if the state is
+       ever missing (a restored save, a respawn through another mod's path) the
+       Order rebuilds it on its next tick, and hiding the whole shelf until
+       then is how a player loses their spells without being told why. */
+    if (!this.unit || this.unit.dead || !this.unit.def?.caster) return null;
     return this.game.modHost?.mods.get('arcane') || null;
   }
 
   availableSpells() {
     const entry = this.arcane();
     if (!entry) return [];
-    const rank = this.unit.modState.arcane.rank || 1;
+    const rank = this.unit.modState?.arcane?.rank || 1;
     const list = entry.mod.spells().map((s) => ({ ...s, locked: rank < (s.rank || 1) }));
     for (const h of entry.mod.hybrids()) if (entry.state.discovered.has(h.id)) list.push({ ...h, locked: false });
     return list;
@@ -1124,7 +1128,8 @@ export class DirectControl {
     if (!spell) return false;
     if (spell.locked) { this.ui.toast(`${spell.name} unlocks at mage rank ${spell.rank}`, 'warn'); return false; }
     if (id === 'skyfall' && !mapPoint) {
-      const state = this.unit.modState.arcane;
+      const state = this.unit.modState && this.unit.modState.arcane;
+      if (!state) return false;
       if (state.mana < spell.cost) { this.ui.toast(`${spell.name}: not enough mana`, 'warn'); return false; }
       if (entry.mod.skyUsesLeft?.(entry.api, state.rank) <= 0) { this.ui.toast('The sky returns tomorrow', 'warn'); return false; }
       this.openGlobalMap(id);
@@ -1276,7 +1281,9 @@ export class DirectControl {
   refreshSpells() {
     const entry = this.arcane(), box = this.el.fpSpellList;
     if (!entry || !box || this.el.fpSpellShelf?.classList.contains('hidden')) return;
-    const state = this.unit.modState.arcane, rank = state.rank || 1;
+    const state = this.unit.modState && this.unit.modState.arcane;
+    if (!state) { this.spellSignature = ''; return; }   // the Order is rebuilding it
+    const rank = state.rank || 1;
     const spells = this.availableSpells();
     const pairs = rank >= 3 ? entry.mod.attunementPairs().filter((p) => !entry.state.discovered.has(p.id)) : [];
     const skyLeft = entry.mod.skyUsesLeft?.(entry.api, rank) ?? 0;

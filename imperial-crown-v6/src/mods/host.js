@@ -304,10 +304,12 @@ export class ModHost {
   }
 
   _setChip(modId, chip) {
+    /* a mod may own more than one chip: it names the slot with `id` */
+    const id = chip && chip.id ? chip.id : modId;
     const list = this._hud.chips;
-    const i = list.findIndex((c) => c.id === modId);
-    if (i >= 0) list[i] = { ...chip, id: modId };
-    else list.push({ ...chip, id: modId });
+    const i = list.findIndex((c) => c.id === id);
+    if (i >= 0) list[i] = { ...chip, id };
+    else list.push({ ...chip, id });
   }
 
   /* ------------------------------------------------------------
@@ -321,18 +323,46 @@ export class ModHost {
     try { return fn(); } catch (err) { this._fail(mod, err); return label ? undefined : null; }
   }
 
+  /* A hook threw.
+   *
+   * This used to disable the whole mod on the *first* exception, which is why
+   * a spellbook could vanish mid-match over one bad frame: any single throw
+   * from any hook -- a storm, a stray damage event, a save that came back
+   * slightly different -- took the entire Arcane Order off the field for good,
+   * and the only trace was one toast the player was watching the battle
+   * instead of.
+   *
+   * A mod that is genuinely broken keeps throwing, every tick, so a tally is
+   * all that is needed: eight failures inside four seconds still retires it,
+   * and one failure in an hour is a hiccup the player never has to lose their
+   * spells over. */
   _fail(mod, err) {
     const id = mod && mod.id;
     const name = (mod && mod.name) || id || 'mod';
     const msg = err && err.message ? err.message : String(err);
-    this.errors.push({ mod: id, message: msg, time: this.game ? this.game.time : 0 });
-    if (id && this.mods.has(id)) {
-      const entry = this.mods.get(id);
-      this.mods.delete(id);
-      this._unregisterContent(mod);
-      this._guardRaw(null, () => mod.dispose && mod.dispose(entry.api), null);
-    }
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    if (this.errors.length < 60) this.errors.push({ mod: id, message: msg, time: this.game ? this.game.time : 0, at: now });
     if (this.onError) this.onError({ mod: id, name, message: msg });
+    if (!id || !this.mods.has(id)) return;
+    if (!this._failTally) this._failTally = new Map();
+    const rec = this._failTally.get(id) || { n: 0, at: 0, told: 0 };
+    if (now - rec.at > 4000) rec.n = 0;
+    rec.at = now;
+    rec.n++;
+    this._failTally.set(id, rec);
+    if (rec.n < 8) {
+      /* say it once in a while, and carry on with the mod intact */
+      if (now - rec.told > 20000) {
+        rec.told = now;
+        if (this.game && this.game.notify) this.game.notify(`${name} stumbled (${msg}) — still running`, 'warn');
+      }
+      return;
+    }
+    const entry = this.mods.get(id);
+    this.mods.delete(id);
+    this._unregisterContent(mod);
+    this._guardRaw(null, () => mod.dispose && mod.dispose(entry.api), null);
+    this._failTally.delete(id);
     /* the report goes to the player, not to the console the phone cannot show */
     if (this.game && this.game.notify) {
       this.game.notify(`${name} disabled itself (${msg}) — the match goes on`, 'bad');
@@ -417,11 +447,16 @@ export class ModHost {
   }
 
   refreshHud() {
+    /* chips are rebuilt from scratch each pass, so a mod that stops reporting
+       one (the enemy mage died, the storm cleared) does not leave it pinned
+       to the HUD for the rest of the match */
+    this._hud.chips = [];
     for (const entry of this.activeList()) {
       this._guard(entry.mod, () => entry.mod.hud && entry.mod.hud(entry.api));
     }
-    /* drop chips of mods that were disabled */
-    this._hud.chips = this._hud.chips.filter((c) => this.mods.has(c.id));
+    /* (chips are rebuilt above, so a disabled mod's chip is simply never
+       re-added; filtering by mod id here would also drop a mod's *named*
+       slots, such as the enemy-mage chip, which share no id with the mod) */
     this._hud.gauges = [];
     for (const entry of this.activeList()) {
       const g = this._guard(entry.mod, () => entry.mod.gauge && entry.mod.gauge(entry.api));

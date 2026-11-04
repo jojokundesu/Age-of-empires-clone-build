@@ -124,43 +124,45 @@ jobs:
           set -euo pipefail
           TAG="v${VERSION}-preview"
           cat > "$RUNNER_TEMP/v6-release-notes.md" <<'NOTES'
-          ## Imperial Crown 3D v6.3.0 — Android preview
+          ## Imperial Crown 3D v6.3.1 — Android preview
 
           Built from this commit and verified in this run: the whole regression suite, the Chromium
           first-person and panel pass, the 892x412 phone-layout check, the signatures, the alignment,
           the package identity and every byte of the bundled web app.
 
-          6.2.0 answered the balance list; 6.3.0 adds the thing you asked for after it: **a third
-          party in the Grand Sandbox.**
+          ### The spellbook can no longer vanish
 
-          ### The Free Company
+          The cause was in the Workshop host, not in the spells. It retired a mod on the **first**
+          exception from any hook, so one bad frame anywhere — a storm, a stray damage event, a save
+          that came back slightly different — took the entire Arcane Order off the field for the rest
+          of the match. The only trace was one toast nobody was looking at.
 
-          The sandbox now seats two crowns: you, and the Free Company, in purple. It is a working
-          town -- a hall, houses, woodcutters, and a watch on its own gate -- and it is **not your
-          enemy**. Nobody strikes first. Your soldiers walk past its fields, your army stands in its
-          yard, and nothing happens: the rule every automatic decision asks (`canFight`) says no
-          while the party is at peace.
+          It is a tally now: eight failures inside four seconds still retires a genuinely broken mod;
+          one failure in an hour is a hiccup a mod survives. And the Order **rebuilds a lost book** —
+          any live caster without arcane state gets its rank and mana back on the next tick, the
+          first-person shelf no longer hides itself just because that state blinked, and a mage whose
+          yard is too crowded to land in is put down beside the hall instead of the respawn timer
+          quietly stalling for ever.
 
-          **Hit one of them and the truce is over.** Tap one of their men and your soldiers attack
-          him -- an order is always obeyed. The first blow ends the peace for good, announced once,
-          and then the fight is real in both directions: their watch answers, and their council
-          starts putting companies in the field. Until that happens their council still builds,
-          hires and ranks up; it simply does not march.
+          ### The enemy has a mage, and he spams
 
-          The pause panel names the party and its temper: *at peace -- will not strike first*, or
-          *at war with you*. While at peace the party shares its map with you, so its town is
-          visible rather than being a fog-shaped hole.
+          The Order answers every crown, not only yours. A rival town gets its man twelve seconds in,
+          under your rules: one per team, 45 seconds to come back at Apprentice rank. He studies on
+          his own as the match goes on, walks with his army instead of standing in his yard, and casts
+          through the same code the player does — Meteor on a real cluster, Frost Nova when the ring
+          closes, Fireball and Ice Lance on the man worth killing, golems and meteors against
+          buildings, and SKYFALL once a minute at Ascendant against an army. At rank 6 that is roughly
+          a spell every half second. A red **Enemy mage** chip appears on the HUD when he is close.
 
-          ### Still in the box from 6.2.0
+          In the Grand Sandbox the Free Company's mage keeps his hands to himself while the peace
+          holds, and opens the book the moment it is broken.
 
-          Mana 250 → 1000 with cooldowns collapsing to a tenth at Ascendant; three SKYFALLs a day;
-          one mage per team, returning at Apprentice rank 45 s after he falls; no duplicate spells
-          (Shatterfrost replaced the second freeze); golems that multiply and specialise by rank;
-          a 30 m blink; casting while running; ice crystals on frozen men and a sheet of ice on the
-          ground for the whole duration; health regeneration; the Codex on the main menu; the farm
-          order and literal building placement.
+          Nothing else from 6.2.0 or 6.3.0 was changed: the mana and cooldown ladder, three SKYFALLs a
+          day, one mage per team, no duplicate spells, golems by rank, the 30 m blink, casting while
+          running, the ice, the Codex, literal placement, and the Sandbox's third party are all as
+          they were.
 
-          It installs **over 6.2.0** (same key, versionCode 60300) and stays beside v5. Signed with the
+          It installs **over 6.3.0** (same key, versionCode 60301) and stays beside v5. Signed with the
           repository's public demo key for testing. Sustained frame rate, heat and battery on the
           physical Realme 9i are still unmeasured -- that needs the phone.
 

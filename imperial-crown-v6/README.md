@@ -2,6 +2,30 @@
 
 Version 6 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-v4/); v5 is kept beside it. The v4 and v5 source, assets, Android packages and save slots remain untouched. V6 keeps the same procedural art, custom WebGL2 renderer, strategy simulation, 30 Hz fixed tick, LOD, and adaptive quality governor; its controls operate on the actual units in that simulation rather than a second game.
 
+## What changed in 6.3.1
+
+Two bugs from a real session, both fixed at the cause.
+
+- **The mage's book can no longer vanish, and the reason it could is gone.** The Workshop host used to
+  retire a mod on the *first* exception from any hook, so one bad frame -- a storm, a stray damage
+  event, a save that came back slightly different -- took the whole Arcane Order off the field for the
+  rest of the match, and the only trace was a toast the player was not looking at. It is now a tally:
+  eight failures inside four seconds still retires a genuinely broken mod, one failure in an hour is a
+  hiccup it survives (`ModHost._fail`). On top of that the Order **rebuilds a missing book**: any live
+  caster with no `modState.arcane` gets its rank and mana back in the next tick, the first-person
+  shelf no longer hides itself just because that state blinked, and a mage whose yard is too crowded
+  for a landing spot is now put down beside the hall instead of the respawn timer quietly dying
+  (a timer that never cleared was a mage that never came back).
+- **The rival crown has a mage now, and he fights like one.** The Order answers every crown, not only
+  the one holding the phone: a rival town gets its man twelve seconds into the match, he keeps the
+  player's rules (one per team, 45 s to come back at Apprentice), studies on his own so the ladder
+  climbs, walks with his army instead of standing in the yard, and casts through the same
+  `performCast` the player does -- meteor on a real cluster, frost nova when the ring closes, fireball
+  and ice lance on the man worth killing, golems and meteors against buildings, and SKYFALL once a
+  minute at Ascendant against an army. At rank 6 he casts roughly every half second. The HUD shows a
+  red **Enemy mage** chip when he is within sight. In the sandbox the Free Company's mage keeps his
+  hands to himself while the peace holds and opens the book the moment it is broken.
+
 ## What changed in 6.3.0
 
 Two things: the download, and a neighbour in the sandbox.

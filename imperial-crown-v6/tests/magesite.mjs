@@ -400,6 +400,42 @@ await check('a ground spell hits what is standing there', async () => {
   return `${hurt} spearmen caught, ${hit.hp0[0]} → ${hit.hp1[0]}`;
 });
 
+await check('the rival crown has a mage, and he casts at your men', async () => {
+  const duel = await page.evaluate(() => {
+    const a = window.__imperial, g = a.game;
+    /* the Order sends the other crown a man a few seconds in */
+    window.__stepSim(16);
+    const foe = g.units.find((u) => u.team === 2 && !u.dead && u.def.caster);
+    if (!foe) return { error: 'the rival crown has no mage' };
+    foe.modState.arcane.rank = 6;
+    foe.modState.arcane.mana = 1000;
+    const tc = g.buildings.find((b) => b.team === 2 && b.type === 'town_center') || g.buildings.find((b) => b.team === 2);
+    const dummies = [];
+    for (let i = 0; i < 4; i++) {
+      const u = g.spawnUnitRaw('spearman', 1, foe.x + 4 + (i % 2) * 1.4, foe.z + Math.floor(i / 2) * 1.4);
+      if (u) { u.maxHp = u.hp = 4000; dummies.push(u); }
+    }
+    window.__look(foe.x, foe.z, 16, 0.45, 0.5);
+    const hp0 = dummies.map((d) => d.hp);
+    window.__stepSim(6);
+    return {
+      casts: foe.modState.arcane.castTotal || 0,
+      rank: foe.modState.arcane.rank,
+      hp0, hp1: dummies.map((d) => d.hp),
+      /* the DOM chip strip is redrawn by the frame loop, which __stepSim does
+         not run: read the host's own chip list instead */
+      chip: (g.modHost.hud().chips || []).map((c) => `${c.label} ${c.value}`).join(' | ')
+    };
+  });
+  assert(!duel.error, duel.error || '');
+  assert(duel.casts > 0, 'the rival mage never cast');
+  const hurt = duel.hp1.filter((hp, i) => hp < duel.hp0[i]).length;
+  assert(hurt > 0, `his spells hurt nobody (${duel.hp0[0]} → ${duel.hp1[0]})`);
+  await frame(2);
+  await shot('08-rival-mage');
+  return `${duel.casts} casts in 6 s at rank ${duel.rank}, ${hurt} of yours caught${/Enemy mage/i.test(duel.chip) ? ', chip shown' : ''}`;
+});
+
 /* ------------------------------------------------------------------ tidying */
 await check('quitting a session leaves no magic behind', async () => {
   await page.evaluate(() => window.__imperial.quitToMenu());

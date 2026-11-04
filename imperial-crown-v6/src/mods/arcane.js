@@ -858,6 +858,15 @@ export const arcane = {
 
   setup(api) {
     api.say('The Arcane Order answers the call. Train mages at the Town Centre.', 'good');
+    /* The Order answers every crown, not only the one holding the phone. A
+       rival town gets its man a few seconds into the match; the respawn loop
+       above takes it from there, so losing him costs them the same 45 s it
+       costs the player. In the sandbox that is the Free Company's mage, and
+       he keeps his hands to himself while the peace holds. */
+    for (const t of api.game.teamIds) {
+      if (t === TEAM_PLAYER) continue;
+      api.state.respawn[t] = api.time + 12;
+    }
   },
 
   /* ------------------------------------------------------------
@@ -1014,10 +1023,25 @@ export const arcane = {
     const st = api.state;
     const time = api.time;
 
+    /* The state of the Order is rebuilt before it is used. A save that came
+       back from an older build, a unit restored by somebody else's code, or a
+       mage that walked out of a hall through a path that skipped `onSpawn`
+       all leave a caster with no book: the shelf empties, the cards go, and
+       the player's magic is simply gone with no way back. Anything that is a
+       caster but has no state gets it now, rank and all, in the same tick. */
+    for (const u of api.units()) {
+      if (u.dead || !u.def) continue;
+      if (!u.def.caster) continue;
+      if (u.modState && u.modState.arcane) continue;
+      const fresh = ustate(api, u);
+      fresh.rank = RANK_BY_TYPE.get(u.type)?.rank || 1;
+      fresh.mana = maxMana(u, api);
+      fresh.healedAt = time;
+    }
     for (const u of api.units()) {
       if (u.dead) continue;
       const ms = u.modState && u.modState.arcane;
-      if (!ms) continue;
+      if (!ms || !u.def || !u.def.caster) continue;
       // A burned or frozen non-mage also has arcane scratch state. It must
       // not gain insight and silently turn into a mage after a long battle.
       if (isMage(u)) {
@@ -1147,14 +1171,17 @@ export const arcane = {
       }
     }
 
-    /* the Order sends another mage */
-    for (const team of [TEAM_PLAYER, TEAM_ENEMY]) {
+    /* the Order sends another mage -- to every crown, the player's first */
+    for (const team of [...api.game.teamIds].sort((a, b) => (a === TEAM_PLAYER ? -1 : b === TEAM_PLAYER ? 1 : a - b))) {
       const at = st.respawn[team];
       if (!at || time < at) continue;
       if (api.teamUnits(team).some(isMage)) { delete st.respawn[team]; continue; }
       const halls = api.teamBuildings(team).filter((b) => !b.dead && b.buildProgress >= 0.99);
       const home = halls.find((b) => b.type === 'town_center') || halls.find((b) => b.type === 'castle') || halls[0];
-      if (!home) continue;
+      /* Nothing left to walk out of: stop counting down, so the day a hall is
+         rebuilt is the day the Order answers again. A timer that is never
+         cleared is a mage that never comes back. */
+      if (!home) { if (time - at > 90) delete st.respawn[team]; continue; }
       let spot = null;
       for (let r = 2.6; r < 9 && !spot; r += 1.2) {
         for (let a = 0; a < 8 && !spot; a++) {
@@ -1163,14 +1190,21 @@ export const arcane = {
           if (api.passable(x, z) && api.headroom(x, z)) spot = [x, z];
         }
       }
-      if (!spot) continue;
+      /* A busy yard is not a reason to lose the Order for the rest of the
+         match: if the ring is full, the man is put down beside the hall
+         anyway (the spawn nudges him clear). */
+      if (!spot) spot = [home.x + 3.2, home.z + 3.2];
       const m = api.spawn(MAGE, team, spot[0], spot[1]);
       delete st.respawn[team];
       if (!m) continue;
       api.fx.heal(m.x, m.y + 1.4, m.z, 5);
       api.mark(m.x, m.z, { kind: 1, r0: 0.6, g0: 0.8, b0: 1, r: 2.6, life: 1 });
       if (team === TEAM_PLAYER) api.say('A new Apprentice walks out of the hall', 'good');
+      else if (m.modState && m.modState.arcane) m.modState.arcane.aiNext = time + 6;
     }
+
+    /* the enemy's mage fights like a mage */
+    this.aiCast(api, dt);
 
     /* scorch marks fade */
     for (let i = st.scars.length - 1; i >= 0; i--) {
@@ -1215,6 +1249,133 @@ export const arcane = {
   /* ------------------------------------------------------------
      the command card
      ------------------------------------------------------------ */
+  /* ------------------------------------------------------------
+     the enemy's mage
+     ------------------------------------------------------------
+     A crown that owns the Workshop is not supposed to be the only
+     one who can read. The Order sends every crown a mage (see the
+     respawn loop above), and this is what that man does with his
+     book: he looks at the fight, picks the spell the fight deserves,
+     and casts it at the cadence his rank allows.
+
+     He is deliberately not a scripted show. He casts through the
+     same `performCast` the player does, so his mana, cooldowns, rank
+     scaling, ice, burns and golems are the player's rules applied
+     to the other side of the field. What he will not do is start a
+     war: every choice goes through `game.canFight`, so the sandbox's
+     Free Company keeps its hands to itself until it is struck.
+     ============================================================ */
+  aiCast(api, dt) {
+    const game = api.game, time = api.time;
+    const PLAYER = TEAM_PLAYER;
+    for (const caster of api.units()) {
+      if (caster.dead || caster.team === PLAYER || !isMage(caster)) continue;
+      const st = caster.modState.arcane;
+      /* nobody is reading over his shoulder: an NPC mage studies on his own,
+         so a long match has an Archmage on the other side of the hill rather
+         than a permanent Apprentice and a target dummy. */
+      st.xp += dt * 1.35;
+      gainXp(api, caster, 0);
+      const rank = st.rank || 1;
+      if (time < (st.aiNext || 0)) continue;
+      const cadence = Math.max(0.4, (1.1 + api.rng() * 0.9) * cdScale(rank));
+      st.aiNext = time + cadence;
+
+      /* who is he allowed to fight, and who is worth it */
+      const foes = [];
+      for (const e of api.units()) {
+        if (e.dead || e === caster || !game.canFight(caster.team, e.team)) continue;
+        const d = Math.hypot(e.x - caster.x, e.z - caster.z);
+        if (d <= 18) foes.push(e);
+      }
+      const roofs = api.buildings().filter((b) => !b.dead && b.team !== caster.team && b.team !== 0 && game.canFight(caster.team, b.team));
+
+      /* no target: a mage does not stand in his own yard while the war is
+         somewhere else. He walks with the army. (A party at peace has no war
+         to walk to, and canFight is false for it, so it stays home.) */
+      if (!foes.length && time > (st.aiWalk || 0)) {
+        st.aiWalk = time + 8;
+        const atWar = game.teamIds.some((t) => t !== caster.team && game.canFight(caster.team, t) && game.aliveTeam(t));
+        if (atWar) {
+          let host = null, hostD = 60 * 60;
+          for (const u of api.units()) {
+            if (u === caster || u.dead || u.team !== caster.team) continue;
+            if (!(u.def.attack > 0) || u.def.classes.includes('villager')) continue;
+            const d = (u.x - caster.x) ** 2 + (u.z - caster.z) ** 2;
+            if (d < hostD) { hostD = d; host = u; }
+          }
+          if (host && Math.hypot(host.x - caster.x, host.z - caster.z) > 9) {
+            game.orderAttackMove([caster], host.x, host.z);
+          } else if (!host) {
+            /* nothing of his own left in the field: make for their hall */
+            const goals = roofs.slice().sort((a, b) => Math.hypot(a.x - caster.x, a.z - caster.z) - Math.hypot(b.x - caster.x, b.z - caster.z));
+            if (goals.length) game.orderAttackMove([caster], goals[0].x, goals[0].z);
+          }
+        }
+      }
+
+      /* no target, nothing to say about it */
+      if (!foes.length && !roofs.length) continue;
+
+      const around = (x, z, r) => foes.filter((e) => Math.hypot(e.x - x, e.z - z) <= r);
+      const pick = (id) => SPELL_BY_ID.get(id);
+      const can = (spell, x, z) => spell && castable(api, caster, spell).ok &&
+        Math.hypot(caster.x - x, caster.z - z) <= (spell.range || 14);
+      const cast = (spell, x, z) => {
+        st.aiNext = time + Math.max(0.4, (0.9 + api.rng() * 0.8) * cdScale((st.rank || 1)));
+        return performCast(api, caster, spell, x, z);
+      };
+
+      /* 1. the big area spells, when the field is worth them */
+      let best = null, bestN = 0, bx = 0, bz = 0;
+      for (const e of foes) {
+        const n = around(e.x, e.z, 5).length;
+        if (n > bestN) { bestN = n; best = e; bx = e.x; bz = e.z; }
+      }
+      if (best && bestN >= 3) {
+        const meteor = pick('meteor');
+        if (can(meteor, bx, bz) && cast(meteor, bx, bz)) continue;
+        const storm = pick('thunderstorm');
+        if (can(storm, bx, bz) && cast(storm, bx, bz)) continue;
+      }
+      /* 2. the once-a-day, for a real army, at most once a minute */
+      if (rank >= 6 && best && bestN >= 5 && time - (st.lastSky || -999) > 60) {
+        const sky = pick('skyfall');
+        if (can(sky, bx, bz) && cast(sky, bx, bz)) { st.lastSky = time; continue; }
+      }
+      /* 3. freeze the ring around himself before it closes */
+      const close = around(caster.x, caster.z, 5.5);
+      if (close.length >= 2) {
+        const nova = pick('nova');
+        if (can(nova, caster.x, caster.z) && cast(nova, caster.x, caster.z)) continue;
+      }
+      /* 4. one man worth killing: the softest looking, else the nearest */
+      if (foes.length) {
+        const target = foes.reduce((a, e) => (e.maxHp < a.maxHp ? e : a), foes[0]);
+        const fire = pick('fireball');
+        if (can(fire, target.x, target.z) && cast(fire, target.x, target.z)) continue;
+        if (around(target.x, target.z, 4).length >= 2) {
+          const chain = pick('chain');
+          if (can(chain, target.x, target.z) && cast(chain, target.x, target.z)) continue;
+        }
+        if ((target.def.attack || 0) >= 8 || target.def.caster) {
+          const ice = pick('ice_lance');
+          if (can(ice, target.x, target.z) && cast(ice, target.x, target.z)) continue;
+        }
+        const warp = pick('warp');
+        if (can(warp, target.x, target.z) && cast(warp, target.x, target.z)) continue;
+      }
+      /* 5. nobody home: break the wall in front of the army */
+      if (roofs.length) {
+        const roof = roofs.reduce((a, b) => (b.hp < a.hp ? b : a), roofs[0]);
+        const golem = pick('golem');
+        if (can(golem, roof.x, roof.z) && cast(golem, roof.x, roof.z)) continue;
+        const meteor = pick('meteor');
+        if (can(meteor, roof.x, roof.z) && cast(meteor, roof.x, roof.z)) continue;
+      }
+    }
+  },
+
   commands(ctx) {
     const { api, ui } = ctx;
     const sel = ctx.selection || [];
@@ -1375,6 +1536,21 @@ export const arcane = {
     if (best && best.st.rank >= 6) {
       const left = skyUsesLeft(api, best.st.rank);
       api.hud({ icon: 'bolt', label: 'Skyfall', value: left > 0 ? `${left}/${SKYFALL_MAX} today` : 'next day', tone: left > 0 ? 'good' : '' });
+    }
+    /* A rival mage is worth a line of its own: the player should be able to
+       see that the fire coming down the hill has a man behind it. */
+    let enemyMage = null;
+    const mine = api.teamUnits(TEAM_PLAYER);
+    for (const u of api.units()) {
+      if (u.dead || u.team === TEAM_PLAYER || !isMage(u)) continue;
+      for (const p of mine) {
+        if (Math.hypot(p.x - u.x, p.z - u.z) < 34) { enemyMage = u; break; }
+      }
+      if (enemyMage) break;
+    }
+    if (enemyMage) {
+      const st = enemyMage.modState.arcane;
+      api.hud({ id: 'arcane_enemy', icon: 'monk', label: 'Enemy mage', value: `${rankInfo(enemyMage).title} · ${st.mana | 0} mana`, tone: 'bad' });
     }
   },
 

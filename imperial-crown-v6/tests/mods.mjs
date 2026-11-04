@@ -191,23 +191,30 @@ check('a mod that throws is disabled and the match keeps going', () => {
   return `rogue content (${withRogue - before} type) removed, ${errors.length} report, game alive`;
 });
 
-check('a mod that throws inside a command cannot swallow the click', () => {
+check('one bad hook is a hiccup, a mod that keeps throwing is retired', () => {
   const g = makeGame();
   const host = modHost(g, ['weather']);
+  let armed = true;
   host.mods.set('badcmd', {
     mod: {
       id: 'badcmd', name: 'Bad Command', icon: 'warning',
-      commands() { throw new Error('nope'); }
+      commands() { if (armed) throw new Error('nope'); return []; }
     },
     api: host._apiFor({ id: 'badcmd' }, {}),
     state: {}, opts: {}
   });
   const list = [{ icon: 'sword', label: 'Real', action: () => {} }];
+  /* 6.4: an exception used to take the whole mod off the field, which is how a
+     spellbook could vanish mid-match over one bad frame. It survives now. */
   const out = host.decorateCommands(list, null);
   eq(out.length, 1, 'the real command survives');
-  assert(!host.isActive('badcmd'), 'the broken one is disabled');
+  assert(host.isActive('badcmd'), 'one throw must not kill a mod');
+  assert(host.errors.length >= 1, 'the failure is still reported');
+  /* a mod that is genuinely broken throws every frame and is retired */
+  for (let i = 0; i < 10; i++) host.decorateCommands(list, null);
+  assert(!host.isActive('badcmd'), 'a mod that keeps throwing is disabled');
   host.dispose();
-  return 'command cards still work';
+  return 'one throw tolerated, a broken mod retired';
 });
 
 /* ============================================================
@@ -307,6 +314,93 @@ check('mana regenerates and a spell spends it', () => {
   assert(enemy.hp < enemy.maxHp, 'fireball should hurt');
   host.dispose();
   return `mana ${before.toFixed(1)} → ${st().mana.toFixed(1)}, target ${enemy.hp.toFixed(0)}/${enemy.maxHp}`;
+});
+
+check('a caster whose book is lost gets it back on the next tick', () => {
+  const g = makeGame();
+  const host = modHost(g, ['arcane']);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  assert(mage, 'mage spawned');
+  const rec = host.mods.get('arcane');
+  mage.modState.arcane.rank = 4;
+  /* exactly what a restored save, a respawn through somebody else's path, or
+     a wipe by another system leaves behind: a caster with no book */
+  mage.modState = {};
+  eq(mage.modState.arcane, undefined, 'the book is gone');
+  run(g, 0.2);
+  assert(mage.modState.arcane, 'the Order did not rebuild the book');
+  assert(mage.modState.arcane.mana > 0, 'the rebuilt book has no mana');
+  eq(host.mods.get('arcane') === rec, true, 'the mod is still the same session');
+  host.dispose();
+  return 'state rebuilt in one tick';
+});
+
+check('the rival crown gets a mage, ranks up, and casts at your men', () => {
+  const g = makeGame();
+  const host = modHost(g, ['arcane']);
+  const rec = host.mods.get('arcane');
+  /* the enemy hall exists already; the Order sends their man a few seconds in */
+  run(g, 16);
+  const theirs = () => g.units.filter((u) => u.team === 2 && !u.dead && u.def.caster);
+  assert(theirs().length === 1, `the enemy has ${theirs().length} magi`);
+  const enemyMage = theirs()[0];
+  assert(enemyMage.modState && enemyMage.modState.arcane, 'their mage has no book');
+  /* stand a squad in front of him: he should open the book himself */
+  /* four very tough dummies, or the first two fireballs end the test */
+  for (let i = 0; i < 4; i++) {
+    const dummy = placeAt(g, 'spearman', 1, enemyMage.x + 5 + (i % 2) * 1.2, enemyMage.z + (i % 2) * 1.2);
+    if (dummy) { dummy.maxHp = dummy.hp = 3000; dummy.noAggro = true; }
+  }
+  enemyMage.modState.arcane.rank = 6;
+  enemyMage.modState.arcane.mana = 1000;
+  const casts = () => enemyMage.modState.arcane.castTotal || 0;
+  run(g, 12);
+  assert(casts() > 0, 'their mage never cast');
+  /* and he spams: an Ascendant on the other side of the hill should be a
+     problem, not a decoration */
+  assert(casts() >= 4, `their Ascendant cast only ${casts()} times in 12 s`);
+  host.dispose();
+  return `${casts()} casts in 12 s, rank ${enemyMage.modState.arcane.rank}`;
+});
+
+check('a sandbox party keeps its mage quiet until the peace is broken', () => {
+  const g = new Game({ world: generateWorld(909), civ: 'franks', mode: 'sandbox', difficulty: 'standard' });
+  g.start();
+  const host = createModHost(g, { enabled: ['arcane'] });
+  g.modHost = host;
+  run(g, 16);
+  const theirs = g.units.filter((u) => u.team === 2 && !u.dead && u.def.caster);
+  assert(theirs.length === 1, `the party has ${theirs.length} magi`);
+  const theirsMage = theirs[0];
+  for (let i = 0; i < 4; i++) {
+    const dummy = placeAt(g, 'spearman', 1, theirsMage.x + 4 + i, theirsMage.z);
+    if (dummy) { dummy.maxHp = dummy.hp = 3000; dummy.noAggro = true; }
+  }
+  run(g, 12);
+  eq(theirsMage.modState.arcane.castTotal || 0, 0, 'the party cast while at peace');
+  assert(g.atPeace(2), 'the peace broke itself');
+  /* strike them and the book opens */
+  g.breakPeace(2, 1);
+  run(g, 12);
+  assert((theirsMage.modState.arcane.castTotal || 0) > 0, 'the party did not answer once at war');
+  host.dispose();
+  return `${theirsMage.modState.arcane.castTotal} casts after the first blow`;
+});
+
+check('a rival mage that dies comes back at Apprentice rank', () => {
+  const g = makeGame();
+  const host = modHost(g, ['arcane']);
+  run(g, 16);
+  const before = g.units.filter((u) => u.team === 2 && !u.dead && u.def.caster)[0];
+  assert(before, 'no rival mage');
+  before.modState.arcane.rank = 5;
+  before.takeDamage(1e6, null, 'test');
+  run(g, 60);
+  const after = g.units.filter((u) => u.team === 2 && !u.dead && u.def.caster)[0];
+  assert(after, 'the rival mage never came back');
+  eq(after.modState.arcane.rank || 1, 1, 'the replacement is an Apprentice again');
+  host.dispose();
+  return 'back at rank 1 after the delay';
 });
 
 check('blink will not cross a wall', () => {
