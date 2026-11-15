@@ -106,13 +106,30 @@ check('the squad chases a running mage and lets go when it dies', () => {
   for (let i = 0; i < 6; i++) spawn(g, 'knight', 2, g.enemyBase.x + 3 + i, g.enemyBase.z + 6);
   run(g, ai, 12);
   assert(ai.hunt.length >= 2, 'squad formed');
-  /* the mage runs: the squad's target must stay the mage, not its old spot */
-  mage.x += 18;
+  /* The mage runs: the squad's target must stay the mage, not its old spot.
+     It flees along the axis that has dry ground, so the hunters can actually
+     follow -- running 18 m east used to mean running into the river, which
+     left the squad standing on the bank failing a check about pathing. */
   const squad = ai.hunt.slice();
+  const before = { x: mage.x, z: mage.z };
+  let bestDir = null;
+  for (let a = 0; a < 16; a++) {
+    const ang = (a / 16) * Math.PI * 2;
+    const dx = Math.cos(ang) * 18, dz = Math.sin(ang) * 18;
+    let clear = true;
+    for (let s = 2; s <= 18 && clear; s += 2) {
+      if (g.isWater(before.x + Math.cos(ang) * s, before.z + Math.sin(ang) * s)) clear = false;
+    }
+    if (clear) { bestDir = { dx, dz }; break; }
+  }
+  assert(bestDir, 'the mage has nowhere dry to run');
+  mage.x = before.x + bestDir.dx;
+  mage.z = before.z + bestDir.dz;
   run(g, ai, 14);
   assert(ai.huntTarget === mage, 'the target followed the mage');
-  const moved = squad.some((u) => !u.dead && u.x > mid.x + 4);
-  assert(moved, 'the hunters are physically chasing east');
+  const moved = squad.some((u) => !u.dead
+    && Math.hypot(u.x - before.x, u.z - before.z) > Math.hypot(bestDir.dx, bestDir.dz) * 0.5);
+  assert(moved, 'the hunters are physically chasing');
   mage.kill(null);
   run(g, ai, 6);
   eq(ai.hunt.length, 0, 'the hunt disbands when the target dies');

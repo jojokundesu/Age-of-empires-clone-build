@@ -2,6 +2,50 @@
 
 Version 6 is a separate continuation of [`imperial-crown-v4`](../imperial-crown-v4/); v5 is kept beside it. The v4 and v5 source, assets, Android packages and save slots remain untouched. V6 keeps the same procedural art, custom WebGL2 renderer, strategy simulation, 30 Hz fixed tick, LOD, and adaptive quality governor; its controls operate on the actual units in that simulation rather than a second game.
 
+## What changed in 6.4.0 — the water update
+
+Six map archetypes, and the water in all of them rebuilt from the ground up.
+
+**The river is the map now.** `src/sim/hydrology.js` generates a real drainage
+network for every archetype -- Confluence, Headwaters, Warring Islands, Inland
+Sea, Highview, Dry Arabia -- from Catmull-Rom splines, a U-shaped carve with a
+thalweg, point bars and a **bank lip**, then searches for town seats *after* the
+carve so no town can land in its own river. Fords are paved shelves lifted to
+22 cm under the surface: the army wades and the fleet floats over the same
+ground, and the two fight for it.
+
+- **The coast is not a painted outline any more.** The waterline you see is the
+  bed the terrain draws: the shader reads the same 4 m bake the ground does,
+  discards where the bed says dry, and grades depth through pale rim → sea
+  green → cobalt → navy over metres of bed instead of a four-metre rainbow band.
+  Absorption is per-channel (reds die first, the way they do in real water),
+  caustics only exist where the bed is visible, and foam is a streaked lace in
+  the 0.45 m band the spec asks for -- not a glow.
+- **Every bank has a beach.** The bake pushes sand into a narrow strip either
+  side of the water line, and the terrain shader darkens two metres of it at the
+  waterline so the edge reads as soaked ground rather than a seam.
+- **The ground stopped being a desert.** Snow is now a property of a map's own
+  summit (it needed *local prominence*, so the Highview plateau stopped being
+  painted white); the straw-dry pass is multiplicative and capped instead of
+  adding +8.7 to a 0..255 texel; and the day grade was re-exposed so the meadow
+  is green without being lit like a floodlight.
+- **The middle of the map is worth crossing for.** Every archetype gets a
+  contested core -- gold, stone, a herd, timber, and a cleared yard to fight in
+  -- so the match has a middle game that is not "walk to the enemy town".
+  Fishing grounds are on every map with water in it.
+- **Scatter is placed, not sprinkled.** 96 hand-weighted patches (flowers,
+  tussocks, scree, reeds, pebbles) with a square-root density falloff replaced
+  the even 2400-item sprinkle that read as debris on every hillside. Rocks live
+  on slopes and scree, never in a meadow.
+
+Also fixed this release, all found by making the maps real: the fords' ellipse
+rim used to declare seven metres of river "wading depth" (the pathfinder
+believed it and drowned the army -- the ford mask now follows the shelf, and
+`widenFords` no longer cascades); `isWater()` counts knees, not boots, so a unit
+standing on a paved ford is no longer reported as swimming; and a three- or
+four-crown war now gets a seat for every crown (the seat search relaxes spacing
+before it ever relaxes *ground*).
+
 ## What changed in 6.3.1
 
 Two bugs from a real session, both fixed at the cause.

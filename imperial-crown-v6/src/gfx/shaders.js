@@ -379,6 +379,7 @@ out vec4 fragColor;
 uniform sampler2D uAlbedo;      // baked radiance map, rgb = albedo, a = sky occlusion
 uniform sampler2D uDetail;      // seamless 4 m ground detail (greyscale + specks)
 uniform float uDetailStrength;
+uniform float uWaterLevel;      // shared with WATER_FS: the beach follows it
 
 void main(){
   /* One fetch carries the entire painted ground: the 6-way splat, the field
@@ -433,9 +434,34 @@ void main(){
   color += mix(albedo, vec3(0.60, 0.44, 0.28), 0.34) * townLights(vWorld, N) * 1.55;
   color += townGlow(vWorld) * mix(albedo, vec3(0.5), 0.5) * 1.1;
 
-  // wet sheen near the waterline
-  float wet = smoothstep(0.55, 0.0, vWorld.y);
-  color *= mix(1.0, 0.72, wet * 0.8);
+  /* ---- the beach ------------------------------------------------------
+     A coast has three things a flat green field does not: a sand band, a
+     dark wet line at the very edge, and drying sand above it. Without this
+     the shoreline is a hard green-to-blue seam. The band is measured from
+     the water level, so it follows every cove, spit and river bend for free,
+     and it is modulated by the bed *slope*: a gentle beach is broad, a
+     cut-bank is a two-metre dark line. */
+  float wl = uWaterLevel;
+  float above = vWorld.y - wl;
+  float beach = (1.0 - smoothstep(0.04, 0.62, above)) * step(-0.05, above);
+  float wet = (1.0 - smoothstep(0.0, 0.22, above)) * step(-0.05, above);
+  if (beach > 0.01) {
+    /* Sand: pale, warm, and coarser than the meadow. Pulling toward a flat
+       sand colour everywhere would erase the painterly variation, so only
+       25% of it is the base sand -- the rest is the ground's own grit
+       lightened, the way a real shore picks up the local soil. */
+    /* Sand is DARKER than the meadow it replaces - it is dry quartz grey,
+       not cream. A light sand band is what makes a coast glow. */
+    vec3 sand = vec3(0.335, 0.295, 0.215);
+    float grit = texture(uDetail, vWorld.xz * 0.0714).r;
+    vec3 shoreCol = mix(vec3(0.30, 0.285, 0.235) + (grit - 0.5) * 0.16, sand, 0.5);
+    color = mix(color, shoreCol * (0.88 + 0.18 * ndl * sh), beach * 0.72);
+  }
+  /* Two dark lines: the soaked sand at the waterline, and a fainter wrack
+     line a hand's width up the beach. */
+  color *= mix(1.0, 0.62, wet * 0.9);
+  float wrack = smoothstep(0.16, 0.26, above) * (1.0 - smoothstep(0.26, 0.42, above));
+  color *= mix(1.0, 0.90, wrack);
 
   color = applyFog(color, vDist);
   color = applyFoW(color, vWorld);
@@ -731,7 +757,10 @@ void main(){
   vec3 p = aPos;
   float w = sin(p.x * 0.22 + uTime * 1.3) * 0.06 + sin(p.z * 0.31 - uTime * 1.05) * 0.05
           + sin((p.x + p.z) * 0.11 + uTime * 0.7) * 0.03;
-  p.y += w * uWaveAmp;
+  /* The swell is damped toward the map edge so the plane never lifts above
+     the sand it is supposed to be sitting in. */
+  float edge = 1.0 - smoothstep(uWorldHalf * 0.86, uWorldHalf, max(abs(p.x), abs(p.z)));
+  p.y += w * uWaveAmp * edge;
   vWorld = p;
   vDist = length(p - uCameraPos);
   gl_Position = uViewProj * vec4(p, 1.0);
@@ -746,9 +775,9 @@ ${SHADOW_FN}
 in vec3 vWorld;
 in float vDist;
 out vec4 fragColor;
-uniform sampler2D uWater;       // rg = normal xy, b = height, a = foam
-uniform sampler2D uHeightMap;
-uniform sampler2D uFlowMap;     // rg = flow vector, b = bed depth, a = shore/ford mask
+uniform sampler2D uWater;       // rg = surface normal, b = foam detail, a = caustic web
+uniform sampler2D uHeightMap;   // r = terrain height (0..1 over 46 m)
+uniform sampler2D uFlowMap;     // rg = flow direction, b = bed depth, a = shore mask
 uniform float uFlowStrength;
 uniform float uWaterLevel;
 uniform vec2 uNormalOffset;
@@ -757,69 +786,121 @@ uniform vec3 uDeepColor;
 uniform vec3 uZenithColor;
 uniform vec3 uHorizonColor;
 
+/* ------------------------------------------------------------
+   THE WATER
+
+   Three things had to be true for this to read as a river instead
+   of a pale ribbon:
+
+   - DEPTH IS THE COLOUR. The bed comes from the same 4 m bake the
+     terrain reads, so a 20 m-wide channel is resolved. Turquoise
+     shallows -> cobalt channel -> navy deep, with per-channel
+     absorption so the reds die first the way they do in real water.
+   - THE FLOW ADVECTS THE RIPPLES. The baked river tangents scroll
+     the two normal layers downstream, so a meander visibly runs.
+   - THE SHORE IS NOT A GHOST. Foam exists only in the 0.45 m band
+     the spec asks for, and it is made of lace that scrolls with the
+     current rather than a constant glow along the bank.
+   ------------------------------------------------------------ */
+
 void main(){
-  /* Baked hydrology: the Bezier river tangents (rg) advect both ripple
-     layers, the bed depth (b) replaces the old 46 m remapping where the
-     map has real channels, and the shore mask (a) is the spec's rule
-     terrainHeight - waterLevel < 0.45. One 128x128 fetch replaces six
-     per-pixel noise octaves. */
   vec2 huv = vWorld.xz / (uWorldHalf * 2.0) + 0.5;
   vec4 hyd = texture(uFlowMap, huv);
   vec2 flow = (hyd.rg * 2.0 - 1.0) * uFlowStrength;
-  vec2 drift = uNormalOffset + flow * (uTime * 0.032);
-  /* Animated dual-normal ripples, each layer scrolling WITH the river. */
-  vec4 w1 = texture(uWater, vWorld.xz * 0.045 + drift);
-  vec4 w2 = texture(uWater, vWorld.xz * 0.021 - drift * 0.6);
-  vec2 n1 = w1.rg * 2.0 - 1.0;
-  vec2 n2 = w2.rg * 2.0 - 1.0;
-  vec3 nrm = normalize(vec3(n1.x + n2.x * 0.8, 2.2, n1.y + n2.y * 0.8));
 
-  // terrain depth beneath the surface, refined by the baked river bed
   float bed = texture(uHeightMap, huv).r * 46.0 - 8.0;
-  float legacyDepth = max(vWorld.y - bed, 0.0);
-  float riverDepth = hyd.b * 6.0;
-  float depth = mix(legacyDepth, riverDepth, uFlowStrength * 0.82);
-  float shallow = smoothstep(3.4, 0.05, depth);
-  /* Turquoise shallows -> cobalt channels -> navy deep sea. */
-  vec3 shallowHyd = vec3(0.12, 0.66, 0.68);
-  vec3 cobaltHyd = vec3(0.035, 0.19, 0.40);
-  vec3 navyHyd = vec3(0.012, 0.055, 0.135);
-  vec3 hydBody = mix(cobaltHyd, shallowHyd, smoothstep(2.4, 0.15, depth));
-  hydBody = mix(hydBody, navyHyd, smoothstep(3.1, 5.6, depth));
-  vec3 body = mix(mix(uDeepColor, uShallowColor, shallow), hydBody, uFlowStrength);
+  float dRaw = uWaterLevel - bed;
+  /* The water mesh is an 8 m grid and the bed map is a 4 m grid: where the
+     two disagree the surface plane can cut through the sand, which drew long
+     straight slivers of beach *across* the water. Anything the bed says is
+     dry is simply not water, and the last 20 cm fades out instead of ending
+     on a hard edge. */
+  if (dRaw < -0.06) discard;
+  float shoreFade = smoothstep(-0.06, 0.20, dRaw);
+  float d = max(dRaw, 0.0);
+  float shoreSoft = hyd.a;
 
+  /* ---- animated dual-normal ripples, advected by the river ---- */
+  vec2 drift = uNormalOffset + flow * uTime * 0.055;
+  float chop = mix(0.6, 1.0, smoothstep(0.3, 2.2, d));
+  vec4 w1 = texture(uWater, vWorld.xz * 0.038 + drift * 1.15);
+  vec4 w2 = texture(uWater, vWorld.xz * 0.017 - drift * 0.55);
+  vec4 w3 = texture(uWater, vWorld.xz * 0.094 + drift * 2.2);
+  vec2 n1 = (w1.rg * 2.0 - 1.0);
+  vec2 n2 = (w2.rg * 2.0 - 1.0);
+  vec2 n3 = (w3.rg * 2.0 - 1.0) * 0.42;
+  vec2 nmix = (n1 + n2 * 0.8 + n3) * chop;
+  /* Small nudge from the flow itself: a channel's surface leans downstream. */
+  nmix += flow * 0.12 * smoothstep(1.5, 5.0, d);
+  vec3 nrm = normalize(vec3(nmix.x, 2.55, nmix.y));
+
+  /* ---- caustics: light webs on the bed, only where you can see the bed ---- */
+  float caustic = w1.a * 0.65 + w3.a * 0.35;
+  float causticAmt = smoothstep(0.02, 0.9, d) * smoothstep(3.2, 0.6, d);
+
+  /* ---- body colour: absorption, not a flat tint ---- */
+  vec3 absorb = exp(-d * vec3(0.26, 0.13, 0.085));
+  /* The very edge of the water is almost clear -- you see the sand -- but it
+     is a *strip*, not a halo: within half a metre it is already teal. */
+  vec3 edgeCol = vec3(0.26, 0.44, 0.42);      // 5 cm of water over sand
+  vec3 shallowCol = vec3(0.11, 0.31, 0.35);   // 40 cm: sea green
+  vec3 midCol = vec3(0.045, 0.145, 0.255);    // 1.2 m: cobalt
+  vec3 deepCol = vec3(0.022, 0.080, 0.170);   // 5 m+: navy, still blue not black
+  /* The order the eye needs: pale rim -> sea green -> cobalt -> navy, each
+     transition spread over metres of bed, not centimetres. A four-metre
+     rainbow band on the coast is the tell of a cheap shader. */
+  vec3 bedCol = mix(edgeCol, shallowCol, smoothstep(0.0, 0.38, d));
+  bedCol = mix(bedCol, midCol, smoothstep(0.55, 2.1, d));
+  bedCol = mix(bedCol, deepCol, smoothstep(2.4, 5.2, d));
+  vec3 body = bedCol * absorb * 0.98;
+  body += vec3(0.55, 0.86, 0.78) * caustic * causticAmt * 0.26;
+  /* A shallow rim is still translucent: the bed's own colour shows through,
+     which is what stops the waterline reading as a painted blue outline. */
+  float bedShine = smoothstep(0.9, 0.0, d) * 0.22;
+
+  /* ---- sky reflection, Fresnel weighted ---- */
   vec3 V = normalize(uCameraPos - vWorld);
-  vec3 L = uSunDir;
   float fv = 1.0 - max(dot(nrm, V), 0.0);
-  float fres = p4(fv);
+  float fres = 0.02 + 0.98 * pow(fv, 4.0);
   vec3 R = reflect(-V, nrm);
-  vec3 sky = skyRadiance(R, L, uZenithColor, uHorizonColor, uSunColor);
+  R.y = abs(R.y) * 0.55 + 0.06;
+  vec3 sky = skyRadiance(normalize(R), uSunDir, uZenithColor, uHorizonColor, uSunColor);
+  float reflW = clamp(fres * 0.42 + smoothstep(3.0, 9.0, d) * 0.16, 0.02, 0.44);
+  reflW *= 0.35 + 0.65 * smoothstep(0.0, 0.7, d);
+  vec3 col = mix(body, sky * 0.88, reflW);
+  col = mix(col, bedCol * 1.25, bedShine);
 
-  float rl = max(dot(R, L), 0.0);
-  /* Specular glint: a tight sun lobe plus a broad shimmer lobe. */
-  float spec = pow340(rl) * 3.4 + p16(rl) * p8(rl) * 0.32;
-  vec4 w3 = texture(uWater, vWorld.xz * 0.115 + drift * 2.1);
+  /* ---- sun glint ---- */
+  float rl = max(dot(R, uSunDir), 0.0);
   float sh = shadowFactor(vWorld, 1.0);
-  float glint = p16(max(dot(normalize(vec3((w3.r - 0.5) * 0.55 + nrm.x, 2.2, (w3.g - 0.5) * 0.55 + nrm.z)), L), 0.0));
-  vec3 col = mix(body, sky * 1.02, clamp(0.23 + fres * 1.02, 0.0, 1.0));
-  col += shallowHyd * shallow * uFlowStrength * 0.12;
-  col += uShallowColor * shallow * (1.0 - uFlowStrength) * 0.10;
-  col += uSunColor * (spec + glint * 0.85) * sh;
+  float spec = p128(rl) * 4.6 + p16(rl) * 0.16 + p8(rl) * 0.045;
+  col += uSunColor * spec * sh * smoothstep(0.5, 2.8, d);
 
-  /* White foam exactly where terrainHeight - waterLevel < 0.45, modulated
-     by the two animated ripple layers so the line never freezes. */
-  float foamTile = w1.a * 0.65 + w2.a * 0.35 + w1.b * 0.20;
-  float oldFoam = smoothstep(0.55, 0.02, depth + foamTile * 0.55 - 0.28);
-  float shoreRule = 1.0 - smoothstep(0.0, 0.45, max(bed - uWaterLevel, 0.0));
-  float shoreFoam = max(hyd.a * uFlowStrength, shoreRule * 0.7)
-    * (0.66 + foamTile * 0.55) * smoothstep(0.2, 0.0, depth);
-  float foam = clamp(max(oldFoam * 0.7, shoreFoam), 0.0, 1.0);
-  col = mix(col, vec3(0.94, 0.97, 1.0), foam * 0.78);
+  /* ---- shoreline foam: a streaked band, not a glow ---- */
+  /* The spec's rule, met exactly: foam where terrainHeight - waterLevel is
+     under 0.45, and only there. Lace, not an outline. */
+  float shoreRule = 1.0 - smoothstep(0.0, 0.45, max(uWaterLevel - bed, 0.0));
+  float band = shoreRule * (0.35 + 0.65 * shoreSoft);
+  float lace = smoothstep(0.45, 0.92, w1.b * 0.8 + w3.b * 0.5 + w2.b * 0.3);
+  float foam = clamp(band * (0.20 + 1.15 * lace), 0.0, 1.0) * smoothstep(1.2, 0.0, d);
+  /* One softer surf line a step up the bank. */
+  float surfBand = smoothstep(0.62, 1.15, d) * smoothstep(1.5, 0.95, d);
+  float surf = surfBand * 0.30 * lace * shoreRule;
+  foam = clamp(foam + surf, 0.0, 1.0);
+  vec3 foamCol = vec3(0.92, 0.96, 1.0) * (0.7 + 0.3 * sh);
+  col = mix(col, foamCol, foam * 0.85);
 
   col = applyFog(col, vDist);
   col = applyFoW(col, vWorld);
-  float alpha = mix(0.82, 0.94, fres) * mix(1.0, 0.92, foam);
-  fragColor = vec4(tonemap(col, 1.0), alpha);
+  /* Shallow water is see-through; the channel is not. */
+  /* Very shallow water is barely there: the bed, and the sand the terrain
+     shader just painted, is what the player should see at the waterline.
+     A hard alpha floor is what turned every coast into a cyan ring. */
+  float alpha = mix(0.20, 0.95, smoothstep(0.03, 1.2, d));
+  alpha = mix(alpha, 1.0, fres * 0.5);
+  alpha = mix(alpha, 1.0, foam * 0.6);
+  alpha *= shoreFade;
+  fragColor = vec4(tonemap(col, 1.02), clamp(alpha, 0.12, 1.0));
 }
 `;
 

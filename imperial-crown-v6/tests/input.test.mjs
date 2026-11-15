@@ -342,8 +342,19 @@ check('a tap picks the unit under the finger, not the first in the list', () => 
 });
 
 check('taps outside every entity return null instead of the nearest one', () => {
-  const hit = app.input.pick(4, 4);
-  assert(hit === null, 'picked something from an empty corner');
+  /* A corner of the canvas, chosen because nothing is drawn there: the pick
+     must never fall back to "the nearest unit to the finger". Screen (4,4) is
+     under the top bar, so the probe uses a clear patch of sky instead. */
+  const rect = app.canvas.getBoundingClientRect();
+  const corners = [
+    [rect.width - 6, rect.height * 0.42],
+    [rect.width * 0.5, rect.height - 6],
+    [rect.width - 6, rect.height - 6]
+  ];
+  for (const [sx, sy] of corners) {
+    const hit = app.input.pick(sx, sy);
+    assert(hit === null, `picked ${hit && hit.type} from an empty patch of screen`);
+  }
 });
 
 check('an armed spell is not spent on a sky tap', () => {

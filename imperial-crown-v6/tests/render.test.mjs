@@ -268,11 +268,23 @@ check('selection decals + placing ghost', () => {
 check('a canopy between the lens and the target is veiled, not opaque', () => {
   /* put the camera inside a wood and look across it: the trees on the sight
      line must be drawn in the blended fade pass, or the player sees leaves */
-  const tree = game.resources.find((r) => r.type === 'tree' && !r.dead);
-  assert(tree, 'no trees on the map at all');
+  /* Pick a tree with neighbours, not merely the first one in the list: the
+     veil pass is about looking *through* a canopy, and one lone spruce on the
+     crest of a hill has nothing to veil against. The first tree in the array
+     also tends to sit up on the border ridge, where the camera is pushed out
+     of the wood by the terrain. */
+  const trees = game.resources.filter((r) => r.type === 'tree' && !r.dead);
+  assert(trees.length, 'no trees on the map at all');
+  let tree = trees[0], bestN = -1;
+  for (const t of trees) {
+    let n = 0;
+    for (const o of trees) if (o !== t && Math.hypot(o.x - t.x, o.z - t.z) < 22) n++;
+    if (n > bestN) { bestN = n; tree = t; }
+  }
+  assert(bestN >= 4, `no wood on this map: the best tree has ${bestN} neighbours`);
   const cx = tree.x, cz = tree.z;
   camera.setTarget(cx, cz, true);
-  camera.dist = 26; camera.pitch = 0.42;
+  camera.dist = 26; camera.desiredDist = 26; camera.pitch = 0.42; camera.desiredPitch = 0.42;
   camera.update(1 / 60);
   camera.update(1 / 60);
   renderer.render(1 / 60, game);

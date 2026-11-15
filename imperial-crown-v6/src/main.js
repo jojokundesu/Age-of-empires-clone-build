@@ -62,7 +62,7 @@ const DEFAULT_SETTINGS = {
      1.0x, Balanced 1.35x, Ultra 1.75x) applied on top of the frame
      governor, which still lowers resolution when frames get expensive. */
   resolutionPreset: 'balanced',
-  mapType: 'classic'
+  mapType: 'confluence'
 };
 
 function loadSettings() {
@@ -445,9 +445,12 @@ class App {
     const kingdoms = opts.mode === 'kingdoms' ? Math.max(2, Math.min(4, opts.kingdoms | 0 || 3)) : 2;
     /* The menu can opt into experimental hydrology maps. Old saves retain
        their original terrain by defaulting to the classic generator. */
-    const mapType = opts.load ? (opts.load.mapType || 'classic') : (opts.mapType || this.settings.mapType || 'classic');
+    const mapType = opts.load ? (opts.load.mapType || 'confluence') : (opts.mapType || this.settings.mapType || 'confluence');
     const world = generateWorld(seed, { sites: kingdoms > 2 ? kingdoms : 2, mapType });
-    world.mapType = mapType;
+    /* world.mapType is the *resolved* archetype ('confluence', not 'classic'):
+       a save records what was actually generated, so reloading it cannot
+       silently pick a different landform. 'classic' is still accepted on the
+       way in, for old saves. */
     this.menu.bootProgress(0.4, 'Settling villages…');
 
     const fx = new FX();

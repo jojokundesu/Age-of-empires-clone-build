@@ -181,24 +181,40 @@ export function bakeStars(w = 1024, h = 512) {
 /* =====================================================================
    4. WATER TILE  (R,G = normal xy, B = height, A = foam)
    ===================================================================== */
+/**
+ * Scrolling water tile.
+ *
+ * R,G = the surface normal of a crossed swell field, 0.5-centred so the
+ *       shader can add two layers and normalise.
+ * B   = foam detail (a separate, longer-wavelength field from A, so the two
+ *       never line up and the foam never looks like a stencil).
+ * A   = caustic-vein network: the bright, moving web of light you see on a
+ *       riverbed. It is the single cheapest thing that makes shallow water
+ *       read as water rather than as flat teal paint.
+ *
+ * The old tile had one narrow swell band and nearly no mid-frequency detail,
+ * which is why the open channel looked like brushed metal.
+ */
 export function bakeWater(size = 256) {
+  /* ---- the swell height field: three crossed trains + two chop octaves ---- */
   const height = new Float32Array(size * size);
   for (let y = 0; y < size; y++) {
     const v = y / size;
     for (let x = 0; x < size; x++) {
       const u = x / size;
-      let hgt = 0;
-      // three crossed swell trains, then two octaves of chop
-      hgt += Math.sin((u * 3 + v * 1.5) * TAU + Math.sin(v * TAU * 2) * 1.2) * 0.50;
-      hgt += Math.sin((u * 5 - v * 3) * TAU + 2.1) * 0.28;
-      hgt += Math.sin((u * 8 + v * 6) * TAU - 1.3) * 0.14;
-      hgt += (tileFbm(u, v, 8, 3) - 0.5) * 1.20;
-      hgt += (tileFbm(u, v, 24, 2) - 0.5) * 0.40;
-      height[y * size + x] = hgt;
+      let h = 0;
+      h += Math.sin((u * 3 + v * 1.5) * TAU + Math.sin(v * TAU * 2) * 1.2) * 0.42;
+      h += Math.sin((u * 5 - v * 3) * TAU + 2.1) * 0.26;
+      h += Math.sin((u * 8 + v * 6) * TAU - 1.3) * 0.15;
+      h += Math.sin((u * 13 - v * 17) * TAU + 0.8) * 0.07;
+      h += (tileFbm(u, v, 8, 3) - 0.5) * 1.35;
+      h += (tileFbm(u, v, 24, 2) - 0.5) * 0.55;
+      h += (tileFbm(u * 2, v * 2, 40, 2) - 0.5) * 0.22;
+      height[y * size + x] = h;
     }
   }
   const out = new Uint8ClampedArray(size * size * 4);
-  const strength = 1.7;
+  const strength = 2.35;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const i = (y * size + x) << 2;
@@ -210,13 +226,26 @@ export function bakeWater(size = 256) {
       const len = Math.hypot(nx, ny, nz) || 1;
       nx /= len; ny /= len; nz /= len;
       const u = x / size, v = y / size;
-      // foam lives in the troughs of the longest swell
+
+      /* ---- foam: a separate longer swell, broken into lace by ridge noise ---- */
       const swell = Math.sin((u * 2 + v * 1) * TAU + 0.7) * 0.5 + 0.5;
-      const foam = clamp01((1 - swell) * 0.55 + (tileRidge(u, v, 10, 3) - 0.55) * 0.9);
+      const lace = tileRidge(u, v, 10, 3);
+      const lace2 = tileRidge(u * 1.7 + 0.31, v * 1.7 + 0.77, 22, 2);
+      const foam = clamp01((1 - swell) * 0.30
+        + (lace - 0.52) * 1.25
+        + (lace2 - 0.55) * 0.55);
+
+      /* ---- caustics: the bright web between darker cells ---- */
+      const cells = tileCell(u, v, 7, 0.92);
+      const cells2 = tileCell(u * 1.9 + 0.4, v * 1.9 + 0.1, 13, 0.95);
+      const web = clamp01(1 - cells * 1.5) * 0.65 + clamp01(1 - cells2 * 1.6) * 0.45;
+      /* The web is warped by the swell so it crawls the way real caustics do. */
+      const caustic = clamp01(web * (0.72 + 0.55 * (height[y * size + x] * 0.5 + 0.5)));
+
       out[i] = (nx * 0.5 + 0.5) * 255;
       out[i + 1] = (ny * 0.5 + 0.5) * 255;
-      out[i + 2] = (height[y * size + x] * 0.30 + 0.5) * 255;
-      out[i + 3] = foam * 255;
+      out[i + 2] = foam * 255;
+      out[i + 3] = caustic * 255;
     }
   }
   return out;
@@ -367,6 +396,11 @@ export function bakeTerrain(world, RT, pixels, opts = {}) {
   };
 
   const hf = world.height;
+  /* Where the water is. hydrology publishes `waterLevel` on the world; a
+     legacy island without rivers simply has none, and then the bank sand is
+     switched off rather than painted at y=0. */
+  const waterLevel = Number.isFinite(world.waterLevel) ? world.waterLevel : 0;
+  const hasWater = Number.isFinite(world.waterLevel);
   const tmp = [0, 0, 0];
   const texScale = 0.32;             // metres -> layer atlas uv (v2 value)
 
@@ -428,12 +462,20 @@ export function bakeTerrain(world, RT, pixels, opts = {}) {
       sampleLayer(L_ROCK, u * 1.15, v * 1.15, tmp);
       r += tmp[0] * wRock; g += tmp[1] * wRock; b += tmp[2] * wRock;
       sampleLayer(L_SAND, u * 1.3, v * 1.3, tmp);
-      r += tmp[0] * wSand; g += tmp[1] * wSand; b += tmp[2] * wSand;
+      /* The bank itself is sand, and it has to be sand in the BAKE, not a
+         tint in the shader: the splat has no idea where the water is, so
+         every river ran between two straw-coloured fields. A narrow band
+         either side of the water line gets sand pushed into it here, where
+         the height field already says exactly where the water is. */
+      const bankBand = hasWater ? (1.0 - smoothstep(0.02, 0.40, Math.abs(y - waterLevel))) : 0.0;
+      const salt = smoothstep(0.55, 0.85, pget(x, z, 4)) * 0.30;
+      const sandW = wSand + bankBand * (0.95 + salt);
+      r += tmp[0] * sandW; g += tmp[1] * sandW; b += tmp[2] * sandW;
       sampleLayer(L_COBBLE, u * 1.6, v * 1.6, tmp);
       r += tmp[0] * wCobble; g += tmp[1] * wCobble; b += tmp[2] * wCobble;
       sampleLayer(L_SNOW, u * 0.9, v * 0.9, tmp);
       r += tmp[0] * wSnow; g += tmp[1] * wSnow; b += tmp[2] * wSnow;
-      const wsum = wGrass + wDirt + wRock + wSand + wCobble + wSnow || 1;
+      const wsum = wGrass + wDirt + wRock + sandW + wCobble + wSnow || 1;
       r /= wsum; g /= wsum; b /= wsum;
 
       /* --- the patchwork of fields ------------------------------------- */
@@ -441,10 +483,16 @@ export function bakeTerrain(world, RT, pixels, opts = {}) {
       const patch = pget(x, z, 4);
       const drifts = pget(x, z, 5);
       const clumps = vnoise(x * 0.185 + 11, z * 0.185 + 11);
+      /* Sun-dried straw. v2 added +8.7 of *absolute* red on a 0..255 texel
+         written as a shader value, which at 512 texels over 512 m pushed
+         whole meadows to 250 -- the "blown out desert" that read as a bug on
+         every map with a dry patch. The lift is now multiplicative and
+         capped, so a dry field is straw-coloured, not white. */
       const dry = smoothstep(0.34, 0.78, patchy + field * 0.46);
-      r = mix(r, r * 1.32 + 8.7, dry * 0.70);
-      g = mix(g, g * 1.10 + 7.7, dry * 0.70);
-      b = mix(b, b * 0.60 + 1.0, dry * 0.70);
+      const dryAmt = dry * 0.62;
+      r = mix(r, Math.min(r * 1.14 + 6.0, 208), dryAmt);
+      g = mix(g, Math.min(g * 1.02 + 5.2, 196), dryAmt);
+      b = mix(b, Math.max(b * 0.74, 6), dryAmt);
       const lush = smoothstep(0.62, 0.22, patch * 0.66 + field * 0.54);
       r = mix(r, r * 0.62 + 1.0, lush * 0.56);
       g = mix(g, g * 0.88 + 5.6, lush * 0.56);
@@ -453,10 +501,10 @@ export function bakeTerrain(world, RT, pixels, opts = {}) {
       r *= tussock; g *= tussock; b *= tussock;
       const drift = 0.88 + drifts * 0.26;
       r *= drift; g *= drift; b *= drift;
-      const band = smoothstep(0.62, 0.92, pget(x, z, 6));
-      r = mix(r, r * 1.16, band * 0.30);
-      g = mix(g, g * 1.02, band * 0.30);
-      b = mix(b, b * 0.66, band * 0.30);
+      const mown = smoothstep(0.62, 0.92, pget(x, z, 6));
+      r = mix(r, r * 1.16, mown * 0.30);
+      g = mix(g, g * 1.02, mown * 0.30);
+      b = mix(b, b * 0.66, mown * 0.30);
 
       /* --- slope and altitude ------------------------------------------ */
       const d = 1.2;
@@ -469,9 +517,9 @@ export function bakeTerrain(world, RT, pixels, opts = {}) {
       g = mix(g, g * 0.66 + 6.1, steep * 0.55);
       b = mix(b, b * 0.56 + 4.1, steep * 0.55);
       const high = smoothstep(5, 27, y);
-      r = mix(r, r * 1.14, high * 0.32);
-      g = mix(g, g * 1.02, high * 0.32);
-      b = mix(b, b * 0.78, high * 0.32);
+      r = mix(r, r * 1.07, high * 0.22);
+      g = mix(g, g * 1.00, high * 0.22);
+      b = mix(b, b * 0.88, high * 0.22);
 
       /* --- cloud modulation (v2 fetched the cloud map twice per pixel) -- */
       if (cloud) {

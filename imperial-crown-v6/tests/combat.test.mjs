@@ -7,8 +7,15 @@ import { generateWorld } from '../src/sim/worldgen.js';
 import { Game } from '../src/sim/game.js';
 import { STATE, Unit } from '../src/sim/entities.js';
 import { UNIT_DEFS } from '../src/sim/data.js';
+import { findDryClearing } from './arena.mjs';
 
 const world = generateWorld(20261);
+/* The arena is wherever the map has a flat dry clearing, not (0,0): on a
+   hydrology map the centre of the world is usually the river, and an army
+   spawned in it is an army that drowns before the counter triangle can be
+   measured. */
+const ARENA = findDryClearing(world, { radius: 26 }) || { x: 0, z: 0 };
+const AX = ARENA.x, AZ = ARENA.z;
 const cost = (t) => Object.values(UNIT_DEFS[t].cost || {}).reduce((a, b) => a + b, 0);
 
 function battle(armyA, armyB, seconds = 120) {
@@ -28,13 +35,13 @@ function battle(armyA, armyB, seconds = 120) {
   const rows = (list) => list.flatMap(([type, n]) => Array.from({ length: n }, () => type));
   const A = [], B = [];
   rows(armyA).forEach((type, i) => {
-    A.push(game.spawnUnitRaw(type, 1, -9 + (i % 4) * 1.35, -4 + ((i / 4) | 0) * 1.35));
+    A.push(game.spawnUnitRaw(type, 1, AX - 9 + (i % 4) * 1.35, AZ - 4 + ((i / 4) | 0) * 1.35));
   });
   rows(armyB).forEach((type, i) => {
-    B.push(game.spawnUnitRaw(type, 2, 9 + (i % 4) * 1.35, -4 + ((i / 4) | 0) * 1.35));
+    B.push(game.spawnUnitRaw(type, 2, AX + 9 + (i % 4) * 1.35, AZ - 4 + ((i / 4) | 0) * 1.35));
   });
-  for (const u of A) { u.noAggro = false; u.moveTo(14, 0); u.state = STATE.ATTACK_MOVE; }
-  for (const u of B) { u.noAggro = false; u.moveTo(-14, 0); u.state = STATE.ATTACK_MOVE; }
+  for (const u of A) { u.noAggro = false; u.moveTo(AX + 14, AZ); u.state = STATE.ATTACK_MOVE; }
+  for (const u of B) { u.noAggro = false; u.moveTo(AX - 14, AZ); u.state = STATE.ATTACK_MOVE; }
   let maxProj = 0, firstBlood = -1;
   for (let i = 0; i < 60 * seconds; i++) {
     game.update(1 / 60);
@@ -97,9 +104,9 @@ for (const [a, b, label] of tri) {
 console.log('\narmour');
 const g2 = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'standard' });
 g2.start();
-const sword = g2.spawnUnitRaw('swordsman', 1, 0, 0);
-const knight = g2.spawnUnitRaw('knight', 1, 2, 0);
-const archer = g2.spawnUnitRaw('archer', 1, 4, 0);
+const sword = g2.spawnUnitRaw('swordsman', 1, AX, AZ);
+const knight = g2.spawnUnitRaw('knight', 1, AX + 2, AZ);
+const archer = g2.spawnUnitRaw('archer', 1, AX + 4, AZ);
 const hit = (u, kind) => { const before = u.hp; u.takeDamage(20, sword, kind); return before - u.hp; };
 const dmgKnight = hit(knight, 'melee');
 const dmgArcher = hit(archer, 'melee');

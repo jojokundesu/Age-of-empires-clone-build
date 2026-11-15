@@ -654,7 +654,7 @@ export class DirectControl {
   }
 
   movement() {
-    const x = this.stickX, y = this.stickY;
+    let x = this.stickX, y = this.stickY;
     const len = Math.hypot(x, y);
     if (len < MOVE_DEADZONE) return [0, 0];
     if (len > 1) { x /= len; y /= len; }

@@ -801,27 +801,38 @@ export class Renderer {
 
     if (!isNight) {
       const warm = lowSun;
-      this.sunColor[0] = lerp(1.60, 1.85, warm);
-      this.sunColor[1] = lerp(1.50, 1.07, warm);
-      this.sunColor[2] = lerp(1.34, 0.66, warm);
-      this.zenith[0] = lerp(0.13, 0.19, warm);
-      this.zenith[1] = lerp(0.30, 0.31, warm);
-      this.zenith[2] = lerp(0.58, 0.46, warm);
-      this.horizon[0] = lerp(0.60, 0.98, warm);
-      this.horizon[1] = lerp(0.74, 0.70, warm);
-      this.horizon[2] = lerp(0.86, 0.54, warm);
-      this.fogColor[0] = lerp(0.40, 0.62, warm);
-      this.fogColor[1] = lerp(0.46, 0.46, warm);
-      this.fogColor[2] = lerp(0.52, 0.36, warm);
-      this.skyColor[0] = lerp(0.30, 0.44, warm);
-      this.skyColor[1] = lerp(0.40, 0.38, warm);
-      this.skyColor[2] = lerp(0.56, 0.34, warm);
-      this.groundColor[0] = lerp(0.15, 0.20, warm);
-      this.groundColor[1] = lerp(0.14, 0.14, warm);
-      this.groundColor[2] = lerp(0.11, 0.09, warm);
+      /* Re-graded for readability, the way a strategy game is lit rather than
+         the way a photograph is. Three things changed and each one is the
+         difference between "pretty" and "you can see what you are doing":
+         the key is cooler and stronger, so grass separates from sun-baked
+         straw; the fill is darker, so the shadow side has depth instead of
+         milking out; and the fog is both thinner and closer to the sky's own
+         colour, so distance recedes without turning the middle of the map
+         grey. Everything is at noon here; dawn/dusk still runs warm. */
+      this.sunColor[0] = lerp(2.05, 2.35, warm);
+      this.sunColor[1] = lerp(1.92, 1.42, warm);
+      this.sunColor[2] = lerp(1.66, 0.86, warm);
+      this.zenith[0] = lerp(0.10, 0.16, warm);
+      this.zenith[1] = lerp(0.26, 0.28, warm);
+      this.zenith[2] = lerp(0.56, 0.44, warm);
+      this.horizon[0] = lerp(0.52, 0.92, warm);
+      this.horizon[1] = lerp(0.66, 0.62, warm);
+      this.horizon[2] = lerp(0.80, 0.46, warm);
+      this.fogColor[0] = lerp(0.44, 0.66, warm);
+      this.fogColor[1] = lerp(0.53, 0.50, warm);
+      this.fogColor[2] = lerp(0.62, 0.42, warm);
+      this.skyColor[0] = lerp(0.26, 0.40, warm);
+      this.skyColor[1] = lerp(0.36, 0.34, warm);
+      this.skyColor[2] = lerp(0.54, 0.32, warm);
+      this.groundColor[0] = lerp(0.115, 0.155, warm);
+      this.groundColor[1] = lerp(0.108, 0.105, warm);
+      this.groundColor[2] = lerp(0.082, 0.066, warm);
       this.night = dusk * 0.35;
       this.starAmount = 0;
-      this.exposure = lerp(1.0, 1.06, warm);
+      /* Daylight exposure. Slightly under 1.0: the bake now carries its own
+         contrast, and the old 1.0-1.06 pushed the sunlit meadow to clipping.
+         Not below 0.9 -- past that the dusk end loses its warmth. */
+      this.exposure = lerp(0.94, 1.00, warm);
     } else {
       this.sunColor[0] = 0.20; this.sunColor[1] = 0.26; this.sunColor[2] = 0.42;
       this.zenith[0] = 0.028; this.zenith[1] = 0.042; this.zenith[2] = 0.085;
@@ -851,7 +862,9 @@ export class Renderer {
     this.townLightI = clamp((this.night - 0.15) / 0.55, 0, 1);
     this.cloudOffset[0] += dt * 0.0018;
     this.cloudOffset[1] += dt * 0.0009;
-    this.fogDensity = 0.00105 + lowSun * 0.0007;
+    /* Half the old density: at a 90 m RTS camera the far bank used to be
+       45 % fog, which is why the middle of the map looked like a watermark. */
+    this.fogDensity = 0.00052 + lowSun * 0.00042;
 
     /* A mod session may lay weather over the sky. The object is rebuilt by the
        mod host at a few hertz, not per frame, so this is three branches and a
@@ -1527,6 +1540,9 @@ export class Renderer {
     this._bindLight(s);
     s.tex('uAlbedo', this.terrainAlbedo, gl.TEXTURE_2D);
     s.tex('uDetail', this.textures.groundDetail, gl.TEXTURE_2D);
+    /* The beach band is drawn from the water level, so the terrain needs the
+       same number the water does or the two disagree at the shoreline. */
+    s.f('uWaterLevel', this.waterLevel !== undefined ? this.waterLevel : 0);
     gl.disable(gl.BLEND);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
@@ -1583,7 +1599,12 @@ export class Renderer {
     s.f('uWaveAmp', 1.0);
     this._bindLight(s);
     s.tex('uWater', this.textures.water, gl.TEXTURE_2D);
+    /* The bed map the water reads for depth is the SAME bake the terrain
+       reads, sampled at the same texel: the height texture is 129x129 over
+       512 m (4 m per texel), so the channel is properly resolved instead of
+       being a handful of smeared texels. */
     s.tex('uHeightMap', this.heightTex || this.textures.noise, gl.TEXTURE_2D);
+    s.f('uWaterLevel', this.waterLevel || 0);
     /* Hydrology flow/depth/foam field. On a legacy island a neutral 1x1
        texture keeps the sampler legal and uFlowStrength=0 disables it. */
     s.tex('uFlowMap', this.flowTex || this._neutralFlow || this.textures.noise, gl.TEXTURE_2D);

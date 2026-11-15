@@ -44,7 +44,7 @@ export class Menu {
       victory: 'conquest',
       kingdoms: 3,
       seed: 20261,
-      mapType: opts.mapType || 'classic',
+      mapType: opts.mapType || 'confluence',
       quality: opts.quality || 'medium',
       autoQuality: opts.settings?.autoQuality !== false,
       resolutionPreset: opts.resolutionPreset || 'balanced',

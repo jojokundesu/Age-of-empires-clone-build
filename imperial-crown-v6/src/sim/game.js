@@ -487,7 +487,11 @@ export class Game {
      ========================================================== */
   heightAt(x, z) { return this.world.height.sample(x, z); }
   getHeightFn() { return (x, z) => this.world.height.sample(x, z); }
-  isWater(x, z) { return this.world.height.sample(x, z) < -0.3; }
+  /* "In the water" means deep enough to swim, not deep enough to wet your
+     boots. At -0.3 every paved ford read as a lake, so units legitimately
+     standing on a 22 cm crossing were reported as drowning. A ford is
+     wading depth by design; knees, not necks. */
+  isWater(x, z) { return this.world.height.sample(x, z) < -1.1; }
   isInside(x, z) { return x > -WORLD.half + 2 && x < WORLD.half - 2 && z > -WORLD.half + 2 && z < WORLD.half - 2; }
 
   /**

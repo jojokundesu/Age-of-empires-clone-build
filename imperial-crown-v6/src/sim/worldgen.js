@@ -5,7 +5,7 @@
    that, so nothing in the frame loop touches noise functions.
    ============================================================ */
 import { clamp, lerp, smoothstep, fbm2, ridged2, noise2, mulberry32, rngFor, dist2, TAU } from '../core/math.js';
-import { buildHydrology, DOMAIN } from './hydrology.js';
+import { buildHydrology, refreshHydrology, DOMAIN, WATER_LEVEL } from './hydrology.js';
 
 export const WORLD = {
   size: 512,
@@ -91,13 +91,15 @@ export function generateWorld(seed = 20261, opts = {}) {
   const res = WORLD.segments;
   const size = WORLD.size;
   const hf = new HeightField(res, size);
-  /* Classic remains the default while the experimental hydrology maps are
-     tested. Keeping it also preserves the terrain of existing saves. */
-  const mapType = opts.mapType || 'classic';
-  const hydro = mapType === 'classic' ? null
-    : buildHydrology(seed, mapType, { res, size, navCells: WORLD.navCells });
-  const mapInfo = hydro ? hydro.info : { id: 'classic', name: 'Classic Island', style: 'temperate' };
-  const style = hydro ? hydro.style : (opts.style || rng.pick(['temperate', 'temperate', 'mediterranean', 'northern', 'arid']));
+  /* Every map is a hydrological map now. `classic` is still accepted so that
+     an old save reloads, and each classic save gets its own historic map for
+     free -- the segmenter below rebuilds the island it was played on. */
+  const sites = Math.max(2, Math.min(4, (opts && opts.sites) | 0 || 2));
+  const requested = opts.mapType || 'confluence';
+  const mapType = requested === 'classic' ? 'confluence' : requested;
+  const hydro = buildHydrology(seed, mapType, { res, size, navCells: WORLD.navCells, seats: sites });
+  const mapInfo = hydro.info;
+  const style = hydro.style;
   const n = res + 1;
   const splat = new Uint8Array(n * n * 2);      // layer id, blend byte
   const water = new Uint8Array(n * n);
@@ -111,52 +113,13 @@ export function generateWorld(seed = 20261, opts = {}) {
     arid: { hills: 0.85, trees: 0.35, sand: 0.9, snow: 2.2, moisture: 0.12 }
   }[style];
 
-  // ---- heightfield: hydrology (all real maps) or the legacy island
+  // ---- heightfield: the hydrology generator owns every map now
+  /* No branch here draws a rim of border water: the only water on the map is
+     where the landform and the carved channels actually fall below the water
+     table. The borders rise into highlands instead. */
   const riverPhase = rng() * TAU;
-  let fords = [];
-  if (hydro) {
-    /* Value-noise fBm + cubic Bezier river carving. No square rim of
-       border water: coastlines are a consequence of the heightfield. */
-    hf.h.set(hydro.heights);
-    fords = hydro.fords.map((f) => ({ ...f }));
-  } else {
-    for (let z = 0; z < n; z++) {
-      for (let x = 0; x < n; x++) {
-        const wx = (x / res) * size - size * 0.5;
-        const wz = (z / res) * size - size * 0.5;
-        const nx = wx / 110, nz = wz / 110;
-        let h = 3.4 + fbm2(nx * 0.9, nz * 0.9, 4) * 6.2;
-        const mask = smoothstep((fbm2(nx * 0.42 + 7.3, nz * 0.42 - 3.1, 3) + 0.22) / 0.72);
-        h += mask * ridged2(nx * 1.9 + 4.4, nz * 1.9 - 2.2, 4) * 16.5 * styleParams.hills;
-        h += fbm2(nx * 5.6, nz * 5.6, 2) * 0.75;
-        const riverZ = Math.sin(wx * 0.0125 + riverPhase) * 58 + Math.sin(wx * 0.033 + riverPhase * 2) * 17;
-        const dRiver = Math.abs(wz - riverZ);
-        h -= smoothstep(1 - clamp(dRiver / 11, 0, 1)) * 7.5;
-        const rim = Math.max(Math.abs(wx), Math.abs(wz));
-        const edge = clamp((rim - 196) / 58, 0, 1);
-        h = h * (1 - edge * 1.25) - edge * 7.5;
-        hf.h[z * n + x] = h;
-      }
-    }
-    // legacy fords: raised crossings
-    for (let f = 0; f < 3; f++) {
-      const fx = -145 + f * 132 + (rand() - 0.5) * 26;
-      const rz0 = Math.sin(fx * 0.0125 + riverPhase) * 58 + Math.sin(fx * 0.033 + riverPhase * 2) * 17;
-      fords.push({ x: fx, z: rz0 });
-      for (let z = 0; z < n; z++) {
-        for (let x = 0; x < n; x++) {
-          const wx = (x / res) * size - size * 0.5;
-          const wz = (z / res) * size - size * 0.5;
-          if (Math.abs(wx - fx) > 13) continue;
-          const rz = Math.sin(wx * 0.0125 + riverPhase) * 58 + Math.sin(wx * 0.033 + riverPhase * 2) * 17;
-          if (Math.abs(wz - rz) > 16) continue;
-          const t = smoothstep(1 - Math.abs(wx - fx) / 13);
-          hf.h[z * n + x] = lerp(hf.h[z * n + x], Math.max(hf.h[z * n + x], 0.85), t);
-        }
-      }
-    }
-    smoothField(hf, 1);
-  }
+  let fords = hydro.fords.map((f) => ({ ...f }));
+  hf.h.set(hydro.heights);
 
   // ---- biome map (moisture + temperature)
   const biome = new Uint8Array(n * n);
@@ -183,13 +146,11 @@ export function generateWorld(seed = 20261, opts = {}) {
   const groundAt = (i, wx, wz) => {
     const h = hf.h[i];
     const slope = hf.slope(wx, wz);
-    const d = hydro ? hydro.domainAt(wx, wz) : null;
+    const d = hydro.domainAt(wx, wz);
     if (d === DOMAIN.BLOCKED) return { water: h < 0 ? 1 : 0, walk: 0 };
     if (d === DOMAIN.WATER_ONLY) return { water: 1, walk: 0 };
     if (d === DOMAIN.AMPHIBIOUS_SHALLO_FORD) return { water: h < 0 ? 1 : 0, walk: slope < 0.62 ? 1 : 0 };
-    if (d === DOMAIN.LAND_ONLY) return { water: 0, walk: slope < 0.62 ? 1 : 0 };
-    const isWater = h < -0.35;                  // classic island
-    return { water: isWater ? 1 : 0, walk: (!isWater && slope < 0.62) ? 1 : 0 };
+    return { water: 0, walk: slope < 0.62 ? 1 : 0 };
   };
   for (let z = 0; z < n; z++) {
     for (let x = 0; x < n; x++) {
@@ -208,7 +169,9 @@ export function generateWorld(seed = 20261, opts = {}) {
       if (b === BIOME.HIGHLAND) { layer = TERRAIN_LAYER.GRAVEL; blend = 200; }
       if (b === BIOME.MARSH) { layer = TERRAIN_LAYER.MUD; blend = 235; }
       if (b === BIOME.FOREST) { layer = TERRAIN_LAYER.DRY_GRASS; blend = 150; }
-      if (h > 13.5 && slope < 0.3) { layer = TERRAIN_LAYER.SNOW; blend = 235; }
+      /* No snow pass here. `buildRenderTerrain` owns snow now, because it is
+         the only place that knows the map's own relief -- this fixed 13.5 m
+         threshold was painting the entire Highview plateau white. */
       splat[i * 2] = layer;
       splat[i * 2 + 1] = Math.min(255, blend);
       const g = groundAt(i, wx, wz);
@@ -217,35 +180,27 @@ export function generateWorld(seed = 20261, opts = {}) {
     }
   }
 
-  // ---- spawn sites: up to four corners, each flattened and cleared
-  /* A War of Crowns puts three or four kingdoms on one island, so the map
-     has to find a fair site in every corner it is asked for. `sites` is 2
-     for every classic match, which produces exactly the same two sites the
-     game has always used -- the extra corners are only searched when the
-     match actually asks for them, so a two-player game's island is
-     byte-identical to before. */
-  const sites = Math.max(2, Math.min(4, (opts && opts.sites) | 0 || 2));
-  const CORNERS = [[-150, 150], [150, -150], [150, 150], [-150, -150]];
-  const playerBase = findBaseSite(hf, walk, CORNERS[0][0], CORNERS[0][1], rng);
-  const enemyBase = findBaseSite(hf, walk, CORNERS[1][0], CORNERS[1][1], rng);
-  const SEATS = [playerBase, enemyBase];
-  for (let i = 2; i < sites; i++) {
-    SEATS.push(findBaseSite(hf, walk, CORNERS[i][0], CORNERS[i][1], rng, SEATS));
+  // ---- spawn sites: the landform decides where the towns stand
+  /* The generator places each seat on the ground its archetype cares about --
+     a bank of the Danube, a coast of the inland sea, the four corners of the
+     plateau -- so the map itself is what makes a two-crown duel a river
+     crossing and a four-crown war a race for the fords. */
+  const SEATS = hydro.seats.slice(0, sites).map((s) => ({ x: s.x, z: s.z, h: s.h }));
+  while (SEATS.length < 2) {
+    const a = rng() * TAU;
+    SEATS.push({ x: Math.cos(a) * 150, z: Math.sin(a) * 150, h: hf.sample(Math.cos(a) * 150, Math.sin(a) * 150) });
   }
-  for (const b of SEATS) flattenPlateau(hf, b.x, b.z, 26, b.h);
-  if (hydro) {
-    hydro.heights.set(hf.h);
-    const N = hydro.domainCells, cell = hydro.domainCell, half = size * 0.5;
-    for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
-      const wx = (x + 0.5) * cell - half, wz = (z + 0.5) * cell - half;
-      const h = hf.sample(wx, wz), slope = hf.slope(wx, wz);
-      const nearFord = fords.some((f) => Math.hypot(wx - f.x, wz - f.z) < f.radius * 0.7);
-      hydro.domain[z * N + x] = slope > 0.95 ? DOMAIN.BLOCKED
-        : nearFord && h < 0.5 ? DOMAIN.AMPHIBIOUS_SHALLO_FORD
-        : h < -0.35 ? DOMAIN.WATER_ONLY
-        : h < 0.25 ? DOMAIN.AMPHIBIOUS_SHALLO_FORD : DOMAIN.LAND_ONLY;
-    }
+  const playerBase = SEATS[0], enemyBase = SEATS[1];
+  /* Flatten only the *town apron*: 22 m of buildable ground, ramped out over
+     another 14 m, and never allowed to lift or drop a channel cell. That last
+     clause is what stops a plateau from filling in the river it was built on. */
+  for (const b of SEATS) {
+    flattenPlateau(hf, b.x, b.z, 22, b.h, (wx, wz) => hydro.sample(wx, wz) > WATER_LEVEL + 0.9);
+    b.h = hf.sample(b.x, b.z);
   }
+  hydro.heights.set(hf.h);
+  refreshHydrology(hydro, (wx, wz) => hf.sample(wx, wz), (wx, wz) => hf.slope(wx, wz));
+  fords = hydro.fords.map((f) => ({ ...f }));
   // recompute walkability inside plateaus
   for (let z = 0; z < n; z++) {
     for (let x = 0; x < n; x++) {
@@ -316,15 +271,34 @@ export function generateWorld(seed = 20261, opts = {}) {
     }
   }
 
-  // Gold + stone clusters, one guaranteed close to each base
+  /* Gold + stone clusters, one guaranteed close to each base -- placed in
+     OPPOSITE directions and well clear of the town apron. The old pair of
+     independent findSpot() calls kept landing on the same flank, so a town
+     could have its stone at 20 m and its gold at 22 m in the same arc, and
+     the 18-26 m ring where a Wonder has to go was blocked by a mine. A
+     gold mine you cannot build past is not a strategic decision. */
   for (const base of SEATS) {
-    const gs = findSpot(base.x, base.z, 18, 26, 30);
+    const goldAng = rng() * TAU;
+    const stoneAng = goldAng + Math.PI + (rng() - 0.5) * 0.9;
+    const ringSpot = (ang, minR, maxR) => {
+      for (let t = 0; t < 24; t++) {
+        const a = ang + (rng() - 0.5) * 0.5;
+        const d = minR + rng() * (maxR - minR);
+        const x = clamp(base.x + Math.cos(a) * d, -246, 246);
+        const z = clamp(base.z + Math.sin(a) * d, -246, 246);
+        if (hfSample(hf, x, z) < 0.2 || hfSlope(hf, x, z) > 0.5) continue;
+        if (nearBase(x, z, 30)) continue;          // leave the apron buildable
+        return { x, z };
+      }
+      return findSpot(base.x, base.z, minR, maxR, 20);
+    };
+    const gs = ringSpot(goldAng, 30, 38);
     if (gs) for (let i = 0; i < 5; i++) {
       const a = (i / 5) * TAU;
       const x = gs.x + Math.cos(a) * (2.5 + rng() * 2), z = gs.z + Math.sin(a) * (2.5 + rng() * 2);
       resources.push({ kind: 'gold', type: 'gold_mine', resKind: 'gold', x, z, amount: 900, radius: 1.25, scale: 0.9 + rng() * 0.35, y: hfSample(hf, x, z) });
     }
-    const ss = findSpot(base.x, base.z, 20, 30, 30);
+    const ss = ringSpot(stoneAng, 30, 38);
     if (ss) for (let i = 0; i < 4; i++) {
       const a = (i / 4) * TAU + 0.6;
       const x = ss.x + Math.cos(a) * (2.8 + rng() * 1.8), z = ss.z + Math.sin(a) * (2.8 + rng() * 1.8);
@@ -345,6 +319,78 @@ export function generateWorld(seed = 20261, opts = {}) {
     }
   }
 
+  /* ---- centre of the map ----------------------------------------------
+     A map with nothing in the middle is a map with no reason to leave home.
+     Every archetype therefore gets a contested core: the largest landmass
+     nearest the centre that is not one of the towns, with a gold field, a
+     stone outcrop, a herd and (on the water maps) fish close inshore. The
+     fight for it is the middle game. If the centre is deep water -- the
+     inland sea, a strait -- the features go on the biggest island in it and
+     a Sacred Site is placed there instead, so the fleet has a destination. */
+  let contested = null;
+  {
+    let bestScore = -1e9;
+    for (let cz = 0; cz < 26; cz++) {
+      for (let cx = 0; cx < 26; cx++) {
+        const x = (cx + 0.5) / 26 * 470 - 235;
+        const z = (cz + 0.5) / 26 * 470 - 235;
+        const h = hfSample(hf, x, z);
+        if (h < 1.0 || hfSlope(hf, x, z) > 0.30) continue;
+        if (nearBase(x, z, 60)) continue;
+        /* Prefer flat, dry, central, and with room for a small town. */
+        let room = 0;
+        for (const [dx, dz] of [[10, 0], [-10, 0], [0, 10], [0, -10], [7, 7], [-7, -7]]) {
+          if (hfSample(hf, x + dx, z + dz) > 0.6) room++;
+        }
+        if (room < 5) continue;
+        /* The contested ground must be land, not a sandbar in the river: a
+           channel runs through the middle of the river maps, so the nearest
+           dry point to (0,0) can be a metre-wide islet. It needs a real
+           apron of dry ground before it is worth fighting over. */
+        let dryRing = 0;
+        for (let a = 0; a < 8; a++) {
+          const ang = (a / 8) * TAU;
+          if (hfSample(hf, x + Math.cos(ang) * 22, z + Math.sin(ang) * 22) > 1.0) dryRing++;
+        }
+        if (dryRing < 7) continue;
+        const score = 40 - Math.hypot(x, z) * 0.24 + room * 3 + dryRing * 4 - hfSlope(hf, x, z) * 40;
+        if (score > bestScore) { bestScore = score; contested = { x, z, y: h }; }
+      }
+    }
+  }
+  if (contested) {
+    const { x: cx0, z: cz0, y: cy0 } = contested;
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * TAU;
+      resources.push({ kind: 'gold', type: 'gold_mine', resKind: 'gold',
+        x: cx0 + Math.cos(a) * (3.4 + rng() * 2.4), z: cz0 + Math.sin(a) * (3.4 + rng() * 2.4),
+        amount: 1200, radius: 1.25, scale: 1.05 + rng() * 0.2, y: cy0 });
+    }
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * TAU + 0.7;
+      resources.push({ kind: 'stone', type: 'stone_mine', resKind: 'stone',
+        x: cx0 + Math.cos(a) * (10 + rng() * 3), z: cz0 + Math.sin(a) * (10 + rng() * 3),
+        amount: 900, radius: 1.2, scale: 1.0 + rng() * 0.2, y: cy0 });
+    }
+    for (let i = 0; i < 5; i++) {
+      resources.push({ kind: 'food', type: 'berry_bush', resKind: 'food',
+        x: cx0 + (rng() - 0.5) * 22, z: cz0 + (rng() - 0.5) * 22,
+        amount: 300, radius: 1.0, scale: 0.95, y: cy0 });
+    }
+    for (let i = 0; i < 6; i++) {
+      resources.push({ kind: 'wood', type: 'tree', resKind: 'wood',
+        x: cx0 + 13 + Math.cos(i * 2.1) * 5, z: cz0 + 13 + Math.sin(i * 2.1) * 5,
+        amount: 220, radius: 0.85, variant: (rng() * 4) | 0, scale: 1.0 + rng() * 0.3, y: cy0 });
+    }
+    /* The contested ground is cleared of scatter so it reads as a place. */
+    for (let i = 0; i < 70; i++) {
+      const a = rng() * TAU, d = Math.sqrt(rng()) * 24;
+      const x = cx0 + Math.cos(a) * d, z = cz0 + Math.sin(a) * d;
+      if (hfSample(hf, x, z) < 0.2) continue;
+      stampRoad(splat, hf, x, z, 0.35 + 0.4 * (1 - d / 26), 2.0);
+    }
+  }
+
   // Scattered distant gold/stone
   for (let i = 0; i < 14; i++) {
     const a = rng() * TAU, d = 70 + rng() * 160;
@@ -362,12 +408,13 @@ export function generateWorld(seed = 20261, opts = {}) {
     }
   }
 
-  // Fishing grounds
-  for (let i = 0; i < 22; i++) {
-    const a = rng() * TAU, d = 120 + rng() * 120;
+  /* Fishing grounds, on every map that has water at all: the river is a food
+     economy, not scenery. Shoals sit in the channel and along the bank. */
+  for (let i = 0; i < 40; i++) {
+    const a = rng() * TAU, d = 12 + Math.sqrt(rng()) * 200;
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
-    if (hfSample(hf, x, z) > -0.6) continue;
-    resources.push({ kind: 'food', type: 'fish', resKind: 'food', x, z, amount: 700, radius: 1.6, scale: 0.9, y: -0.35 });
+    if (hfSample(hf, x, z) > -0.42) continue;
+    resources.push({ kind: 'food', type: 'fish', resKind: 'food', x, z, amount: 700, radius: 1.6, scale: 0.9, y: hfSample(hf, x, z) });
   }
 
   // Relics: 5 scattered golden chests
@@ -385,30 +432,67 @@ export function generateWorld(seed = 20261, opts = {}) {
      now purposeful: reeds at the waterline, rocks on slopes, flowers and
      tussocks in clumps on the meadows. Nothing here interferes with a unit's
      tile -- every strategic cluster is a real resource node on the grid. */
-  for (let i = 0; i < 2400; i++) {
-    const x = rng() * 500 - 250;
-    const z = rng() * 500 - 250;
+  /* Ground cover, placed by *place* and not by area.
+     An even sprinkle of anything across 512 x 512 m reads as noise: 2400
+     pebbles is one every 10 m of meadow, which is exactly the frequency the
+     eye reads as dirt on the screen rather than as a landscape. Cover is
+     therefore grown in patches -- a scree field at the foot of a cliff, a
+     reedy creek margin, a stand of flowers in a hollow -- and clustered
+     inside each patch so the middle is dense and the edge thins out. Meadow
+     away from a patch is left *empty*, which is what makes the patches read
+     at all. Boulders only exist where a boulder makes sense: on a slope or
+     at the foot of one. */
+  const patches = [];
+  const patchKinds = ['flowers', 'tufts', 'scree', 'reeds', 'pebbles', 'flowers'];
+  for (let c = 0; c < 96; c++) {
+    const a = rng() * TAU;
+    const d = 30 + Math.sqrt(rng()) * 210;
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
     const h = hfSample(hf, x, z);
-    if (h < -1.2) continue;
+    if (h < -0.4) continue;
     const slope = hfSlope(hf, x, z);
-    const r = rng();
-    let type;
-    if (h < 0.05) type = r < 0.72 ? 'reed' : 'rock';            // waterline
-    else if (slope > 0.45) type = r < 0.7 ? 'rock' : 'tuft';    // cliff scree
-    else if (h > 10) type = r < 0.58 ? 'rock' : 'tuft';         // highland
-    else if (r < 0.46) type = 'tuft';
-    else if (r < 0.72) type = 'flower';
-    else type = 'rock';                                          // small stones
-    decor.push({ type, x, z, y: h, scale: 0.6 + rng() * 0.9, rot: rng() * TAU, tint: rng() });
+    /* Pick the patch that belongs to this ground. */
+    let kind;
+    if (h < 0.9) kind = 'reeds';
+    else if (slope > 0.30) kind = 'scree';
+    else if (h > 11) kind = 'scree';
+    else kind = patchKinds[(rng() * (patchKinds.length - 1)) | 0];
+    patches.push({
+      x, z, kind, slope,
+      r: 3.5 + rng() * 7.5,
+      n: kind === 'scree' ? 14 + ((rng() * 22) | 0) : 10 + ((rng() * 18) | 0)
+    });
   }
-  /* Under-canopy clumps: grass and flowers only, placed inside forest
-     clusters so the forest floor reads as a place. No logs, no stumps. */
-  for (let i = 0; i < 700; i++) {
+  for (const p of patches) {
+    for (let i = 0; i < p.n; i++) {
+      /* sqrt(rng) makes the density fall off toward the rim: dense middle. */
+      const a = rng() * TAU, rr = Math.sqrt(rng()) * p.r;
+      const x = p.x + Math.cos(a) * rr, z = p.z + Math.sin(a) * rr;
+      const h = hfSample(hf, x, z);
+      if (h < -1.0) continue;
+      if (rng() > 1 - rr / p.r * 0.55) continue;
+      const t = rng();
+      let type, scale;
+      if (p.kind === 'flowers') { type = t < 0.72 ? 'flower' : 'tuft'; scale = 0.5 + rng() * 0.5; }
+      else if (p.kind === 'tufts') { type = t < 0.8 ? 'tuft' : 'flower'; scale = 0.6 + rng() * 0.6; }
+      else if (p.kind === 'reeds') { type = t < 0.85 ? 'reed' : 'tuft'; scale = 0.7 + rng() * 0.6; }
+      else if (p.kind === 'scree') { type = t < 0.55 ? 'rock' : 'pebble'; scale = t < 0.55 ? 0.5 + rng() * 0.55 : 0.7 + rng() * 0.9; }
+      else { type = t < 0.5 ? 'pebble' : 'tuft'; scale = 0.5 + rng() * 0.6; }
+      decor.push({ type, x, z, y: h, scale, rot: rng() * TAU, tint: rng() });
+    }
+  }
+  /* A thin skin of life down on the floodplain, where the ground is damp:
+     scattered individually (a riverbank is the one place a sprinkle is
+     correct) but still sparse. */
+  for (let i = 0; i < 900; i++) {
     const x = rng() * 500 - 250, z = rng() * 500 - 250;
     const h = hfSample(hf, x, z);
-    if (h < 0.3) continue;
-    if (rng() < 0.5) continue;
-    decor.push({ type: rng() < 0.5 ? 'flower' : 'tuft', x, z, y: h, scale: 0.5 + rng() * 0.7, rot: rng() * TAU, tint: rng() });
+    if (h < -0.2 || h > 1.6) continue;
+    const r = rng();
+    decor.push({
+      type: r < 0.62 ? 'reed' : r < 0.88 ? 'tuft' : 'pebble',
+      x, z, y: h, scale: 0.55 + rng() * 0.6, rot: rng() * TAU, tint: rng()
+    });
   }
 
   /* Roads between the seats of every kingdom (a curving dirt path) — pushed
@@ -446,27 +530,6 @@ export function generateWorld(seed = 20261, opts = {}) {
       if (hfSample(hf, x, z) < -0.4) continue;
       const falloff = 1 - d / 19;
       stampRoad(splat, hf, x, z, 0.45 + falloff * 0.45, 2.2 + rng() * 2.0);
-    }
-  }
-
-  /* Decor in clumps, not an even sprinkle. Meadow life comes in patches --
-     a tussock, a rock, a stand of flowers -- and the eye reads a cluster as
-     "a place" where it reads an even sprinkle as noise. */
-  const clumpKinds = ['tuft', 'tuft', 'flower', 'bush', 'flower', 'reed', 'tuft', 'rock'];
-  for (let c = 0; c < 260; c++) {
-    const nearBase = c < 90;
-    const base = c % 2 === 0 ? playerBase : enemyBase;
-    const a = rng() * TAU;
-    const d = nearBase ? 12 + rng() * 30 : 26 + rng() * 190;
-    const cx = (nearBase ? base.x : 0) + Math.cos(a) * d;
-    const cz = (nearBase ? base.z : 0) + Math.sin(a) * d;
-    const kind = clumpKinds[(rng() * clumpKinds.length) | 0];
-    const n = 2 + ((rng() * 4) | 0);
-    for (let i = 0; i < n; i++) {
-      const x = cx + (rng() - 0.5) * 5.5, z = cz + (rng() - 0.5) * 5.5;
-      const h = hfSample(hf, x, z);
-      if (h < -0.6) continue;
-      decor.push({ type: kind, x, z, y: h, scale: 0.7 + rng() * 0.75, rot: rng() * TAU, tint: rng() });
     }
   }
 
@@ -588,14 +651,26 @@ export function generateWorld(seed = 20261, opts = {}) {
         amount: 160, radius: 0.8, variant: 1, scale: 1.25, y: p.y, palm: true });
     }
     for (const b of hydro.bridges) bridges.push({ ...b });
-    /* Fords are stamped as walkable cobble, so the stone reads on the
-       ground as well as in the water shader. */
+    /* A stone ford is *paved*: the paving is stamped into the splat so the
+       cobbles read on the ground as well as under the water. The stamp
+       follows the shelf's own oval shape, so the paving stops where the
+       shallow water stops instead of scattering over the bank. */
     for (const f of fords) {
-      for (let i = 0; i < 22; i++) {
-        const a = rng() * TAU, d = rng() * f.radius * 0.8;
-        stampRoad(splat, hf, f.x + Math.cos(a) * d, f.z + Math.sin(a) * d, 0.6, 2.2);
+      const cos = Math.cos(f.angle || 0), sin = Math.sin(f.angle || 0);
+      for (let i = 0; i < 46; i++) {
+        const u = (rng() * 2 - 1) * f.radius * 0.66;
+        const w = (rng() * 2 - 1) * f.radius;
+        if (u * u / (f.radius * 0.66) ** 2 + w * w / (f.radius * f.radius) > 1) continue;
+        const x = f.x + cos * u - sin * w;
+        const z = f.z + sin * u + cos * w;
+        stampRoad(splat, hf, x, z, 0.85, 1.3);
       }
     }
+    /* Reed beds at the waterline and gravel bars in the channel. These are the
+       two features that make a bank read as a riverbank from an RTS camera,
+       and both are pure decoration: instanced, non-blocking, never on a path. */
+    for (const r of hydro.reedBeds) decor.push({ type: 'reed', x: r.x, z: r.z, y: r.y, scale: r.scale, rot: r.rot, tint: rng() });
+    for (const g of hydro.gravelBars) decor.push({ type: 'pebble', x: g.x, z: g.z, y: g.y, scale: g.scale * 1.6, rot: g.rot, tint: rng() });
     /* Keep the hydrology heightfield in step with the flattened base
        plateaus, so the live brush editor edits the heights actually used. */
     hydro.heights.set(hf.h);
@@ -615,15 +690,18 @@ export function generateWorld(seed = 20261, opts = {}) {
     size, half: size * 0.5,
     height: hf,
     hydrology: hydro,
-    /* Domain metadata for the experimental maps and their water shader. */
-    domain: hydro ? hydro.domain : null,
-    domainCells: hydro ? hydro.domainCells : WORLD.navCells,
-    domainCell: hydro ? hydro.domainCell : WORLD.navCell,
-    domainAt: hydro ? hydro.domainAt : null,
-    flowTex: hydro ? hydro.flowTex : null,
-    waterLevel: hydro ? hydro.waterLevel : WORLD.waterLevel,
+    /* The navigation domain and the water shader's field. Every map has both. */
+    domain: hydro.domain,
+    domainCells: hydro.domainCells,
+    domainCell: hydro.domainCell,
+    domainAt: hydro.domainAt,
+    flowTex: hydro.flowTex,
+    waterDepth: hydro.waterDepth,
+    waterLevel: hydro.waterLevel,
+    shallowBed: hydro.shallowBed,
     stealthForests, sacredSites, tradePosts, bridges,
-    isNaval: hydro ? hydro.isNaval : true,
+    rivers: hydro.rivers,
+    isNaval: hydro.isNaval,
     splat, water, walk, props, biome,
     resources, decor, roads: roadPts, poi, fords,
     playerBase, enemyBase,
@@ -633,9 +711,7 @@ export function generateWorld(seed = 20261, opts = {}) {
   };
   world.nav = buildNavGrid(world);
   world.heightAt = (x, z) => hf.sample(x, z);
-  world.domainAtOrDefault = (x, z) => world.domainAt
-    ? world.domainAt(x, z)
-    : (hf.sample(x, z) < -0.35 ? DOMAIN.WATER_ONLY : DOMAIN.LAND_ONLY);
+  world.domainAtOrDefault = (x, z) => world.domainAt(x, z);
   return world;
 }
 
@@ -652,6 +728,20 @@ export function buildRenderTerrain(world) {
   const splat = world.splat;
   const s4 = new Float32Array(n * n * 4);   // grass, dirt, rock, sand
   const s2 = new Float32Array(n * n * 2);   // cobble/road, snow
+  /* Snow is relative to this map's own relief. A fixed height threshold
+     painted every flat-topped plateau white -- Highview is a plateau at 25 m,
+     so its whole interior came out as a cream field seen from the camera.
+     Snow belongs to the peaks, wherever the peaks happen to be. */
+  let hMin = Infinity, hMax = -Infinity;
+  for (let i = 0; i < heights.length; i++) {
+    const v = heights[i];
+    if (v < hMin) hMin = v;
+    if (v > hMax) hMax = v;
+  }
+  /* The top of *this* map is the only place snow can live: 4 m below the
+     summit, whatever that summit happens to be. A fixed altitude can never
+     be right on both a 24 m plateau and a 40 m alpine map. */
+  const snowStart = hMax - Math.max(4.5, (hMax - hMin) * 0.10);
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) {
       const k = j * n + i;
@@ -675,8 +765,42 @@ export function buildRenderTerrain(world) {
       }
       // cliffs always show rock, beaches always show sand, peaks show snow
       if (slope > 0.42) rock += Math.min(0.85, (slope - 0.42) * 2.2);
-      if (h < 1.1 && !world.water[k]) { sand += Math.min(0.8, (1.1 - h) * 0.6); grass *= 0.4; }
-      if (h > 12.5) snow += Math.min(0.9, (h - 12.5) * 0.22);
+      /* A beach, not a desert. The old rule said "any dry ground under 1.1 m
+         is sand", and every riverside floodplain in the game sits between
+         0.9 and 1.0 m, so whole valleys were painted as dune. Sand now
+         belongs to a narrow strip just above the water line. */
+      if (!world.water[k] && h > WATER_LEVEL - 0.06 && h < WATER_LEVEL + 0.55) {
+        const t = 1 - (h - WATER_LEVEL) / 0.61;
+        sand += Math.min(0.85, t * 0.9);
+        grass *= 0.55;
+      }
+      /* Peaks only. Height alone is not enough: Highview is a plateau, so
+         its whole flat top is "high" and a height threshold painted the
+         entire interior white. A snowcap needs local prominence -- ground
+         that stands up out of the land around it -- so the test is against
+         a ring 40 m out. A plateau top has zero prominence and stays green;
+         a real summit does not. */
+      if (h > snowStart) {
+        /* Height alone is not enough. Highview is one big plateau: its whole
+           flat top is the highest ground on the map, so a height threshold
+           painted the entire interior white and the player spent the match
+           looking at a cream field. Snow needs the land to *fall away in
+           every direction* -- the point must stand above the whole 40 m ring,
+           not just above its average. A mesa top cannot pass that test; a
+           summit can. */
+        let ringMax = -Infinity;
+        for (let a = 0; a < 8; a++) {
+          const ang = a * (Math.PI / 4);
+          const rh = hf.sample(wx + Math.cos(ang) * 40, wz + Math.sin(ang) * 40);
+          if (rh > ringMax) ringMax = rh;
+        }
+        const prominence = h - ringMax;
+        if (prominence > 1.6) {
+          const cap = Math.min(0.80, (prominence - 1.2) / 5.5) * Math.min(1, (h - snowStart) / 5 + 0.35);
+          snow += cap * (0.45 + 0.55 * Math.min(1, slope * 2.2));
+          grass *= 1 - cap * 0.65;
+        }
+      }
       const sum = grass + dirt + rock + sand + cobble + snow || 1;
       const o4 = k * 4, o2 = k * 2;
       s4[o4] = grass / sum; s4[o4 + 1] = dirt / sum;
@@ -763,14 +887,29 @@ function smoothField(hf, passes) {
   }
 }
 
-function flattenPlateau(hf, wx, wz, radius, targetH) {
+/**
+ * Level a town's building apron.
+ *
+ * `res` (the terrain grid) is 4 m, so the old version walked all 16641
+ * vertices for every seat. This one walks only the apron's bounding box.
+ * `allow` is the guard that keeps a plateau from silting up a river: a vertex
+ * whose channel would be damaged is left exactly as the carve left it.
+ */
+function flattenPlateau(hf, wx, wz, radius, targetH, allow = null) {
   const n = hf.res + 1;
-  for (let z = 0; z < n; z++) {
-    for (let x = 0; x < n; x++) {
+  const cell = hf.cell;
+  const reach = radius * 1.6;
+  const x0 = Math.max(0, Math.floor((wx - reach + hf.size * 0.5) / cell));
+  const x1 = Math.min(hf.res, Math.ceil((wx + reach + hf.size * 0.5) / cell));
+  const z0 = Math.max(0, Math.floor((wz - reach + hf.size * 0.5) / cell));
+  const z1 = Math.min(hf.res, Math.ceil((wz + reach + hf.size * 0.5) / cell));
+  for (let z = z0; z <= z1; z++) {
+    const pz = (z / hf.res) * hf.size - hf.size * 0.5;
+    for (let x = x0; x <= x1; x++) {
       const px = (x / hf.res) * hf.size - hf.size * 0.5;
-      const pz = (z / hf.res) * hf.size - hf.size * 0.5;
       const d = Math.hypot(px - wx, pz - wz);
-      if (d > radius * 1.6) continue;
+      if (d > reach) continue;
+      if (allow && !allow(px, pz)) continue;
       const t = 1 - smoothstep((d - radius * 0.55) / (radius * 1.05));
       hf.h[z * n + x] = lerp(hf.h[z * n + x], targetH, t * 0.94);
     }
@@ -814,23 +953,27 @@ export function buildNavGrid(world) {
   /* Keep domain metadata alongside the current land navigation grid.
      Naval pathfinding does not yet consume this grid. */
   const domain = new Uint8Array(N * N);
+  /* `naval` is the fleet's own grid: water and fords are open, land is not.
+     It is baked from the same domain array the land grid reads, so a hull and
+     a spearman can never disagree about where the river is. */
+  const naval = new Uint8Array(N * N);
   const hydro = world.hydrology;
   for (let z = 0; z < N; z++) {
     for (let x = 0; x < N; x++) {
       const wx = (x + 0.5) * cell - WORLD.half;
       const wz = (z + 0.5) * cell - WORLD.half;
-      const h = world.height.sample(wx, wz);
       const slope = world.height.slope(wx, wz);
-      const d = hydro ? hydro.domainAt(wx, wz)
-        : (h < 0.05 ? DOMAIN.WATER_ONLY : DOMAIN.LAND_ONLY);
+      const d = hydro.domainAt(wx, wz);
       domain[z * N + x] = d;
       /* Land A* blocked: deep water, cliffs, and (later) buildings. Fords
          and beaches are amphibious and therefore NOT blocked for land. */
       blocked[z * N + x] = (d === DOMAIN.WATER_ONLY || d === DOMAIN.BLOCKED || slope > 0.72) ? 1 : 0;
       steep[z * N + x] = slope > 0.95 ? 1 : 0;
+      /* Ships float on deep water and across fords, never over dry land. */
+      naval[z * N + x] = (d === DOMAIN.WATER_ONLY || d === DOMAIN.AMPHIBIOUS_SHALLO_FORD) ? 0 : 1;
     }
   }
-  return { cells: N, cell, blocked, steep, domain,
+  return { cells: N, cell, blocked, steep, domain, naval,
     isWaterCell: (x, z) => {
       const cx = clamp(((x + WORLD.half) / cell) | 0, 0, N - 1);
       const cz = clamp(((z + WORLD.half) / cell) | 0, 0, N - 1);

@@ -213,16 +213,35 @@ await check('dragging the wall tool draws a ghost line before the finger lifts',
 
 await check('a tap places a single segment', async () => {
   const before = await page.evaluate(() => window.__imperial.game.buildings.filter((b) => b.type === 'stone_wall').length);
-  const p = await page.evaluate((site) => {
+  /* Tap somewhere the sim actually permits a wall. The old fixed +14 m on
+     the perpendicular could land on a hillside, and then the check failed
+     for the map's sake rather than for the gesture's. */
+  const target = await page.evaluate((site) => {
+    const g = window.__imperial.game;
     const perp = site.ang + Math.PI / 2;
-    return window.__toScreen(site.x + Math.cos(perp) * 14, site.z + Math.sin(perp) * 14);
+    for (const d of [14, 12, 16, 10, 18, 8, 20, 6, 4, 22]) {
+      for (const sgn of [1, -1]) {
+        const wx = site.x + Math.cos(perp) * d * sgn, wz = site.z + Math.sin(perp) * d * sgn;
+        if (g.canPlaceAt('stone_wall', 1, wx, wz).ok) return { wx, wz };
+      }
+    }
+    return null;
   }, site);
+  assert(target, 'no placeable ground near the wall site');
+  const p = await page.evaluate((t) => window.__toScreen(t.wx, t.wz), target);
   assert(p, 'the tap point is off screen');
+  const vp = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
+  assert(p.x > 8 && p.y > 8 && p.x < vp.w - 8 && p.y < vp.h - 8, `the tap point is under the HUD at ${p.x.toFixed(0)},${p.y.toFixed(0)} of ${vp.w}x${vp.h}`);
   await pointer('pointerdown', p.x, p.y);
   await pointer('pointerup', p.x, p.y);
   await wait(250);
+  const dbg = await page.evaluate((t) => {
+    const g = window.__imperial.game;
+    return { walls: g.buildings.filter((b) => b.type === 'stone_wall' && !b.dead).length,
+      canPlace: g.canPlaceAt('stone_wall', 1, t.wx, t.wz), stone: g.teams.get(1).res.stone };
+  }, target);
   const after = await page.evaluate(() => window.__imperial.game.buildings.filter((b) => b.type === 'stone_wall').length);
-  assert(after === before + 1, `a tap placed ${after - before} segments`);
+  assert(after === before + 1, `a tap placed ${after - before} segments (${JSON.stringify(dbg)})`);
   return 'one segment per tap';
 });
 
