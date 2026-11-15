@@ -711,8 +711,86 @@ export function generateWorld(seed = 20261, opts = {}) {
   };
   world.nav = buildNavGrid(world);
   world.heightAt = (x, z) => hf.sample(x, z);
+  /* The bed map the water shader reads for depth. The 128-cell heightfield is
+     4 m per vertex, and a river's bank falls a metre over roughly two metres
+     of ground: sampled straight, the shoreline comes out as a stair-stepped
+     contour and the "shallow" ring around it is several metres wide, which at
+     a close camera is the pale glow the eye reads as a painted outline. One
+     metre per texel, from the same interpolated surface the gameplay uses,
+     puts the waterline where the terrain actually meets the water. */
+  world.bedTex = bakeBedTex(hf, 512);
+  /* Cosmetic height lookup: smooth contours, used only by the bake (sand band)
+     and the water shader (via bedTex). Gameplay keeps hf.sample. */
+  world.heightSmooth = (x, z) => sampleSmooth(hf, x, z);
   world.domainAtOrDefault = (x, z) => world.domainAt(x, z);
   return world;
+}
+
+/**
+ * One-metre bed heights for the water shader, as a single-channel texture.
+ * R = (height + 8) / 46, the same encoding as the renderer's height map, so
+ * the shader needs no new uniform and the two agree exactly.
+ */
+export function bakeBedTex(hf, size = 512) {
+  const out = new Uint8Array(size * size);
+  const half = hf.size * 0.5;
+  const step = hf.size / size;
+  const res = hf.res, r = res + 1, cell = hf.cell, H = hf.h;
+  /* Catmull-Rom, not bilinear. Bilinear interpolation of a coarse grid has
+     straight contours inside every cell that meet at a kink on every cell
+     edge -- so any threshold of it (a waterline, a beach band, a depth ramp)
+     is drawn as a staircase of 4 m steps, however fine the output texture is.
+     That staircase is what a riverbank looked like. Catmull-Rom is C1, so the
+     contours curve, and the bank wanders the way the height field says it
+     should. Clamped at the border. */
+  for (let j = 0; j < size; j++) {
+    const z = -half + (j + 0.5) * step;
+    for (let i = 0; i < size; i++) {
+      const x = -half + (i + 0.5) * step;
+      const h = sampleSmooth(hf, x, z);
+      out[j * size + i] = clamp(Math.round(((h + 8) / 46) * 255), 0, 255);
+    }
+  }
+  return { data: out, size };
+}
+
+/**
+ * Catmull-Rom sample of a height field, in world metres.
+ *
+ * Bilinear interpolation of a coarse grid is piecewise-straight inside every
+ * cell and kinks on every cell edge, so any *threshold* of it -- a waterline,
+ * a beach band, a depth ramp -- comes out as a staircase of 4 m steps however
+ * finely it is resampled. Everything cosmetic that draws a contour of height
+ * (the water edge, the sand band, the wet line) reads this instead, and the
+ * bank wanders the way the height field says it should. Gameplay keeps
+ * `hf.sample`: the collision surface is the mesh, and the mesh is the grid.
+ */
+export function sampleSmooth(hf, wx, wz) {
+  const res = hf.res, r = res + 1, H = hf.h;
+  const fx = clamp((wx + hf.size * 0.5) / hf.cell, 0, res - 0.0001);
+  const fz = clamp((wz + hf.size * 0.5) / hf.cell, 0, res - 0.0001);
+  const x0 = fx | 0, z0 = fz | 0, tx = fx - x0, tz = fz - z0;
+  const t2 = tz * tz, t3 = t2 * tz;
+  const wz0 = -0.5 * t3 + t2 - 0.5 * tz;
+  const wz1 = 1.5 * t3 - 2.5 * t2 + 1;
+  const wz2 = -1.5 * t3 + 2 * t2 + 0.5 * tz;
+  const wz3 = 0.5 * t3 - 0.5 * t2;
+  const u2 = tx * tx, u3 = u2 * tx;
+  const wx0 = -0.5 * u3 + u2 - 0.5 * tx;
+  const wx1 = 1.5 * u3 - 2.5 * u2 + 1;
+  const wx2 = -1.5 * u3 + 2 * u2 + 0.5 * tx;
+  const wx3 = 0.5 * u3 - 0.5 * u2;
+  let h = 0;
+  for (let m = 0; m < 4; m++) {
+    const wz = m === 0 ? wz0 : m === 1 ? wz1 : m === 2 ? wz2 : wz3;
+    if (wz === 0) continue;
+    const gz = clamp(z0 + m - 1, 0, res) * r;
+    const gx = clamp(x0 - 1, 0, res);
+    const row = H[gz + gx] * wx0 + H[gz + clamp(x0, 0, res)] * wx1
+              + H[gz + clamp(x0 + 1, 0, res)] * wx2 + H[gz + clamp(x0 + 2, 0, res)] * wx3;
+    h += wz * row;
+  }
+  return h;
 }
 
 /**

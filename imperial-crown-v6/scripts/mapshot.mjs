@@ -27,14 +27,18 @@ const server = createServer(async (req, res) => {
     if (!p.startsWith(ROOT + sep)) { res.writeHead(403); res.end(); return; }
     res.writeHead(200, { 'Content-Type': MIME[extname(p)] || 'application/octet-stream' });
     res.end(await readFile(p));
-  } catch { res.writeHead(404); res.end('x'); }
+  } catch {
+    if (!res.headersSent) res.writeHead(404);
+    res.end('x');
+  }
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = `http://127.0.0.1:${server.address().port}/`;
 const chromium = (await import('@sparticuz/chromium')).default;
 const browser = await puppeteer.launch({
   executablePath: await chromium.executablePath(), headless: true,
-  args: [...chromium.args, '--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--window-size=1280,720']
+  protocolTimeout: 300000,
+  args: [...chromium.args, '--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', '--window-size=1280,720']
 });
 const page = await browser.newPage();
 await page.setViewport({ width: 1280, height: 720, deviceScaleFactor: 1 });

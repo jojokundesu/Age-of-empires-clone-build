@@ -21,9 +21,17 @@ ground, and the two fight for it.
   Absorption is per-channel (reds die first, the way they do in real water),
   caustics only exist where the bed is visible, and foam is a streaked lace in
   the 0.45 m band the spec asks for -- not a glow.
-- **Every bank has a beach.** The bake pushes sand into a narrow strip either
-  side of the water line, and the terrain shader darkens two metres of it at the
-  waterline so the edge reads as soaked ground rather than a seam.
+- **Every bank has a beach, and the waterline is a curve.** Both the sand band
+  and the water's own edge are *contours of height*, and the height field is a
+  4 m grid: read bilinearly, a contour is a run of dead-straight segments that
+  kink on every cell edge, so every river came out with a staircase coastline.
+  Cosmetic height (the beach, the sand band, the water edge) now comes from a
+  C1 Catmull-Rom read of the same surface, baked to a one-metre bed texture,
+  and the water deliberately stops ten centimetres short of the ground so its
+  edge is that smooth contour rather than the silhouette of the terrain
+  triangles. Caustics got their own fine, contrasty fetches (the old wash was
+  26 m wide and read as a glow), foam is gated entirely on the scrolling lace,
+  and the sky mirror fades in with depth -- shallow water is about the bed.
 - **The ground stopped being a desert.** Snow is now a property of a map's own
   summit (it needed *local prominence*, so the Highview plateau stopped being
   painted white); the straw-dry pass is multiplicative and capped instead of

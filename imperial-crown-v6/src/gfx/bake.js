@@ -24,6 +24,7 @@
    shimmers when the camera moves.
    ============================================================ */
 import { clamp } from '../core/math.js';
+import { sampleSmooth } from '../sim/worldgen.js';
 import {
   hash2, hash3, vnoise, vnoiseWrap, fbm, tileFbm, tileRidge, tileCell,
   clamp01, smoothstep, mix
@@ -424,7 +425,10 @@ export function bakeTerrain(world, RT, pixels, opts = {}) {
     for (let i = 0; i < S; i++) {
       const x = ((i + 0.5) / S) * RT.size - half;
       const o = ((j * S) + i) << 2;
-      const y = hf.sample(x, z);
+      /* Cosmetic height: the waterline and the sand band are contours, and a
+         bilinear contour of a 4 m grid draws a staircase along every bank.
+         Same surface, smooth normals, no visible triangulation. */
+      const y = sampleSmooth(hf, x, z);
 
       /* --- splat weights, bilinear from the 4 m vertex grid --- */
       const gx = clamp((x + half) / RT.cell, 0, RT.n - 1.001);
@@ -467,16 +471,47 @@ export function bakeTerrain(world, RT, pixels, opts = {}) {
          every river ran between two straw-coloured fields. A narrow band
          either side of the water line gets sand pushed into it here, where
          the height field already says exactly where the water is. */
-      const bankBand = hasWater ? (1.0 - smoothstep(0.02, 0.40, Math.abs(y - waterLevel))) : 0.0;
+      /* Jitter the band's own contour. The height here is bilinear over a
+         4 m lattice, so a straight |y - waterLevel| test paints the beach as
+         a run of dead-straight triangle edges -- visible at every zoom, and
+         the single most synthetic-looking thing on the coast. Two octaves of
+         the same macro noise that drives the fields push the line around at
+         metre and ten-metre scale, which is how a real bank wanders. */
+      /* Two scales, and the fine one is a plain world-space value noise, not
+         the 8 m param grid: a contour read off that grid is still a polygon
+         of 8 m cells, just a different polygon. The metre-scale octave is
+         what actually breaks the line up. */
+      const jitter = (vnoise(x * 0.62 + 3.1, z * 0.62 - 1.7) - 0.5) * 0.16
+                   + (pget(x, z, 1) - 0.5) * 0.45
+                   + (pget(x, z, 3) - 0.5) * 0.70;
+      const bankBand = hasWater
+        ? (1.0 - smoothstep(0.02, 0.40, Math.abs(y - waterLevel) + jitter * 0.30))
+        : 0.0;
       const salt = smoothstep(0.55, 0.85, pget(x, z, 4)) * 0.30;
-      const sandW = wSand + bankBand * (0.95 + salt);
-      r += tmp[0] * sandW; g += tmp[1] * sandW; b += tmp[2] * sandW;
+      /* The bank colour: the SAND layer is a warm tan, and at full weight the
+         strip either side of every river came out as a burnt-orange ribbon --
+         a worse artefact than the green seam it replaced. Mixing in dirt from
+         the same spot gives damp local soil drying out, which is what a bank
+         is, and the strongest weight stays right at the waterline. */
+      const sandR = tmp[0], sandG = tmp[1], sandB = tmp[2];
+      sampleLayer(L_DIRT, u * 0.8 + 0.31, v * 0.8 - 0.12, tmp);
+      const bankR = tmp[0] + (sandR - tmp[0]) * 0.58;
+      const bankG = tmp[1] + (sandG - tmp[1]) * 0.58;
+      const bankB = tmp[2] + (sandB - tmp[2]) * 0.58;
+      const sandW = wSand;
+      r += sandR * sandW; g += sandG * sandW; b += sandB * sandW;
       sampleLayer(L_COBBLE, u * 1.6, v * 1.6, tmp);
       r += tmp[0] * wCobble; g += tmp[1] * wCobble; b += tmp[2] * wCobble;
       sampleLayer(L_SNOW, u * 0.9, v * 0.9, tmp);
       r += tmp[0] * wSnow; g += tmp[1] * wSnow; b += tmp[2] * wSnow;
       const wsum = wGrass + wDirt + wRock + sandW + wCobble + wSnow || 1;
       r /= wsum; g /= wsum; b /= wsum;
+      /* Applied after the splat is normalised, so the band cannot be diluted
+         by whatever else the splat happens to hold in that cell. */
+      const sandMix = hasWater ? Math.min(0.62, bankBand * (1.15 + salt)) : 0;
+      if (sandMix > 0.004) {
+        r += (bankR - r) * sandMix; g += (bankG - g) * sandMix; b += (bankB - b) * sandMix;
+      }
 
       /* --- the patchwork of fields ------------------------------------- */
       const field = pget(x, z, 3);

@@ -517,6 +517,7 @@ export class Renderer {
       for (const c of this.chunks || []) c.mesh.dispose();
       if (this.waterMesh) this.waterMesh.dispose();
       if (this.heightTex) gl.deleteTexture(this.heightTex);
+      if (this.bedTex && this.bedTex !== this.heightTex) gl.deleteTexture(this.bedTex);
       if (this.terrainAlbedo) gl.deleteTexture(this.terrainAlbedo);
       if (this.flowTex) gl.deleteTexture(this.flowTex);
     }
@@ -524,6 +525,7 @@ export class Renderer {
     this.chunks = [];
     this.waterMesh = null;
     this.heightTex = null;
+    this.bedTex = null;
     this.terrainAlbedo = null;
     this.flowTex = null;
     this.propCells = null;
@@ -546,6 +548,15 @@ export class Renderer {
       data[i] = clamp(((RT.heights[i] + HEIGHT_BIAS) / HEIGHT_RANGE) * 255, 0, 255);
     }
     this.heightTex = upload8(gl, data, VN, VN);
+    /* A one-metre bed for the water pass. The vertex height map above is 4 m
+       per texel: bilinear on that, a bank that drops a metre in two metres
+       comes out as a wide stepped contour, and the water shader paints its
+       whole shallow ramp onto that ramp -- the pale ring around every coast.
+       This one is baked from the same height function at 1 m, which is where
+       the waterline actually is. */
+    this.bedTex = world.bedTex && world.bedTex.data
+      ? upload8(gl, world.bedTex.data, world.bedTex.size, world.bedTex.size)
+      : this.heightTex;
 
     /* The whole ground albedo, baked once. v2 evaluated this per fragment:
        six texture fetches, seven fbm fields and a flower lattice on every
@@ -585,6 +596,7 @@ export class Renderer {
     for (const c of this.chunks || []) RESOURCES.track(c.mesh, 'world');
     if (this.waterMesh) RESOURCES.track(this.waterMesh, 'world');
     if (this.heightTex) RESOURCES.track({ glHandle: this.heightTex, kind: 'texture' }, 'world');
+    if (this.bedTex && this.bedTex !== this.heightTex) RESOURCES.track({ glHandle: this.bedTex, kind: 'texture' }, 'world');
     if (this.terrainAlbedo) RESOURCES.track({ glHandle: this.terrainAlbedo, kind: 'texture' }, 'world');
     if (this.flowTex) RESOURCES.track({ glHandle: this.flowTex, kind: 'texture' }, 'world');
     this._worldTracked = true;
@@ -1603,7 +1615,7 @@ export class Renderer {
        reads, sampled at the same texel: the height texture is 129x129 over
        512 m (4 m per texel), so the channel is properly resolved instead of
        being a handful of smeared texels. */
-    s.tex('uHeightMap', this.heightTex || this.textures.noise, gl.TEXTURE_2D);
+    s.tex('uHeightMap', this.bedTex || this.heightTex || this.textures.noise, gl.TEXTURE_2D);
     s.f('uWaterLevel', this.waterLevel || 0);
     /* Hydrology flow/depth/foam field. On a legacy island a neutral 1x1
        texture keeps the sampler legal and uFlowStrength=0 disables it. */
@@ -2138,7 +2150,7 @@ export class Renderer {
       this.pParticle, this.pBillboard, this.pDecal, this.pPost, this.pFlash]) free(p);
     this.fireBatch = null; this.gateDoorBatch = null;
     this.chunks = []; this.waterMesh = null; this.propCells = null;
-    this.heightTex = null; this.terrainAlbedo = null; this.flowTex = null;
+    this.heightTex = null; this.bedTex = null; this.terrainAlbedo = null; this.flowTex = null;
     this._persistentTracked = false;
     this.ready = false;
   }
