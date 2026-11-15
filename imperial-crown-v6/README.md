@@ -250,10 +250,27 @@ The regular strategy view keeps v4's batching, geometry, effects and quality lad
 
 ```sh
 npm run build
+npm test                 # every suite: 56 of them, ~16 minutes on a laptop
 npm run test:v5          # v5 simulation, input, progression and save integration
 npm run test:ci          # inherited offline suites plus v5, including optional browser suites when available
 npm run test:v5-browser  # real Chromium, mobile-size viewport, touch, spellbook and saves
 ```
+
+Two helpers exist because judging a river from code is not possible:
+
+```sh
+npm run maps:all                          # screenshot all six archetypes to /tmp/maps/
+npm run maps:one -- confluence out.png 30 20 -20 0.6 0.4   # map, out, dist, x, z, pitch, yaw
+```
+
+Both serve `dist/`, so run `npm run build` first. They unpack the shared
+Chromium libraries themselves, exactly as the test runner does.
+
+Suites that need a patch of open ground use `tests/arena.mjs`: `findDryClearing`
+returns a flat dry spot with a dry ring around it, and `findWallRun` returns a
+line every cell of which `planWallLine` accepts. Spawning an army at (0,0) used
+to be fine because the origin was land on every map; on a river map it is the
+middle of the channel.
 
 See [docs-browser-tests.md](docs-browser-tests.md) for Chromium libraries on minimal Linux systems. The browser test uses software WebGL and is useful for correctness, **not** for judging phone frame rate. The Realme 9i itself was not available in this environment; an on-device play/thermal/battery and long-battle test is still needed before claiming its smoothness is unchanged. Use the in-game **Menu → Check device** and test long battles, workshop combinations, and first-person movement on the actual phone.
 
