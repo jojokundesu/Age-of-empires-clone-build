@@ -102,7 +102,7 @@ const check = async (name, fn) => {
 const assert = (c, m) => { if (!c) throw new Error(m || 'assert'); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const shot = (n) => page.screenshot({ path: join(OUT, n + '.png') });
-const frame = async (n = 4) => { for (let i = 0; i < n; i++) { await wait(90); await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => r()))); } };
+const frame = async (n = 4, targetPage = page) => { for (let i = 0; i < n; i++) { await wait(90); await targetPage.evaluate(() => new Promise((r) => requestAnimationFrame(() => r()))); } };
 
 /** Where is this world point on screen? null when it is behind the camera. */
 const screenOf = (x, z, lift = 1.2) => page.evaluate((x, z, lift) => {
@@ -146,6 +146,24 @@ const gameSeconds = async (n, capMs = 30000) => {
     { timeout: capMs, polling: 100 }, now + n);
 };
 
+// Functional input and simulation checks should not depend on software-GPU
+// frame rate. Retain periodic real draws for picking/screenshots, while letting
+// the application's real animation loop and fixed-step simulation run between
+// them. Rendering fidelity and FPS are checked separately by browser.mjs.
+const configureInteractionRendering = targetPage => targetPage.evaluate(() => {
+  const a = window.__imperial;
+  a.settings.autoQuality = false;
+  if (a.governor) a.governor.enabled = false;
+  a.renderer.setQuality('low');
+  a.renderer.setPixelScale(0.4);
+  const render = a.renderer.render.bind(a.renderer);
+  let lastDraw = 0;
+  a.renderer.render = (...args) => {
+    const now = performance.now();
+    if (now - lastDraw >= 500) { lastDraw = now; render(...args); }
+  };
+});
+
 await page.goto(BASE, { waitUntil: 'load', timeout: 120000 });
 await page.waitForFunction('window.__imperial && window.__imperial.renderer && window.__imperial.renderer.ready', { timeout: 300000 });
 await page.waitForFunction(() => {
@@ -164,6 +182,7 @@ await check('the menu starts the match the player configured', async () => {
   await page.click('#btnStart');
   await page.waitForFunction('window.__imperial.running === true', { timeout: 300000 });
   await page.waitForFunction('!!(window.__imperial.game && window.__imperial.game.units.length > 5)', { timeout: 60000 });
+  await configureInteractionRendering(page);
   const st = await state();
   assert(st.mode === 'campaign', `mode is ${st.mode}`);
   assert(st.civ === 'byzantines', `civilisation is ${st.civ}`);
@@ -249,8 +268,27 @@ await check('Build → House → tap the ground raises a house', async () => {
   const v = (await state()).units.find((u) => u.type === 'villager');
   await page.evaluate((x, z) => window.__imperial.camera.setTarget(x, z, true), v.x, v.z);
   await frame(3);
-  const p = await screenOf(v.x + 7, v.z + 6.5, 0.4);
-  assert(p, 'the build site is off screen');
+  const p = await page.evaluate(() => {
+    const a = window.__imperial, g = a.game;
+    const v = g.units.find(u => !u.dead && u.team === 1 && u.type === 'villager');
+    const rect = a.canvas.getBoundingClientRect();
+    for (let radius = 6; radius <= 22; radius += 2) {
+      for (let i = 0; i < 24; i++) {
+        const angle = i * Math.PI / 12;
+        const x = v.x + Math.cos(angle) * radius, z = v.z + Math.sin(angle) * radius;
+        if (!g.canPlaceAt('house', 1, x, z).ok) continue;
+        const projected = a.camera.project(x, g.heightAt(x, z), z, [0, 0, 0]);
+        if (projected[2] <= 0) continue;
+        const px = rect.left + (projected[0] * 0.5 + 0.5) * rect.width;
+        const py = rect.top + (-projected[1] * 0.5 + 0.5) * rect.height;
+        if (document.elementFromPoint(px, py) !== a.canvas) continue;
+        const ground = a.input.groundAt(px, py, [0, 0, 0]);
+        if (a.input._groundHit && g.canPlaceAt('house', 1, ground[0], ground[2]).ok) return { x: px, y: py };
+      }
+    }
+    return null;
+  });
+  assert(p, 'no legal visible build site near the villager');
   await page.mouse.click(p.x, p.y);
   await frame(3);
   const placed = await page.evaluate(() => {
@@ -459,6 +497,9 @@ await check('a save survives a reload with the army intact', async () => {
    pointer, and changing that on a live page reloads it. This is the shape of
    the device the game ships for (a 1080x2400 panel in landscape). */
 const phone = await browser.newPage();
+// A background tab is intentionally paused by the game. Explicitly make the
+// phone page visible before testing its animation loop and touch gestures.
+await phone.bringToFront();
 const phoneErrors = [];
 phone.on('pageerror', (e) => phoneErrors.push(String(e && e.stack ? e.stack.split('\n')[0] : e)));
 phone.on('console', (m) => { if (m.type() === 'error') phoneErrors.push(m.text()); });
@@ -475,6 +516,7 @@ await check('on a phone the HUD clears the top bar', async () => {
     mode: 'kingdoms', civ: 'franks', difficulty: 'standard', seed: 4242, kingdoms: 4, victory: 'conquest'
   }));
   await phone.waitForFunction('window.__imperial.running === true', { timeout: 300000 });
+  await configureInteractionRendering(phone);
   await phone.waitForFunction('!document.getElementById("crownStrip").classList.contains("hidden")', { timeout: 60000 });
   await phone.screenshot({ path: join(OUT, '07-phone-hud.png') });
   const hud = await phone.evaluate(() => {
@@ -501,7 +543,7 @@ await check('a one-finger drag on a phone pans with the finger', async () => {
   await phone.touchscreen.touchStart(430, 250);
   for (let i = 1; i <= 10; i++) { await phone.touchscreen.touchMove(430 + i * 20, 250); await wait(20); }
   await phone.touchscreen.touchEnd();
-  await frame(4);
+  await frame(4, phone);
   const after = await phone.evaluate(() => window.__imperial.camera.target.slice(0, 3));
   const dist = Math.hypot(after[0] - before[0], after[2] - before[2]);
   const selAfter = await phone.evaluate(() => window.__imperial.game.selection.length);
@@ -524,7 +566,7 @@ await check('a two-finger pinch on a phone zooms the map', async () => {
     await wait(20);
   }
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-  await frame(4);
+  await frame(4, phone);
   const z1 = await phone.evaluate(() => window.__imperial.camera.dist);
   assert(Math.abs(z1 - z0) > 1.5, `a pinch changed the zoom by ${Math.abs(z1 - z0).toFixed(2)} (${z0} → ${z1})`);
   return `dist ${z0.toFixed(1)} → ${z1.toFixed(1)}`;

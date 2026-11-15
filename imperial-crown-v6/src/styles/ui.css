@@ -75,9 +75,9 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 #tapFx, #floatLayer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
 #selBox {
   position: absolute; display: none; pointer-events: none;
-  border: 1.5px solid rgba(120, 226, 255, 0.9);
-  background: rgba(90, 200, 255, 0.10);
-  box-shadow: inset 0 0 18px rgba(90, 200, 255, 0.22);
+  border: 1.5px solid rgba(242, 201, 111, 0.95);
+  background: rgba(220, 170, 68, 0.10);
+  box-shadow: inset 0 0 18px rgba(220, 170, 68, 0.22);
   border-radius: 3px;
 }
 
@@ -239,6 +239,7 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .railBtn .ic { width: 14px; height: 14px; }
 .railBtn.active, .railBtn:active { color: var(--gold-hi); background: rgba(232, 196, 122, 0.16); border-color: rgba(232, 196, 122, 0.4); }
 #camBar { opacity: 0.82; }
+#railToggle { display: none; }
 
 /* ---------------- bottom deck ---------------- */
 #bottomBar {
@@ -406,7 +407,7 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .menuLeft {
   display: flex; flex-direction: column; gap: clamp(6px, 1.1vh, 12px);
   min-width: 0; min-height: 0; justify-content: safe center;
-  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; touch-action: pan-y;
 }
 .menuBrand { display: flex; align-items: center; gap: 10px; }
 .brandCrest { width: clamp(34px, 6vh, 56px); height: clamp(34px, 6vh, 56px); flex: 0 0 auto; filter: drop-shadow(0 4px 14px rgba(232, 180, 90, 0.3)); }
@@ -443,13 +444,16 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .segRow.hidden { display: none; }
 .seg { flex: 1; padding: 4px 2px; border-radius: 6px; border: 1px solid rgba(232, 196, 122, 0.16); background: rgba(20, 16, 12, 0.7); color: var(--ink-dim); font-size: clamp(7.5px, 0.86vw, 9.5px); font-family: var(--sans); letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; }
 .seg.active { border-color: rgba(255, 226, 168, 0.6); color: var(--gold-hi); background: rgba(90, 68, 34, 0.5); }
+/* Settings choices need room for touch even on short landscape screens. */
+.modalBody #setQuality .seg, .modalBody #setResolution .seg,
+.modalBody #setBtns .seg, .modalBody #setSens .seg { min-width: 42px; min-height: 36px; }
 .seedRow { display: flex; align-items: center; gap: 6px; margin-top: 5px; font-size: 8.5px; color: var(--ink-faint); }
 .seedRow label { letter-spacing: 0.14em; text-transform: uppercase; font-size: 7.5px; }
 .seedRow input { flex: 1; min-width: 0; background: rgba(0, 0, 0, 0.45); border: 1px solid rgba(232, 196, 122, 0.2); border-radius: 5px; color: var(--gold-hi); font-family: var(--serif); font-size: 9.5px; padding: 3px 6px; letter-spacing: 0.12em; }
 .ghostBtn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 8px; border-radius: 6px; border: 1px solid rgba(232, 196, 122, 0.2); background: rgba(20, 16, 12, 0.6); color: var(--ink-dim); font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; font-family: var(--sans); }
 .ghostBtn .ic { width: 12px; height: 12px; }
 .ghostBtn:active { color: var(--gold-hi); border-color: rgba(232, 196, 122, 0.5); }
-.menuRight { display: flex; flex-direction: column; gap: 7px; min-width: 0; min-height: 0; justify-content: safe center; overflow-y: auto; overscroll-behavior: contain; }
+.menuRight { display: flex; flex-direction: column; gap: 7px; min-width: 0; min-height: 0; justify-content: safe center; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
 .menuArt { position: relative; flex: 1 1 auto; min-height: 88px; border-radius: 12px; overflow: hidden; border: 1px solid rgba(232, 196, 122, 0.2); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6); }
 #menuArtCanvas { width: 100%; height: 100%; display: block; object-fit: cover; }
 .menuArtFade { position: absolute; inset: 0; background: linear-gradient(180deg, transparent 40%, rgba(6, 5, 4, 0.88) 100%); pointer-events: none; }
@@ -470,6 +474,8 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 .startBtn span { font-family: var(--serif); font-size: clamp(12px, 1.5vw, 16px); font-weight: 800; letter-spacing: 0.14em; }
 .startBtn small { font-size: clamp(7px, 0.8vw, 9px); letter-spacing: 0.12em; text-transform: uppercase; color: rgba(40, 26, 8, 0.78); font-weight: 700; }
 .startBtn:active { transform: scale(0.985); filter: brightness(1.06); }
+.startBtn:disabled { opacity: .45; filter: grayscale(.8); cursor: not-allowed; }
+.startBtn:disabled::after { animation: none; }
 .startBtn.small { padding: 6px 10px; }
 .startBtn.small span { font-size: 10px; }
 .menuFootRow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
@@ -484,7 +490,8 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
   border: 1px solid rgba(232, 196, 122, 0.3); border-radius: 13px; box-shadow: 0 30px 80px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 240, 200, 0.12);
   overflow: hidden; animation: modalIn .24s cubic-bezier(.2,.9,.2,1) both;
 }
-@keyframes modalIn { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+/* Keep controls stationary during entry so an immediate tap cannot miss. */
+@keyframes modalIn { from { opacity: 0; } to { opacity: 1; } }
 .modalHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 10px 12px 8px; border-bottom: 1px solid rgba(232, 196, 122, 0.16); background: linear-gradient(180deg, rgba(60, 48, 30, 0.4), transparent); }
 .modalHead h2 { margin: 0; font-family: var(--serif); font-size: clamp(14px, 1.9vw, 20px); color: var(--gold-hi); letter-spacing: 0.04em; }
 .modalTabs { display: flex; gap: 4px; padding: 6px 10px 0; flex-wrap: wrap; }
@@ -547,7 +554,7 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
    start button ends up below the fold, which is what happened on a 900x414
    Realme 9i viewport. */
 @media (max-height: 560px) and (orientation: landscape) {
-  .menuShell { padding: 5px calc(6px + var(--safe-right)) 5px calc(6px + var(--safe-left)); gap: 8px;
+  .menuShell { padding: calc(5px + var(--safe-top)) calc(6px + var(--safe-right)) calc(5px + var(--safe-bottom)) calc(6px + var(--safe-left)); gap: 8px;
     grid-template-columns: minmax(0, 1.42fr) minmax(0, 0.72fr); }
   /* space-between spreads the three blocks when they fit and still starts at
      the top when they do not (so nothing is ever clipped above the fold) */
@@ -584,6 +591,50 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
   .menuMeta { font-size: 6px; }
 }
 
+/* On short screens the former 435px rail ran off both edges, placing many
+   controls behind the minimap. A scrollable drawer keeps every control
+   reachable without permanently covering the battlefield. */
+@media (max-height: 700px) and (orientation: landscape) {
+  #leftRail {
+    top: calc(var(--topbar-h, 84px) + var(--safe-top) + 4px);
+    transform: none;
+    max-height: calc(100% - var(--topbar-h, 84px) - var(--safe-top) - var(--safe-bottom) - 10px);
+    align-items: flex-start; gap: 4px; z-index: 10;
+    overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+    scrollbar-width: thin;
+  }
+  #railToggle {
+    display: block; position: sticky; top: 0; z-index: 1;
+    flex: 0 0 auto; min-height: 38px; padding: 0 8px;
+    border: 1px solid var(--panel-edge); border-radius: 7px;
+    background: #201a13; color: var(--gold-hi); font: 700 10px var(--sans);
+  }
+  #leftRail:not(.rail-open) .railGroup { display: none; }
+  #leftRail.rail-open { padding: 3px; border-radius: 9px; background: rgba(12,10,8,.95); }
+  #leftRail .railBtn { width: 38px; height: 38px; flex: 0 0 auto; }
+}
+/* Keep the three top panels in the viewport on narrow landscape devices;
+   values retain their text rather than being clipped or moved off-screen. */
+@media (max-width: 760px) and (orientation: landscape) {
+  #topBar { gap: 4px; }
+  .resPanel { gap: 1px; padding: 3px; flex: 0 0 auto; }
+  .resChip { min-width: 0; gap: 2px; padding: 2px 3px; font-size: 10px; }
+  .resChip .ic { width: 12px; height: 12px; flex: 0 0 auto; }
+  .resChip b, .resChip.pop b { min-width: 0; font-size: 10px; }
+  .centerPanel { gap: 4px; padding: 3px 5px; }
+  .topActions { gap: 1px; padding: 3px; flex: 0 0 auto; }
+  .topActions .iconBtn { width: 28px; height: 28px; }
+  /* The crowns share a lane with the controls drawer and field tools. When
+     space is scarce, scroll the strip rather than letting it cover buttons. */
+  #topStack { left: calc(80px + var(--safe-left)); right: calc(220px + var(--safe-right)); transform: none; max-width: none; }
+  #crownStrip { max-width: 100%; flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; touch-action: pan-x; pointer-events: auto; }
+  #crownStrip .crown { flex: 0 0 auto; }
+  #alertStrip { max-width: 100%; }
+}
+@media (max-width: 700px) and (orientation: landscape) {
+  /* Under the resources, rather than off the right edge of a small phone. */
+  .topActions { position: absolute; left: 0; top: 30px; margin-left: 0; }
+}
 @media (max-height: 360px) {
   .miniPanel { width: 96px; }
   .cmdGrid { grid-auto-rows: 36px; max-height: 116px; }

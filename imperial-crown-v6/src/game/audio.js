@@ -13,7 +13,14 @@ export class Audio {
     this.master = null;
     this.musicGain = null;
     this.sfxGain = null;
+    this.ambientGain = null;
     this.enabled = opts.enabled !== false;
+    /* `userMuted` is the player's own choice, distinct from Android's
+       onPause() suspending the context. The native shell calls
+       audio.suspend() and NEVER calls resume(), so a plain visibility or
+       focus listener would unmute somebody who deliberately turned sound
+       off. Only the system suspension is undone automatically. */
+    this.userMuted = !this.enabled;
     this.wantMusic = opts.music !== false;
     this.listener = { x: 0, z: 0, yaw: 0 };
     this.lastPlay = new Map();
@@ -21,12 +28,82 @@ export class Audio {
     this.musicStep = 0;
     this.ready = false;
     this.noiseBuffer = null;
+    /* Dynamic score + ambience state. All of it advances in update(dt),
+       which means no extra intervals, no timers firing in a suspended tab
+       and nothing that can outlive the AudioContext. */
+    this.mood = 'peace';             // 'peace' | 'war'
+    this.moodMix = 0;                // eased 0..1 toward war
+    this.environment = { forest: 0, water: 0, fire: 0, combat: 0 };
+    this.ambientTimer = 0;
+    this.warTimer = 0;
+    this._installed = false;
+    this.installLifecycle();
+  }
+
+  /* ---------------- Android WebView lifecycle ----------------
+     MainActivity.onPause() suspends the AudioContext; onResume() does not
+     resume it (and cannot be changed from JS). These listeners are the fix:
+     any visible/focused/user-gesture event re-opens the context, but only
+     when the player has not muted the game themselves.                    */
+  installLifecycle() {
+    if (this._installed || typeof window === 'undefined') return this;
+    this._installed = true;
+    const w = window;
+    const doc = typeof document !== 'undefined' ? document : null;
+    const retry = () => this.ensureRunning();
+    this._lifecycle = [];
+    const add = (target, type, fn, opts) => {
+      if (!target || typeof target.addEventListener !== 'function') return;
+      try { target.addEventListener(type, fn, opts); this._lifecycle.push([target, type, fn, opts]); }
+      catch (_) { /* some WebViews reject passive options */ }
+    };
+    add(doc, 'visibilitychange', () => { if (!doc.hidden) retry(); });
+    add(w, 'focus', retry);
+    add(w, 'pageshow', retry);
+    add(doc, 'pageshow', retry);
+    /* A passive first-touch listener must not call preventDefault: Chrome
+       would then refuse to deliver the tap to the game at all. */
+    add(w, 'pointerdown', retry, { passive: true });
+    add(w, 'touchstart', retry, { passive: true });
+    add(doc, 'pointerdown', retry, { passive: true });
+    return this;
+  }
+
+  /** Explicit bridge API: window.__imperial.audio.resume(). */
+  resume(force = false) { return this.ensureRunning(force); }
+  suspend() {
+    if (this.ctx && this.ctx.state === 'running') {
+      this._systemSuspended = true;
+      this.ctx.suspend();
+    }
+  }
+  /** Resume only a *system* suspension, never a user mute. */
+  ensureRunning(force = false) {
+    const ctx = this.ctx;
+    if (!ctx) return false;
+    if (ctx.state !== 'suspended') { this._systemSuspended = false; return true; }
+    if ((this.userMuted || (typeof document !== 'undefined' && document.hidden)) && !force) return false;
+    try {
+      const p = ctx.resume();
+      /* Some WebViews resolve resume() a frame late. One short retry is
+         enough to survive the case where onResume() fired before the page
+         was actually foregrounded. */
+      if (p && typeof p.catch === 'function') p.catch(() => {});
+      if (typeof setTimeout === 'function') setTimeout(() => {
+        if (this.ctx === ctx && ctx.state === 'suspended' && !this.userMuted
+          && (typeof document === 'undefined' || !document.hidden)) {
+          try { const retry = ctx.resume(); retry?.catch?.(() => {}); } catch (_) { /* ignore */ }
+        }
+      }, 220);
+      this._systemSuspended = false;
+      return true;
+    } catch (_) { return false; }
   }
 
   /** Called from the first user gesture; mobile browsers require it. */
   unlock() {
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') this.ctx.resume();
+      this.ensureRunning();
       return;
     }
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -50,6 +127,11 @@ export class Audio {
     this.musicGain = ctx.createGain();
     this.musicGain.gain.value = this.wantMusic ? 0.18 : 0;
     this.musicGain.connect(this.master);
+    /* Ambient nature (birds, waves, crackling fire) has its own bus so a
+       battle can duck the countryside without also ducking the UI cues. */
+    this.ambientGain = ctx.createGain();
+    this.ambientGain.gain.value = 0.34;
+    this.ambientGain.connect(this.master);
 
     // one shared noise buffer (2 s of pink-ish noise)
     const len = Math.floor(ctx.sampleRate * 2);
@@ -66,17 +148,18 @@ export class Audio {
     this.noiseBuffer = buf;
     this.ready = true;
     if (this.wantMusic) this.startMusic();
+    /* The context may have been created while the app was backgrounded. */
+    this.ensureRunning();
   }
-
-  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); }
-  suspend() { if (this.ctx && this.ctx.state === 'running') this.ctx.suspend(); }
 
   setEnabled(on) {
     this.enabled = !!on;
+    this.userMuted = !this.enabled;
     if (this.master && this.ctx) {
       this.master.gain.cancelScheduledValues(this.ctx.currentTime);
       this.master.gain.setTargetAtTime(this.enabled ? 0.85 : 0, this.ctx.currentTime, 0.05);
     }
+    if (this.enabled) this.ensureRunning();
   }
 
   setMusic(on) {
@@ -256,6 +339,110 @@ export class Audio {
         this._tone('square', 1400, t, 0.05, 0.06 * g, 0, dest);
         this._tone('square', 1900, t + 0.04, 0.07, 0.05 * g, 0, dest);
         break;
+      /* ---------------- AoE4-style feedback ----------------
+         Selection cues are per unit class, drop-offs are per resource and the
+         landscape has its own quiet layer. All of them go through the same
+         envelope primitives, so the strict audio test exercises each one. */
+      case 'scoutHorn':
+        this._tone('sawtooth', 196 * pitch, t, 0.28, 0.11 * g, 0, dest);
+        this._tone('sawtooth', 294 * pitch, t + 0.12, 0.36, 0.09 * g, 0, dest);
+        break;
+      case 'shieldBash':
+        this._noise(t, 0.11, 0.18 * g, 'bandpass', 520, 1.1);
+        this._tone('triangle', 150 * pitch, t, 0.1, 0.1 * g, 0, dest);
+        break;
+      case 'horseWhinny':
+        this._tone('sawtooth', 620 * pitch, t, 0.12, 0.07 * g, 30, dest);
+        this._tone('sawtooth', 460 * pitch, t + 0.11, 0.2, 0.08 * g, -28, dest);
+        this._noise(t + 0.02, 0.14, 0.08 * g, 'bandpass', 1700, 1.8, 0.55);
+        break;
+      case 'shipBell':
+        this._tone('sine', 880 * pitch, t, 0.34, 0.10 * g, 0, dest);
+        this._tone('sine', 1320 * pitch, t + 0.015, 0.26, 0.055 * g, 0, dest);
+        break;
+      case 'elephantTrumpet':
+        this._tone('sawtooth', 150 * pitch, t, 0.34, 0.11 * g, 0, dest);
+        this._tone('sawtooth', 260 * pitch, t + 0.16, 0.4, 0.09 * g, 18, dest);
+        this._noise(t, 0.3, 0.07 * g, 'bandpass', 780, 1.1, 1.6);
+        break;
+      case 'dropGold':
+        this._tone('square', 1420 * pitch, t, 0.06, 0.07 * g, 0, dest);
+        this._tone('square', 1900 * pitch, t + 0.045, 0.09, 0.05 * g, 0, dest);
+        this._tone('sine', 2600 * pitch, t + 0.09, 0.12, 0.035 * g, 0, dest);
+        break;
+      case 'dropWood':
+        this._noise(t, 0.11, 0.17 * g, 'lowpass', 340, 0.9);
+        this._tone('sine', 112 * pitch, t, 0.14, 0.13 * g, 0, dest);
+        break;
+      case 'dropFood':
+        this._noise(t, 0.24, 0.11 * g, 'bandpass', 3100, 0.7, 0.55);
+        this._tone('triangle', 720 * pitch, t + 0.06, 0.12, 0.045 * g, 0, dest);
+        break;
+      case 'dropStone':
+        this._noise(t, 0.09, 0.15 * g, 'highpass', 2100, 0.8);
+        this._tone('triangle', 330 * pitch, t, 0.09, 0.08 * g, 0, dest);
+        break;
+      case 'fanfare':
+        [NOTE.C4, NOTE.E4, NOTE.G4, NOTE.C5, NOTE.E4, NOTE.G4].forEach((f, i) => {
+          this._tone('sawtooth', f * 0.5 * pitch, t + i * 0.115, 0.44, 0.09 * g, 0, dest);
+          this._tone('sine', f * pitch, t + i * 0.115, 0.32, 0.045 * g, 0, dest);
+        });
+        this._noise(t, 0.5, 0.07 * g, 'bandpass', 2400, 0.8, 0.4);
+        break;
+      case 'splash':
+        this._noise(t, 0.28, 0.18 * g, 'bandpass', 1250, 0.7, 0.28);
+        this._tone('sine', 220 * pitch, t, 0.14, 0.055 * g, 0, dest);
+        break;
+      case 'gull':
+        this._tone('triangle', 1180 * pitch, t, 0.1, 0.045 * g, 25, dest);
+        this._tone('triangle', 860 * pitch, t + 0.13, 0.14, 0.04 * g, -20, dest);
+        break;
+      case 'waterLap':
+        this._noise(t, 0.9, 0.08 * g, 'lowpass', 460, 0.6, 0.6);
+        break;
+      case 'birds':
+        this._tone('sine', 2100 * pitch, t, 0.06, 0.035 * g, 40, dest);
+        this._tone('sine', 2650 * pitch, t + 0.08, 0.05, 0.03 * g, -30, dest);
+        break;
+      case 'fireCrackle':
+        this._noise(t, 0.16, 0.09 * g, 'highpass', 2900, 0.9);
+        break;
+      case 'warDrums':
+        this._tone('sine', 82 * pitch, t, 0.28, 0.16 * g, 0, dest);
+        this._noise(t, 0.1, 0.09 * g, 'lowpass', 210, 0.7);
+        break;
+      case 'brass':
+        this._tone('sawtooth', NOTE.G4 * 0.5 * pitch, t, 0.5, 0.09 * g, 0, dest);
+        this._tone('sine', NOTE.C5 * pitch, t + 0.06, 0.42, 0.05 * g, 0, dest);
+        break;
+      case 'lute':
+        this._tone('triangle', NOTE.D4 * 2 * pitch, t, 0.5, 0.06 * g, 0, dest);
+        this._tone('sine', NOTE.A4 * 2 * pitch, t + 0.03, 0.4, 0.035 * g, 0, dest);
+        break;
+      case 'flute':
+        this._tone('sine', NOTE.G5 * pitch, t, 0.6, 0.055 * g, 0, dest);
+        this._noise(t, 0.22, 0.018 * g, 'bandpass', 2400, 1.4);
+        break;
+      case 'camouflage':
+        this._tone('sine', 980 * pitch, t, 0.16, 0.055 * g, 0, dest);
+        this._tone('sine', 660 * pitch, t + 0.1, 0.22, 0.045 * g, 0, dest);
+        break;
+      case 'highGround':
+        this._tone('triangle', 740 * pitch, t, 0.12, 0.06 * g, 0, dest);
+        this._tone('triangle', 1108 * pitch, t + 0.09, 0.22, 0.055 * g, 0, dest);
+        break;
+      case 'sacred':
+        [NOTE.C4, NOTE.G4, NOTE.C5, NOTE.E5 || NOTE.E4 * 2].forEach((f, i) =>
+          this._tone('sine', f * pitch, t + i * 0.17, 0.8, 0.055 * g, 0, dest));
+        break;
+      case 'trade':
+        this._tone('square', 1320 * pitch, t, 0.07, 0.05 * g, 0, dest);
+        this._tone('square', 1760 * pitch, t + 0.08, 0.12, 0.045 * g, 0, dest);
+        break;
+      case 'collapse':
+        this._noise(t, 0.75, 0.3 * g, 'lowpass', 520, 0.7, 0.22);
+        this._tone('sine', 58 * pitch, t, 0.6, 0.22 * g, 0, dest);
+        break;
       case 'horn': {
         for (const [f, d] of [[NOTE.C4, 0], [NOTE.G4, 0.22], [NOTE.E4, 0.42]]) {
           const ctx2 = this.ctx;
@@ -275,6 +462,101 @@ export class Audio {
       }
       default:
         this._tone('sine', 440 * pitch, t, 0.06, 0.08 * g, 0, dest);
+    }
+  }
+
+  /* ---------------- rich soundscape ---------------- */
+
+  /** The voice a unit answers with when the player selects it. */
+  playSelectionFor(unit) {
+    if (!unit) return this.play('select');
+    const d = unit.def || {};
+    const cls = d.classes || [];
+    if (d.naval || cls.includes('ship')) return this.play('shipBell', { x: unit.x, z: unit.z });
+    if (unit.type === 'war_elephant' || unit.type === 'tower_elephant') return this.play('elephantTrumpet', { x: unit.x, z: unit.z });
+    if (cls.includes('cavalry')) return this.play('horseWhinny', { x: unit.x, z: unit.z });
+    if (unit.type === 'scout_cavalry' || d.scout) return this.play('scoutHorn', { x: unit.x, z: unit.z });
+    if (cls.includes('infantry') || cls.includes('unique')) return this.play('shieldBash', { x: unit.x, z: unit.z });
+    if (cls.includes('archer')) return this.play('arrow', { x: unit.x, z: unit.z });
+    return this.play('select', { x: unit.x, z: unit.z });
+  }
+
+  /** A satisfying chime at the drop-off, one timbre per resource. */
+  playDropoff(kind, x, z) {
+    const names = { gold: 'dropGold', wood: 'dropWood', food: 'dropFood', stone: 'dropStone' };
+    return this.play(names[kind] || 'coin', x === undefined ? {} : { x, z });
+  }
+
+  /** 'peace' = lute/flute, 'war' = war drums and brass. Crossfaded. */
+  setMood(mood) {
+    if (mood === 'war' || mood === 'peace') this.mood = mood;
+    return this.mood;
+  }
+  /** Called by the app with measured proximity to forest/water/fire and the
+      number of recent combat events. Values are 0..1. */
+  setEnvironment(env = {}) {
+    const e = this.environment;
+    for (const k of ['forest', 'water', 'fire', 'combat']) {
+      if (Number.isFinite(env[k])) e[k] = Math.max(0, Math.min(1, env[k]));
+    }
+    if (e.combat > 0.24) this.mood = 'war';
+    return e;
+  }
+  noteCombat(strength = 1) {
+    this.environment.combat = Math.min(1, this.environment.combat + 0.35 * strength);
+    this.mood = 'war';
+  }
+
+  /** Ambient nature: birds in forests, lapping water near rivers/seas,
+      crackling fire near damaged buildings. Scheduled in update(dt), so a
+      suspended context never leaks a timer into the background. */
+  updateAmbience(dt) {
+    if (!this.ready || !this.musicOn || this.ctx.state !== 'running') return;
+    const e = this.environment;
+    this.ambientTimer -= dt;
+    if (this.ambientTimer > 0) return;
+    this.ambientTimer = 1.1 + Math.random() * 1.4;
+    const r = Math.random();
+    const t = this.ctx.currentTime;
+    const amb = this.ambientGain || this.musicGain;
+    if (r < e.forest * 0.55) {
+      // a two-note birdsong, detuned so a forest never sounds like one bird
+      this._tone('sine', 1900 + Math.random() * 700, t, 0.07, 0.03, 0, amb);
+      this._tone('sine', 2400 + Math.random() * 500, t + 0.1, 0.06, 0.024, 0, amb);
+    } else if (r < e.forest * 0.55 + e.water * 0.5) {
+      this._noise(t, 0.85, 0.045, 'lowpass', 420, 0.6, 0.65);
+      if (Math.random() < 0.18) this._tone('triangle', 1100, t + 0.2, 0.1, 0.018, 0, amb);
+    } else if (r < e.forest * 0.55 + e.water * 0.5 + e.fire * 0.6) {
+      this._noise(t, 0.14, 0.05, 'highpass', 2800, 0.8);
+    }
+    e.combat *= 0.86;                 // combat intensity decays toward calm
+    if (e.combat < 0.08 && this.mood === 'war') this.mood = 'peace';
+  }
+
+  /** One step of the dynamic medieval score. Peacetime plucks a lute or a
+      flute over the drone; war adds a drum pulse and a brass answer. */
+  _musicStep() {
+    const ctx = this.ctx;
+    if (!ctx || !this.musicGain) return;
+    const t = ctx.currentTime;
+    this.musicStep++;
+    const war = this.mood === 'war';
+    if (war) {
+      this._tone('sine', 78, t, 0.3, 0.12, 0, this.musicGain);
+      this._noise(t, 0.09, 0.055, 'lowpass', 220, 0.7);
+      if (this.musicStep % 2 === 0) {
+        const f = [NOTE.C4, NOTE.E4, NOTE.G4][(this.musicStep / 2) % 3] * 0.5;
+        this._tone('sawtooth', f, t, 0.52, 0.075, 0, this.musicGain);
+      }
+    } else {
+      const scale = [NOTE.C4, NOTE.D4, NOTE.E4, NOTE.G4, NOTE.A4, NOTE.C5];
+      const f = scale[(Math.random() * scale.length) | 0] * 2;
+      if (this.musicStep % 3 === 0) {
+        this._tone('sine', f * 1.5, t, 0.85, 0.045, 0, this.musicGain); // flute
+      } else {
+        this._tone('triangle', f, t, 0.62, 0.06, 0, this.musicGain);     // lute
+        this._tone('sine', f * 2, t + 0.02, 0.3, 0.022, 0, this.musicGain);
+      }
     }
   }
 
@@ -323,32 +605,35 @@ export class Audio {
     }
   }
 
-  /** Occasionally plucks a pentatonic note over the drone. */
+  /** Advance the score and the landscape. The drone itself is continuous;
+      only the melody, the war layer and the nature layer are step-driven, so
+      a suspended tab costs nothing and a battle changes the music within a
+      bar instead of waiting for the next 6-second pluck. */
   update(dt) {
-    if (!this.ready || !this.musicOn) return;
+    if (!this.ready || !this.musicOn || !this.ctx) return;
+    if (this.ctx.state !== 'running') { this.ensureRunning(); return; }
+    this.moodMix += ((this.mood === 'war' ? 1 : 0) - this.moodMix) * Math.min(1, dt * 0.7);
+    this.updateAmbience(dt);
     this.musicTimer -= dt;
     if (this.musicTimer > 0) return;
-    this.musicTimer = 6 + Math.random() * 6;
-    const scale = [NOTE.C4, NOTE.D4, NOTE.E4, NOTE.G4, NOTE.A4, NOTE.C5];
-    const f = scale[(Math.random() * scale.length) | 0] * 2;
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.value = f;
-    const g = this.ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(0.06, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 2.6);
-    o.connect(g).connect(this.musicGain);
-    o.start(t); o.stop(t + 2.7);
+    this.musicTimer = this.mood === 'war' ? 0.62 + Math.random() * 0.35 : 2.6 + Math.random() * 2.4;
+    this._musicStep();
   }
 }
 
 export const NULL_AUDIO = {
   play() {}, unlock() {}, setEnabled() {}, setMusic() {}, setListener() {},
-  startMusic() {}, stopMusic() {}, update() {}, resume() {}, suspend() {}
+  startMusic() {}, stopMusic() {}, update() {}, resume() {}, suspend() {},
+  installLifecycle() {}, ensureRunning() {}, playSelectionFor() {}, playDropoff() {},
+  setMood() {}, setEnvironment() {}, noteCombat() {}, updateAmbience() {}
 };
 
 export const SOUND_NAMES = ['click', 'select', 'order', 'build', 'complete', 'chop', 'mine', 'farm',
   'arrow', 'hit', 'sword', 'death', 'boom', 'catapult', 'ageUp', 'train', 'warn', 'win', 'lose', 'coin',
-  'horn', 'step', 'promotion'];
+  'horn', 'step', 'promotion',
+  /* AoE4 feedback: selection voices, drop-off chimes, landmarks, nature,
+     the war score, stealth / elevation / naval cues. */
+  'scoutHorn', 'shieldBash', 'horseWhinny', 'shipBell', 'elephantTrumpet',
+  'dropGold', 'dropWood', 'dropFood', 'dropStone', 'fanfare',
+  'splash', 'gull', 'waterLap', 'birds', 'fireCrackle', 'warDrums', 'brass', 'lute', 'flute',
+  'camouflage', 'highGround', 'sacred', 'trade', 'collapse'];

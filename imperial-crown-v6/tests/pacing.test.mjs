@@ -277,11 +277,15 @@ console.log('\nWONDER RACE');
 
   const t0 = g.time;
   let won = false;
-  run(g, 215, 1 / 20, () => { if (g.gameOver) { won = true; return false; } });
-  check('holding it for 200 s wins the mode', () => {
+  run(g, 239, 1 / 20, () => { if (g.gameOver) { won = true; return false; } });
+  check('the wonder does not win before 240 s', () => {
+    assert(!g.gameOver, 'won early at ' + (g.result?.time - t0));
+  });
+  run(g, 16, 1 / 20, () => { if (g.gameOver) { won = true; return false; } });
+  check('holding it for 240 s wins the mode', () => {
     assert(g.gameOver && g.result.win === true && g.result.reason === 'wonder',
       'no wonder victory: ' + JSON.stringify(g.result));
-    assert(near(g.result.time - t0, 195, 215), 'won at ' + (g.result.time - t0).toFixed(1) + ' s');
+    assert(near(g.result.time - t0, 235, 255), 'won at ' + (g.result.time - t0).toFixed(1) + ' s');
   });
 
   check('the HUD can tell how close each side is', () => {

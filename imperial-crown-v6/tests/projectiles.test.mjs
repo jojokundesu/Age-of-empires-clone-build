@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import { ProjectilePool } from '../src/sim/projectiles.js';
+const fx = new Proxy({}, { get: () => () => {} });
+const game = { heightAt: () => 0, fx, explodeArea() {} };
+const from = { x: 0, y: 0, z: 0, team: 1, kind: 'unit' };
+const target = () => ({ x: 10, y: 0, z: 0, kind: 'unit', radius: 0.4, dead: false,
+  garrisoned: false, damage: 0, takeDamage(d) { this.damage += d; } });
+function run(pool) { for (let i = 0; i < 100 && pool.activeCount; i++) pool.update(0.02, game); }
+const pool = new ProjectilePool(2);
+let t = target();
+pool.spawn(from, t, 10, 'arrow');
+run(pool);
+assert.equal(t.damage, 10, 'stationary target is hit');
+t = target();
+pool.spawn(from, t, 10, 'arrow');
+t.z = 8;
+run(pool);
+assert.equal(t.damage, 0, 'untracked projectile misses a target that moved');
+t = target();
+pool.spawn(from, t, 10, 'arrow', { track: 1 });
+t.z = 1.5;
+run(pool);
+assert.equal(t.damage, 10, 'tracking adjusts the projectile course');
+t = target();
+pool.spawn(from, t, 10, 'arrow');
+t.garrisoned = true;
+run(pool);
+assert.equal(t.damage, 0, 'occupants are protected from in-flight projectiles');
+t = target();
+pool.spawn(from, t, 10, 'arrow');
+pool.spawn(from, t, 10, 'arrow');
+pool.spawn(from, t, 10, 'arrow');
+assert.equal(pool.activeCount, 2, 'overwriting an active pooled slot cannot inflate active count');
+pool.clear();
+assert.equal(pool.activeCount, 0);
+assert(pool.items.every(p => p.source === null && p.target === null), 'pool releases entity references');
+console.log('BALLISTIC IMPACT AND PROJECTILE POOL CHECKS PASSED');

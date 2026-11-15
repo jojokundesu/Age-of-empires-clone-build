@@ -319,8 +319,8 @@ check('the AI crowns the leader and hunts the weak', () => {
 });
 
 /* ---------- victory conditions ---------- */
-check('the four terms of war are complete and describable', () => {
-  assert(VICTORY_LIST.length === 4, `${VICTORY_LIST.length} conditions`);
+check('the five terms of war are complete and describable', () => {
+  assert(VICTORY_LIST.length === 5, `${VICTORY_LIST.length} conditions`);
   for (const v of VICTORY_LIST) {
     assert(v.id && v.name && v.desc && v.icon && v.short, `${v.id} is missing fields`);
   }

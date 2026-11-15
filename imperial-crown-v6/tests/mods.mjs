@@ -316,6 +316,22 @@ check('mana regenerates and a spell spends it', () => {
   return `mana ${before.toFixed(1)} → ${st().mana.toFixed(1)}, target ${enemy.hp.toFixed(0)}/${enemy.maxHp}`;
 });
 
+check('fireball damages one aimed body rather than a group', () => {
+  const g = makeGame();
+  const host = modHost(g, ['arcane']);
+  const mage = placeAt(g, 'mage', 1, g.playerBase.x + 6, g.playerBase.z + 6);
+  const first = placeAt(g, 'spearman', 2, mage.x + 5, mage.z);
+  const second = placeAt(g, 'spearman', 2, mage.x + 5, mage.z + 2);
+  assert(mage && first && second, 'units spawned');
+  second.x = first.x + 0.5; second.z = first.z;
+  const rec = host.mods.get('arcane');
+  const spell = rec.mod.spells().find(s => s.id === 'fireball');
+  assert(rec.mod.castSpell(rec.api, mage, spell, first.x, first.z), 'fireball cast');
+  assert(first.hp < first.maxHp, 'the aimed unit was not hit');
+  eq(second.hp, second.maxHp, 'a second unit was damaged by a single-target spell');
+  host.dispose();
+});
+
 check('a caster whose book is lost gets it back on the next tick', () => {
   const g = makeGame();
   const host = modHost(g, ['arcane']);

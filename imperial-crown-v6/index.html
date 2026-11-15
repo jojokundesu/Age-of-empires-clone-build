@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="description" content="Imperial Crown 3D — a mobile-first real-time strategy engine with a custom WebGL2 renderer." />
-<title>Imperial Crown 3D · Version 5</title>
+<title>Imperial Crown 3D · Version 6</title>
 <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
 <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
 <link rel="manifest" href="./manifest.webmanifest" />
@@ -115,7 +115,7 @@
         <div class="clockWrap">
           <span id="clock">00:00</span>
           <span id="worldTime" class="worldTime">☀ 12:00</span>
-          <span id="wonderTimer" class="wonderTimer hidden" title="Wonder Race: hold your wonder for 200 seconds">✦ --:--</span>
+          <span id="wonderTimer" class="wonderTimer hidden" title="Wonder Race: hold your wonder for 240 seconds">✦ --:--</span>
           <span id="seasonChip" class="seasonChip"><svg class="ic"><use href="#i-leaf"/></svg><b>Spring</b></span>
           <span id="realmChip" class="seasonChip realmChip" title="The Crown's Standing"><svg class="ic"><use href="#i-crown"/></svg><b>62</b></span>
           <span id="climateChip" class="seasonChip climateChip" title="The climate"><svg class="ic"><use href="#i-leaf"/></svg><b>Temperate</b></span>
@@ -271,6 +271,7 @@
     </div>
 
     <div id="leftRail">
+      <button id="railToggle" type="button" aria-expanded="false" aria-controls="stanceBar formationBar camBar">Controls</button>
       <div class="railGroup" id="stanceBar">
         <button class="railBtn" data-stance="aggressive" title="Aggressive stance"><svg class="ic"><use href="#i-sword"/></svg></button>
         <button class="railBtn" data-stance="defensive" title="Defensive stance"><svg class="ic"><use href="#i-shield"/></svg></button>
@@ -356,7 +357,7 @@
       <div class="bootStatus" id="bootStatus">Heating the forge…</div>
       <div class="bootTip" id="bootTip"></div>
     </div>
-    <div class="bootFoot">REALME&nbsp;9i · ADRENO&nbsp;610 TUNED · NO ASSET DOWNLOADS · OFFLINE READY</div>
+    <div class="bootFoot">ANDROID · ADAPTIVE GRAPHICS · NO ASSET DOWNLOADS · OFFLINE READY</div>
   </div>
 
   <!-- ============================ MAIN MENU ============================ -->
@@ -393,7 +394,7 @@
             <button class="modeCard" data-mode="wonder">
               <svg class="ic big"><use href="#i-temple"/></svg>
               <b>Wonder Race</b>
-              <small>Raise a wonder and hold it for 200s.</small>
+              <small>Raise a wonder and hold it for 240s.</small>
             </button>
             <button class="modeCard" data-mode="sandbox">
               <svg class="ic big"><use href="#i-leaf"/></svg>
@@ -412,15 +413,16 @@
         <div class="menuSection">
           <h2><span>03</span> Opposition</h2>
           <div class="segRow" id="diffRow">
-            <button class="seg" data-diff="standard">Standard</button>
-            <button class="seg active" data-diff="hard">Hard</button>
-            <button class="seg" data-diff="extreme">Imperious</button>
+            <button class="seg" data-diff="easy">Easy</button>
+            <button class="seg active" data-diff="standard">Standard</button>
+            <button class="seg" data-diff="conqueror">Conqueror</button>
             <button class="seg" data-diff="sandbox">Peaceful</button>
           </div>
           <div class="segRow" id="victoryRow" title="How this war is won">
             <button class="seg active" data-victory="conquest">Conquest</button>
             <button class="seg" data-victory="regicide">Regicide</button>
             <button class="seg" data-victory="wonder">Wonder</button>
+            <button class="seg" data-victory="sacred">Sacred</button>
             <button class="seg" data-victory="supremacy">Supremacy</button>
           </div>
           <div class="segRow" id="kingdomRow" title="How many crowns share the island">
@@ -435,6 +437,17 @@
             <span class="segLabel">Workshop mods</span>
             <button class="seg" data-sandboxmods="0">Off</button>
             <button class="seg active" data-sandboxmods="1">On</button>
+          </div>
+          <div class="seedRow">
+            <label for="mapType">Map</label>
+            <select id="mapType" aria-label="Map archetype">
+              <option value="classic">Classic (stable)</option>
+              <option value="confluence">Confluence (experimental)</option>
+              <option value="archipelago">Warring Islands (experimental)</option>
+              <option value="mediterranean">Inland Sea (experimental)</option>
+              <option value="highview">Highview (experimental)</option>
+              <option value="arabia">Dry Arabia (experimental)</option>
+            </select>
           </div>
           <div class="seedRow">
             <label for="seedInput">Map seed</label>

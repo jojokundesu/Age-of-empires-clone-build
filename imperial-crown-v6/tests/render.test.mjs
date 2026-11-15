@@ -100,6 +100,24 @@ check('one frame', () => {
 check('instanced buildings + units drawn', () => {
   assert(renderer.stats.instances > 5, `only ${renderer.stats.instances} instances`);
 });
+const oldProgram = renderer.pModel.program, oldTerrain = renderer.heightTex;
+renderer.trackPersistentResources();
+let sawLoss = false;
+renderer.onContextLost = () => { sawLoss = true; };
+const lost = new window.Event('webglcontextlost', { cancelable: true });
+canvas.dispatchEvent(lost);
+check('context loss stops rendering and allows restoration', () => {
+  assert(lost.defaultPrevented && sawLoss && renderer.ctxLost && !renderer.ready, 'loss not handled');
+});
+canvas.dispatchEvent(new window.Event('webglcontextrestored'));
+await renderer.restoreContext();
+check('context restoration rebuilds GPU resources and the existing world', () => {
+  assert(renderer.ready && !renderer.ctxLost && renderer.world === world, 'world not restored');
+  assert(renderer.pModel.program !== oldProgram && renderer.heightTex !== oldTerrain, 'stale GPU handles');
+  assert(renderer.chunks.length === 16, 'terrain not rebuilt');
+  renderer.render(1 / 60, game);
+  assert(renderer.stats.drawCalls > 10, 'restored world did not draw');
+});
 check('30 frames under a moving camera', () => {
   for (let i = 0; i < 30; i++) {
     game.update(1 / 60);

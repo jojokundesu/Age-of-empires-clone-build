@@ -25,31 +25,44 @@ export class Menu {
   constructor(opts) {
     this.onStart = opts.onStart || (() => {});
     this.onSettingsChanged = opts.onSettingsChanged || (() => {});
+    /* The Android back button asks `menu.isModalOpen()` and then calls
+       `menu.closeModal()`. Every in-game overlay therefore has to count as
+       an open modal and closing it must RESUME the match -- otherwise the
+       native handler falls through to `quitToMenu()` and wipes a live war.
+       `isInGame`, `onOverlayOpen` and `onClose` are the app's half of that
+       contract; see main.js (`resumeFromOverlay`). */
     this.onClose = opts.onClose || (() => {});
+    this.onOverlayOpen = opts.onOverlayOpen || (() => {});
+    this.isInGame = opts.isInGame || (() => false);
+    this._overlay = false;
+    this._overlayKind = null;
     this.audio = opts.audio || null;
     this.state = {
       mode: 'campaign',
       civ: 'franks',
-      difficulty: 'hard',
+      difficulty: 'standard',
       victory: 'conquest',
       kingdoms: 3,
       seed: 20261,
+      mapType: opts.mapType || 'classic',
       quality: opts.quality || 'medium',
-      music: true,
-      sound: true,
-      fog: true,
-      shake: true,
-      showBars: true,
+      autoQuality: opts.settings?.autoQuality !== false,
+      resolutionPreset: opts.resolutionPreset || 'balanced',
+      music: opts.settings?.music !== false,
+      sound: opts.settings?.sound !== false,
+      fog: opts.settings?.fog !== false,
+      shake: opts.settings?.shake !== false,
+      showBars: opts.settings?.showBars !== false,
       /* first-person feel — read live by the direct-control layer. The
          defaults are the ones a phone wants: generous look, no inversion,
          auto-swing so one thumb can steer, and a buzz when a blow lands. */
-      lookSensitivity: 1,
-      invertLookY: false,
-      swapSticks: false,
-      headBob: true,
-      autoAttack: true,
-      haptics: true,
-      buttonSize: 'comfortable',
+      lookSensitivity: opts.settings?.lookSensitivity ?? 1,
+      invertLookY: opts.settings?.invertLookY === true,
+      swapSticks: opts.settings?.swapSticks === true,
+      headBob: opts.settings?.headBob !== false,
+      autoAttack: opts.settings?.autoAttack !== false,
+      haptics: opts.settings?.haptics !== false,
+      buttonSize: opts.settings?.buttonSize || 'comfortable',
       /* Workshop content in the sandbox, on by default: the sandbox is where
          you go to *try* things, and a mod is a thing to try. */
       sandboxMods: true,
@@ -70,6 +83,7 @@ export class Menu {
       kingdomRow: document.getElementById('kingdomRow'),
       sandboxModsRow: document.getElementById('sandboxModsRow'),
       seed: document.getElementById('seedInput'),
+      mapType: document.getElementById('mapType'),
       reroll: document.getElementById('btnRerollSeed'),
       start: document.getElementById('btnStart'),
       startSub: document.getElementById('startSub'),
@@ -148,6 +162,10 @@ export class Menu {
       this._paintArt();
       this.audio?.play('click');
     });
+    if (el.mapType) {
+      el.mapType.value = this.state.mapType;
+      el.mapType.addEventListener('change', () => { this.state.mapType = el.mapType.value; });
+    }
     el.seed?.addEventListener('input', () => {
       const v = parseInt(el.seed.value.replace(/[^0-9]/g, ''), 10);
       if (Number.isFinite(v)) { this.state.seed = v; this._paintArt(); }
@@ -424,20 +442,58 @@ export class Menu {
     this._paintArt();
   }
 
-  /* ---------------- modals ---------------- */
-  openModal(kicker, title, html, foot = '') {
+  /* ---------------- modals ----------------
+     `openModal` auto-detects an in-game overlay (pause, tech tree, court,
+     market, diplomacy, Forge Studio, any sheet the HUD opens). The native
+     bridge only sees `isModalOpen()` / `closeModal()`, so that is the one
+     pair that has to be exact: it must report the pause menu as open and a
+     native Back must resume the game instead of quitting it. */
+  openModal(kicker, title, html, foot = '', opts = {}) {
     const el = this.el;
     if (!el.modal) return;
+    const inGame = !!this.isInGame();
+    if (inGame) {
+      this._overlay = true;
+      this._overlayKind = opts.kind || kicker || 'in-game';
+      this.onOverlayOpen(this._overlayKind);
+    } else {
+      this._overlay = false;
+      this._overlayKind = null;
+    }
     if (el.modalKicker) el.modalKicker.textContent = kicker;
     if (el.modalTitle) el.modalTitle.textContent = title;
     if (el.modalBody) { el.modalBody.onclick = null; el.modalBody.innerHTML = html; }
     if (el.modalFoot) el.modalFoot.innerHTML = foot;
     el.modalTabs && (el.modalTabs.innerHTML = '');
     el.modal.classList.remove('hidden');
+    el.modal.dataset.overlay = inGame ? '1' : '0';
     this.audio?.play('click');
   }
-  closeModal() { const wasOpen = this.isModalOpen(); this.el.modal?.classList.add('hidden'); if (wasOpen) this.onClose(); }
-  isModalOpen() { return !!this.el.modal && !this.el.modal.classList.contains('hidden'); }
+  /**
+   * @param {{silent?:boolean}} opts `silent` is used by quitToMenu() and
+   * startMatch(): those close the sheet as part of tearing a match down and
+   * must NOT resume the game that is being discarded. The native bridge
+   * calls closeModal() with no arguments, which resumes. */
+  closeModal(opts = {}) {
+    if (opts === true) opts = { silent: true };   // tolerate the old boolean call
+    const wasOpen = this.isModalOpen();
+    const wasOverlay = this._overlay;
+    this.el.modal?.classList.add('hidden');
+    this._overlay = false;
+    this._overlayKind = null;
+    if (this.el.modal) this.el.modal.dataset.overlay = '0';
+    if (wasOpen && !opts.silent) this.onClose(wasOverlay ? 'overlay' : 'menu');
+  }
+  isModalOpen() {
+    const visible = !!this.el.modal && !this.el.modal.classList.contains('hidden');
+    return visible || !!this._overlay;
+  }
+  /** Is a specific in-game sheet (pause / diplomacy / forge / ...) open? */
+  isOverlayOpen(kind) {
+    return !!this._overlay && (!kind || this._overlayKind === kind);
+  }
+  /** The kind of the active overlay, for the HUD and the bridge. */
+  overlayKind() { return this._overlayKind; }
 
   /* ---------------- Mod Workshop ----------------
      The catalogue is imported *lazily*: a normal campaign never loads a byte
@@ -546,7 +602,13 @@ export class Menu {
     this.openModal('SYSTEM', 'Settings', `
       <div class="metricRow"><span>Graphics quality</span>
         <div class="segRow" id="setQuality" style="flex:0 0 auto">
-          ${['low', 'medium', 'high', 'ultra'].map((q) => `<button class="seg ${s.quality === q ? 'active' : ''}" data-q="${q}">${q}</button>`).join('')}
+          <button class="seg ${s.autoQuality ? 'active' : ''}" data-q="auto">auto</button>
+          ${['low', 'medium', 'high', 'ultra'].map((q) => `<button class="seg ${!s.autoQuality && s.quality === q ? 'active' : ''}" data-q="${q}">${q}</button>`).join('')}
+        </div>
+      </div>
+      <div class="metricRow"><span>Resolution ceiling</span>
+        <div class="segRow" id="setResolution" style="flex:0 0 auto">
+          ${[['performance', 'Performance'], ['balanced', 'Balanced'], ['ultra', 'Ultra']].map(([v, label]) => `<button class="seg ${s.resolutionPreset === v ? 'active' : ''}" data-resolution="${v}">${label}</button>`).join('')}
         </div>
       </div>
       <div class="metricRow"><span>Sound effects</span><button class="seg ${s.sound ? 'active' : ''}" id="setSound">${s.sound ? 'On' : 'Off'}</button></div>
@@ -568,17 +630,25 @@ export class Menu {
       <div class="metricRow"><span>Invert vertical look</span><button class="seg ${s.invertLookY ? 'active' : ''}" id="setInvert">${s.invertLookY ? 'On' : 'Off'}</button></div>
       <div class="metricRow"><span>Move stick on the right</span><button class="seg ${s.swapSticks ? 'active' : ''}" id="setSwap">${s.swapSticks ? 'On' : 'Off'}</button></div>
       <div class="metricRow"><span>Head bob</span><button class="seg ${s.headBob !== false ? 'active' : ''}" id="setBob">${s.headBob !== false ? 'On' : 'Off'}</button></div>
-      <p class="dim tiny" style="margin-top:10px">Thumb buttons, auto-swing, vibration, look sensitivity, inversion and stick side apply the moment you take a body in first person. Picking a level fixes the detail; resolution still adapts to hold the frame rate. <b>Balanced</b> is the default for phones; <b>Low</b> removes post-processing for older devices.</p>
+      <p class="dim tiny" style="margin-top:10px">Thumb buttons, auto-swing, vibration, look sensitivity, inversion and stick side apply the moment you take a body in first person. Auto adapts quality to the device; choosing a level fixes detail while resolution can still adapt. <b>Low</b> removes post-processing for older devices.</p>
     `);
     const body = this.el.modalBody;
     body.querySelector('#setQuality')?.addEventListener('click', (e) => {
       const b = e.target.closest('.seg');
       if (!b) return;
-      s.quality = b.dataset.q;
-      s.autoQuality = false;      // an explicit choice wins over the auto-scaler
+      const q = b.dataset.q;
+      s.autoQuality = q === 'auto';
+      if (!s.autoQuality) s.quality = q; // a named tier pins detail
       for (const c of body.querySelectorAll('#setQuality .seg')) c.classList.toggle('active', c === b);
       this.onSettingsChanged(this.state);
       this._syncSummary();
+    });
+    body.querySelector('#setResolution')?.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-resolution]');
+      if (!b) return;
+      s.resolutionPreset = b.dataset.resolution;
+      for (const c of body.querySelectorAll('#setResolution .seg')) c.classList.toggle('active', c === b);
+      this.onSettingsChanged(this.state);
     });
     const toggle = (id, key) => body.querySelector(id)?.addEventListener('click', (e) => {
       s[key] = !s[key];

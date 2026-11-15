@@ -98,8 +98,10 @@ export function pickInitialTier(env = {}) {
   const cores = env.cores || 4;
   const mem = env.mem || 4;
   const mobile = env.mobile !== undefined ? env.mobile : /android|iphone|ipad|mobile/i.test(env.ua || '');
+  // A deliberate saved choice takes precedence over heuristics, including on
+  // browsers that hide the GPU string or do not expose device memory.
+  if (env.savedTier && TIERS[env.savedTier]) return { tier: env.savedTier, gpu, mobile };
   let tier = gpu.tier;
-  if (env.savedTier && TIERS[env.savedTier]) tier = env.savedTier;
   if (mobile && gpu.class === 'unknown') tier = 'low';
   if (cores <= 4 && mobile && tier === 'ultra') tier = 'high';
   if (mem <= 3 && tier === 'high') tier = 'medium';

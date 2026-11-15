@@ -194,32 +194,6 @@ await check('all four crowns of the war are readable on the HUD', async () => {
   return st.pills.map((p) => p.text).join(' · ');
 });
 
-await check('a war in progress is photogenic', async () => {
-  await simulate(430);
-  /* find the hottest spot on the map: the two armies closest to each other */
-  const hot = await page.evaluate(() => {
-    const g = window.__imperial.game;
-    const mil = g.units.filter((u) => !u.dead && u.def.attack > 0);
-    let best = null, bestD = 1e9;
-    for (const a of mil) {
-      for (const b of mil) {
-        if (a.team === b.team) continue;
-        const d = (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
-        if (d < bestD) { bestD = d; best = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, d: Math.sqrt(d) }; }
-      }
-    }
-    if (!best) {
-      const b = g.baseOf(g.teamIds[1]);
-      return { x: b.x, z: b.z, d: -1 };
-    }
-    return best;
-  });
-  await lookAt(hot.x, hot.z, 34);
-  await frame(6);
-  await shot('03-armies-in-the-field');
-  return `scenes of war, nearest pair ${hot.d.toFixed(1)} m apart`;
-});
-
 await check('the build ring opens and draws its ghost', async () => {
   await page.evaluate(() => {
     const a = window.__imperial;
@@ -248,6 +222,32 @@ await check('the build ring opens and draws its ghost', async () => {
   await shot('04b-placement-ghost');
   await page.evaluate(() => { window.__imperial.game.placing = null; window.__imperial.ui.sig = ''; window.__imperial.ui.refreshCommands(); });
   return `${n} commands, ghost armed`;
+});
+
+await check('a war in progress is photogenic', async () => {
+  await simulate(430);
+  /* find the hottest spot on the map: the two armies closest to each other */
+  const hot = await page.evaluate(() => {
+    const g = window.__imperial.game;
+    const mil = g.units.filter((u) => !u.dead && u.def.attack > 0);
+    let best = null, bestD = 1e9;
+    for (const a of mil) {
+      for (const b of mil) {
+        if (a.team === b.team) continue;
+        const d = (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
+        if (d < bestD) { bestD = d; best = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, d: Math.sqrt(d) }; }
+      }
+    }
+    if (!best) {
+      const b = g.baseOf(g.teamIds[1]);
+      return { x: b.x, z: b.z, d: -1 };
+    }
+    return best;
+  });
+  await lookAt(hot.x, hot.z, 34);
+  await frame(6);
+  await shot('03-armies-in-the-field');
+  return `scenes of war, nearest pair ${hot.d.toFixed(1)} m apart`;
 });
 
 await check('the court shows its four offices', async () => {

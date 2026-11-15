@@ -42,6 +42,17 @@ import { OFFICE_BY_ID } from '../sim/court.js';
 import { STATE } from '../sim/entities.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
 import { TIERS, renderSize } from './quality.js';
+import { RESOURCES } from '../core/resources.js';
+
+/* Player-facing resolution dial. The frame governor still owns the moment-
+   to-moment scale; this is the ceiling the player chooses for their device.
+   On a Realme 9i (DPR 3, Adreno 610) Balanced caps the effective pixel
+   ratio at 1.35 -- the native 3x would need 2.6 Mpx per pass. */
+export const RESOLUTION_PRESETS = {
+  performance: { name: 'Performance', dpr: 1.0, scale: 0.78 },
+  balanced: { name: 'Balanced', dpr: 1.35, scale: 1.0 },
+  ultra: { name: 'Ultra', dpr: 1.75, scale: 1.32 }
+};
 
 export { MAT, SPRITE };
 
@@ -175,13 +186,50 @@ export class Renderer {
     this._lastCamPos = [0, 0, 0];
     this._frameMs = 16.7;
     this.adaptiveScale = 1;
+    this.resolutionScale = 1;
+    this.dprCap = 1.35;
+    this.resolutionPreset = 'balanced';
     // live counters that the perf tests read
     this.frameCount = 0;
-    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.ctxLost = true; }, false);
+    canvas.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      this.ctxLost = true;
+      this._contextEpoch = (this._contextEpoch || 0) + 1;
+      this.ready = false;
+      /* The old GPU handles are invalid; CPU-side match pools are still live. */
+      RESOURCES.contextLost();
+      if (this.onContextLost) this.onContextLost();
+    }, false);
     canvas.addEventListener('webglcontextrestored', () => {
       this.ctxLost = false;
       if (this.onContextRestored) this.onContextRestored();
     }, false);
+  }
+
+  /** Recreate every GPU object after WebGL invalidates its handles. */
+  async restoreContext(onProgress = () => {}) {
+    const world = this.world;
+    const epoch = this._contextEpoch;
+    const units = [...(this.unitBatches?.keys() || [])];
+    const buildings = [...(this.buildingBatches?.keys() || [])];
+    // The old objects belong to the lost context and must not be disposed as
+    // if they were current resources. Force targets and caches to be rebuilt.
+    this._persistentTracked = false;
+    this._worldTracked = true;
+    this.shadowTarget = null;
+    this.postTarget = null;
+    this.fogTexture = null;
+    this.gl.__slot?.fill(null);
+    this.gl.__slotTarget?.fill(0);
+    try { await this.init(onProgress); }
+    catch (error) { this.ready = false; throw error; }
+    if (this.ctxLost || epoch !== this._contextEpoch) { this.ready = false; throw new Error('WebGL context was lost again during restoration'); }
+    this.registerTypes(units, buildings);
+    this.trackPersistentResources();
+    if (world) this.buildWorld(world);
+    this.renderW = 0;
+    this.resize();
+    return this;
   }
 
   /* ================= init ================= */
@@ -382,9 +430,13 @@ export class Renderer {
   }
 
   _createShadowTarget(size) {
-    if (this.shadowTarget) this.shadowTarget.dispose();
+    if (this.shadowTarget) {
+      RESOURCES.forget(this.shadowTarget, 'persistent');
+      this.shadowTarget.dispose();
+    }
     this.shadowSize = size;
     this.shadowTarget = new ShadowMap(this.gl, size);
+    if (this._persistentTracked) RESOURCES.track(this.shadowTarget, 'persistent');
   }
 
   setQuality(name) {
@@ -393,7 +445,7 @@ export class Renderer {
     this.qualityName = name;
     this.quality = QUALITY[name];
     this.cloudStrength = this.quality.clouds !== undefined ? this.quality.clouds : 0.085;
-    this.pixelBudget = Math.round(this.quality.pixelBudget * (this.pixelScale || 1) ** 2);
+    this.pixelBudget = Math.round(this.quality.pixelBudget * ((this.pixelScale || 1) * (this.resolutionScale || 1)) ** 2);
     this.postEnabled = !!this.quality.post;
     if (changed) {
       this._createShadowTarget(this.quality.shadowSize);
@@ -408,22 +460,76 @@ export class Renderer {
     const v = Math.min(1, Math.max(0.4, s));
     if (Math.abs(v - (this.pixelScale || 1)) < 1e-4) return;
     this.pixelScale = v;
-    this.pixelBudget = Math.round(this.quality.pixelBudget * v * v);
+    this.pixelBudget = Math.round(this.quality.pixelBudget * (v * (this.resolutionScale || 1)) ** 2);
     this.renderW = 0;
     this.resize();
+  }
+
+  /** Settings dial: Performance 1.0x / Balanced 1.35x / Ultra 1.75x. */
+  setResolutionPreset(name) {
+    const p = RESOLUTION_PRESETS[name] || RESOLUTION_PRESETS.balanced;
+    this.resolutionPreset = RESOLUTION_PRESETS[name] ? name : 'balanced';
+    this.dprCap = p.dpr;
+    this.resolutionScale = p.scale;
+    this.pixelBudget = Math.round(this.quality.pixelBudget * ((this.pixelScale || 1) * p.scale) ** 2);
+    this.renderW = 0;
+    this.resize();
+    return p;
+  }
+
+  /** Register everything that lives as long as the GL context. Called once
+      by App.boot() after init(), so a lost context or a full teardown has a
+      single list to walk. */
+  trackPersistentResources() {
+    if (this._persistentTracked) return RESOURCES.stats();
+    this._persistentTracked = true;
+    RESOURCES.attachGL(this.gl);
+    const put = (o) => { if (o) RESOURCES.track(o, 'persistent'); };
+    for (const p of [this.pSky, this.pTerrain, this.pModel, this.pShadow, this.pWater,
+      this.pParticle, this.pBillboard, this.pDecal, this.pPost, this.pFlash]) put(p);
+    for (const map of [this.buildingBatches, this.unitBatches, this.propBatches,
+      this.resBatches, this.resFadeBatches]) {
+      if (map) for (const b of map.values()) put(b);
+    }
+    for (const o of [this.fireBatch, this.gateDoorBatch, this.arrowBatch, this.boulderBatch,
+      this.iceBatch, this.particleAlpha, this.particleAdd, this.billboards, this.decals,
+      this.shadowTarget, this.postTarget]) put(o);
+    if (this.textures) {
+      for (const k of ['materials', 'sprites', 'water', 'clouds', 'noise', 'groundDetail', 'stars']) {
+        if (this.textures[k]) put({ glHandle: this.textures[k], kind: 'texture' });
+      }
+    }
+    if (this.fogTexture) put({ glHandle: this.fogTexture, kind: 'texture' });
+    return RESOURCES.stats();
   }
 
   /* ================= world ================= */
   /** Free GPU memory from a previous world so restarts never leak. */
   _disposeWorld() {
     const gl = this.gl;
-    for (const c of this.chunks || []) c.mesh.dispose();
+    RESOURCES.attachGL(gl);
+    if (this._worldTracked) {
+      /* Centralised disposal: chunk meshes, water mesh, height, albedo and
+         the hydrology flow texture are all in the 'world' scope. */
+      RESOURCES.releaseWorld();
+    } else {
+      // A renderer driven directly by a test never went through App.boot().
+      for (const c of this.chunks || []) c.mesh.dispose();
+      if (this.waterMesh) this.waterMesh.dispose();
+      if (this.heightTex) gl.deleteTexture(this.heightTex);
+      if (this.terrainAlbedo) gl.deleteTexture(this.terrainAlbedo);
+      if (this.flowTex) gl.deleteTexture(this.flowTex);
+    }
+    this._worldTracked = false;
     this.chunks = [];
-    if (this.waterMesh) { this.waterMesh.dispose(); this.waterMesh = null; }
-    if (this.heightTex) { gl.deleteTexture(this.heightTex); this.heightTex = null; }
-    if (this.terrainAlbedo) { gl.deleteTexture(this.terrainAlbedo); this.terrainAlbedo = null; }
+    this.waterMesh = null;
+    this.heightTex = null;
+    this.terrainAlbedo = null;
+    this.flowTex = null;
     this.propCells = null;
   }
+  /** Public: used by quitToMenu() and the Forge Studio's map regeneration. */
+  disposeWorld() { this._disposeWorld(); this.world = null; }
 
   buildWorld(world, opts = {}) {
     const gl = this.gl;
@@ -463,6 +569,25 @@ export class Renderer {
     this._buildTerrain(RT);
     this._buildWater();
     this._bucketProps(world);
+
+    /* Hydrology flow/depth/foam texture: rg = river flow vector, b = depth
+       to the bed, a = ford/shore mask. One 128x128 RGBA8 upload per map. */
+    const flow = world.flowTex;
+    if (flow && flow.data) {
+      this.flowTex = uploadRGBA8(gl, flow.data, flow.size, flow.size);
+    } else {
+      this.flowTex = null;
+    }
+
+    /* Register this island's GPU objects with the disposal manager. Every
+       restart, map regeneration or quit releases exactly these. */
+    RESOURCES.attachGL(gl);
+    for (const c of this.chunks || []) RESOURCES.track(c.mesh, 'world');
+    if (this.waterMesh) RESOURCES.track(this.waterMesh, 'world');
+    if (this.heightTex) RESOURCES.track({ glHandle: this.heightTex, kind: 'texture' }, 'world');
+    if (this.terrainAlbedo) RESOURCES.track({ glHandle: this.terrainAlbedo, kind: 'texture' }, 'world');
+    if (this.flowTex) RESOURCES.track({ glHandle: this.flowTex, kind: 'texture' }, 'world');
+    this._worldTracked = true;
     return this;
   }
 
@@ -631,6 +756,7 @@ export class Renderer {
     }
     if (!this.fogTexture) {
       this.fogTexture = gl.createTexture();
+      if (this._persistentTracked) RESOURCES.track({ glHandle: this.fogTexture, kind: 'texture' }, 'persistent');
       gl.bindTexture(gl.TEXTURE_2D, this.fogTexture);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -824,22 +950,25 @@ export class Renderer {
        the budget becomes a floor on the native pixel count instead, still
        subject to the governor's scale so a slow desktop still gets helped. */
     const maxDpr = this.quality.maxDpr || 3;
-    const native = Math.min(dpr, maxDpr);
+    /* Hard clamp for the Adreno 610: never let the device's DPR 3 inflate
+       the drawing buffer past the player's chosen resolution dial. */
+    const native = Math.min(dpr, maxDpr, this.dprCap || 1.35);
     const crisp = dpr <= 1.25
       ? Math.min(cw * ch * native * native, 2.4e6) * (this.pixelScale || 1) ** 2
       : 0;
-    const { w, h } = renderSize(cw, ch, Math.max(this.pixelBudget, crisp), dpr, maxDpr);
+    const { w, h } = renderSize(cw, ch, Math.max(this.pixelBudget, crisp), dpr, Math.min(maxDpr, this.dprCap || 1.35));
     if (w === this.renderW && h === this.renderH && canvas.width === w && canvas.height === h) return;
     this.renderW = w; this.renderH = h;
     canvas.width = w; canvas.height = h;
     const gl = this.gl;
-    if (this.postTarget) { this.postTarget.dispose(); this.postTarget = null; }
+    if (this.postTarget) { RESOURCES.forget(this.postTarget, 'persistent'); this.postTarget.dispose(); this.postTarget = null; }
     if (this.postEnabled && this.quality.sharpen > 0) {
       /* The scene is rendered *into* this target, so it needs the depth
          attachment: without it every fragment passes the depth test, the sky
          pass (which draws only where depth == 1) covers the whole frame, and
          the town comes out as a white-out. */
       this.postTarget = new RenderTarget(gl, w, h, { depth: true });
+      if (this._persistentTracked) RESOURCES.track(this.postTarget, 'persistent');
     }
     this.width = cw; this.height = ch;
     gl.viewport(0, 0, w, h);
@@ -1455,6 +1584,11 @@ export class Renderer {
     this._bindLight(s);
     s.tex('uWater', this.textures.water, gl.TEXTURE_2D);
     s.tex('uHeightMap', this.heightTex || this.textures.noise, gl.TEXTURE_2D);
+    /* Hydrology flow/depth/foam field. On a legacy island a neutral 1x1
+       texture keeps the sampler legal and uFlowStrength=0 disables it. */
+    s.tex('uFlowMap', this.flowTex || this._neutralFlow || this.textures.noise, gl.TEXTURE_2D);
+    s.f('uFlowStrength', this.flowTex ? 1 : 0);
+    s.f('uWaterLevel', this.waterLevel !== undefined ? this.waterLevel : 0);
     s.v2('uNormalOffset', this.time * 0.018, this.time * 0.011);
     s.v3('uShallowColor', 0.24, 0.53, 0.48);
     s.v3('uDeepColor', 0.05, 0.13, 0.19);
@@ -1955,28 +2089,55 @@ export class Renderer {
   dispose() {
     const gl = this.gl;
     if (!gl) return;
+    /* One authority for GPU memory. Anything created before tracking was
+       installed (a headless test renderer) is still covered by the guarded
+       fallback loop below. */
+    RESOURCES.attachGL(gl);
+    this._disposeWorld();
+    const tracked = this._persistentTracked;
+    RESOURCES.releaseAll();
     if (!this.buildingBatches) return;
-    for (const b of this.buildingBatches.values()) b.dispose();
-    for (const b of this.unitBatches.values()) b.dispose();
-    for (const b of this.propBatches.values()) b.dispose();
-    if (this.fireBatch) { this.fireBatch.dispose(); this.fireBatch = null; }
-    if (this.gateDoorBatch) { this.gateDoorBatch.dispose(); this.gateDoorBatch = null; }
-    for (const b of this.resBatches.values()) b.dispose();
-    for (const c of this.chunks) c.mesh.dispose();
-    if (this.waterMesh) this.waterMesh.dispose();
-    if (this.shadowTarget) this.shadowTarget.dispose();
-    if (this.postTarget) this.postTarget.dispose();
+    const free = (o) => { if (o && !RESOURCES.isDisposed(o)) o.dispose(); };
+    const freeMap = (m) => { if (m) for (const b of m.values()) free(b); };
+    freeMap(this.buildingBatches); freeMap(this.unitBatches); freeMap(this.propBatches);
+    freeMap(this.resBatches); freeMap(this.resFadeBatches);
+    free(this.fireBatch); free(this.gateDoorBatch); free(this.arrowBatch);
+    free(this.boulderBatch); free(this.iceBatch); free(this.particleAlpha);
+    free(this.particleAdd); free(this.billboards); free(this.decals);
+    for (const c of this.chunks || []) free(c.mesh);
+    free(this.waterMesh); free(this.shadowTarget); free(this.postTarget);
     if (this.terrainAlbedo) gl.deleteTexture(this.terrainAlbedo);
-    for (const k of ['materials', 'sprites', 'water', 'clouds', 'noise', 'groundDetail', 'stars']) {
-      if (this.textures && this.textures[k]) gl.deleteTexture(this.textures[k]);
+    if (this.heightTex) gl.deleteTexture(this.heightTex);
+    if (this.flowTex) gl.deleteTexture(this.flowTex);
+    if (!tracked && this.textures) for (const k of ['materials', 'sprites', 'water', 'clouds', 'noise', 'groundDetail', 'stars']) {
+      if (this.textures[k]) gl.deleteTexture(this.textures[k]);
     }
-    if (this.fogTexture) gl.deleteTexture(this.fogTexture);
+    if (!tracked && this.fogTexture) gl.deleteTexture(this.fogTexture);
     for (const p of [this.pSky, this.pTerrain, this.pModel, this.pShadow, this.pWater,
-      this.pParticle, this.pBillboard, this.pDecal, this.pPost, this.pFlash]) if (p) p.dispose();
+      this.pParticle, this.pBillboard, this.pDecal, this.pPost, this.pFlash]) free(p);
+    this.fireBatch = null; this.gateDoorBatch = null;
+    this.chunks = []; this.waterMesh = null; this.propCells = null;
+    this.heightTex = null; this.terrainAlbedo = null; this.flowTex = null;
+    this._persistentTracked = false;
+    this.ready = false;
   }
 }
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/** Upload an RGBA8 field (hydrology flow vectors, depth, shoreline mask). */
+function uploadRGBA8(gl, data, w, h) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindTexture(gl.TEXTURE_2D, null);
+  return tex;
+}
 
 /** Upload a single-channel 8-bit map as an R8 texture (height / fog masks). */
 function upload8(gl, data, w, h) {

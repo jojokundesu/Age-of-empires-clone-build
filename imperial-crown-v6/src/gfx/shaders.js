@@ -748,6 +748,9 @@ in float vDist;
 out vec4 fragColor;
 uniform sampler2D uWater;       // rg = normal xy, b = height, a = foam
 uniform sampler2D uHeightMap;
+uniform sampler2D uFlowMap;     // rg = flow vector, b = bed depth, a = shore/ford mask
+uniform float uFlowStrength;
+uniform float uWaterLevel;
 uniform vec2 uNormalOffset;
 uniform vec3 uShallowColor;
 uniform vec3 uDeepColor;
@@ -755,20 +758,35 @@ uniform vec3 uZenithColor;
 uniform vec3 uHorizonColor;
 
 void main(){
-  /* Two scrolling fetches of one baked tile replace v2's two normal-map
-     fetches plus four noise octaves of foam. The tile carries the normal,
-     the swell height and the foam in its four channels. */
-  vec4 w1 = texture(uWater, vWorld.xz * 0.045 + uNormalOffset);
-  vec4 w2 = texture(uWater, vWorld.xz * 0.021 - uNormalOffset * 0.6);
+  /* Baked hydrology: the Bezier river tangents (rg) advect both ripple
+     layers, the bed depth (b) replaces the old 46 m remapping where the
+     map has real channels, and the shore mask (a) is the spec's rule
+     terrainHeight - waterLevel < 0.45. One 128x128 fetch replaces six
+     per-pixel noise octaves. */
+  vec2 huv = vWorld.xz / (uWorldHalf * 2.0) + 0.5;
+  vec4 hyd = texture(uFlowMap, huv);
+  vec2 flow = (hyd.rg * 2.0 - 1.0) * uFlowStrength;
+  vec2 drift = uNormalOffset + flow * (uTime * 0.032);
+  /* Animated dual-normal ripples, each layer scrolling WITH the river. */
+  vec4 w1 = texture(uWater, vWorld.xz * 0.045 + drift);
+  vec4 w2 = texture(uWater, vWorld.xz * 0.021 - drift * 0.6);
   vec2 n1 = w1.rg * 2.0 - 1.0;
   vec2 n2 = w2.rg * 2.0 - 1.0;
   vec3 nrm = normalize(vec3(n1.x + n2.x * 0.8, 2.2, n1.y + n2.y * 0.8));
 
-  // terrain depth beneath the surface
-  vec2 huv = vWorld.xz / (uWorldHalf * 2.0) + 0.5;
+  // terrain depth beneath the surface, refined by the baked river bed
   float bed = texture(uHeightMap, huv).r * 46.0 - 8.0;
-  float depth = max(vWorld.y - bed, 0.0);
+  float legacyDepth = max(vWorld.y - bed, 0.0);
+  float riverDepth = hyd.b * 6.0;
+  float depth = mix(legacyDepth, riverDepth, uFlowStrength * 0.82);
   float shallow = smoothstep(3.4, 0.05, depth);
+  /* Turquoise shallows -> cobalt channels -> navy deep sea. */
+  vec3 shallowHyd = vec3(0.12, 0.66, 0.68);
+  vec3 cobaltHyd = vec3(0.035, 0.19, 0.40);
+  vec3 navyHyd = vec3(0.012, 0.055, 0.135);
+  vec3 hydBody = mix(cobaltHyd, shallowHyd, smoothstep(2.4, 0.15, depth));
+  hydBody = mix(hydBody, navyHyd, smoothstep(3.1, 5.6, depth));
+  vec3 body = mix(mix(uDeepColor, uShallowColor, shallow), hydBody, uFlowStrength);
 
   vec3 V = normalize(uCameraPos - vWorld);
   vec3 L = uSunDir;
@@ -778,21 +796,25 @@ void main(){
   vec3 sky = skyRadiance(R, L, uZenithColor, uHorizonColor, uSunColor);
 
   float rl = max(dot(R, L), 0.0);
+  /* Specular glint: a tight sun lobe plus a broad shimmer lobe. */
   float spec = pow340(rl) * 3.4 + p16(rl) * p8(rl) * 0.32;
-  vec3 body = mix(uDeepColor, uShallowColor, shallow);
-  // a third, finer ripple layer: what sells "water" from 40 m up is that the
-  // horizon line never stays exactly straight
-  vec4 w3 = texture(uWater, vWorld.xz * 0.115 + uNormalOffset * 2.1);
+  vec4 w3 = texture(uWater, vWorld.xz * 0.115 + drift * 2.1);
   float sh = shadowFactor(vWorld, 1.0);
   float glint = p16(max(dot(normalize(vec3((w3.r - 0.5) * 0.55 + nrm.x, 2.2, (w3.g - 0.5) * 0.55 + nrm.z)), L), 0.0));
   vec3 col = mix(body, sky * 1.02, clamp(0.23 + fres * 1.02, 0.0, 1.0));
-  col += uShallowColor * shallow * 0.10;                 // light through the shallows
+  col += shallowHyd * shallow * uFlowStrength * 0.12;
+  col += uShallowColor * shallow * (1.0 - uFlowStrength) * 0.10;
   col += uSunColor * (spec + glint * 0.85) * sh;
 
-  // shoreline foam: the tile's foam channel, broken up by the second layer
+  /* White foam exactly where terrainHeight - waterLevel < 0.45, modulated
+     by the two animated ripple layers so the line never freezes. */
   float foamTile = w1.a * 0.65 + w2.a * 0.35 + w1.b * 0.20;
-  float foam = smoothstep(0.55, 0.02, depth + foamTile * 0.55 - 0.28);
-  col = mix(col, vec3(0.92, 0.96, 0.98), foam * 0.65);
+  float oldFoam = smoothstep(0.55, 0.02, depth + foamTile * 0.55 - 0.28);
+  float shoreRule = 1.0 - smoothstep(0.0, 0.45, max(bed - uWaterLevel, 0.0));
+  float shoreFoam = max(hyd.a * uFlowStrength, shoreRule * 0.7)
+    * (0.66 + foamTile * 0.55) * smoothstep(0.2, 0.0, depth);
+  float foam = clamp(max(oldFoam * 0.7, shoreFoam), 0.0, 1.0);
+  col = mix(col, vec3(0.94, 0.97, 1.0), foam * 0.78);
 
   col = applyFog(col, vDist);
   col = applyFoW(col, vWorld);

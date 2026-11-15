@@ -119,11 +119,53 @@ export class AIController {
     this.census = null;
     this.censusAt = -99;
     this.plan = { role: null, why: '', siege: 0, defend: 0 };
+    // Stores only sites that one of this crown's own units or buildings saw.
+    this.knownSacred = new Map();
   }
 
   /* ---------------- helpers ---------------- */
   myUnits() { return this.game.units.filter((u) => !u.dead && u.team === this.team); }
   myBuildings() { return this.game.buildings.filter((b) => !b.dead && b.team === this.team); }
+  observers() { return this.myUnits().filter(u => !u.garrisoned).concat(this.myBuildings()); }
+  sees(x, z, observers = this.observers()) {
+    const g = this.game;
+    for (const o of observers) {
+      const sight = o.kind === 'building'
+        ? (o.def.sight || 8) * (o.buildProgress >= 1 ? 1 : 0.5)
+        : (o.def.sight || 9) * g.sightDayMul;
+      if (dist2(o.x, o.z, x, z) <= sight * sight) return true;
+    }
+    return false;
+  }
+  // Build a temporary broad phase for strategic scans. Every observer is
+  // indexed into all cells its sight circle overlaps; the final radius test
+  // remains exact, so the grid never grants extra information.
+  sightQuery(observers = this.observers()) {
+    const cell = 16, n = 32, buckets = new Map();
+    const coord = v => Math.floor((v + 256) / cell);
+    for (const o of observers) {
+      const radius = o.kind === 'building'
+        ? (o.def.sight || 8) * (o.buildProgress >= 1 ? 1 : 0.5)
+        : (o.def.sight || 9) * this.game.sightDayMul;
+      const x0 = Math.max(0, coord(o.x - radius)), x1 = Math.min(n - 1, coord(o.x + radius));
+      const z0 = Math.max(0, coord(o.z - radius)), z1 = Math.min(n - 1, coord(o.z + radius));
+      const entry = [o, radius * radius];
+      for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+        const key = z * n + x;
+        let bucket = buckets.get(key);
+        if (!bucket) buckets.set(key, bucket = []);
+        bucket.push(entry);
+      }
+    }
+    return (x, z) => {
+      const cx = coord(x), cz = coord(z);
+      if (cx < 0 || cz < 0 || cx >= n || cz >= n) return this.sees(x, z, observers);
+      const bucket = buckets.get(cz * n + cx);
+      if (!bucket) return false;
+      for (const [o, r2] of bucket) if (dist2(o.x, o.z, x, z) <= r2) return true;
+      return false;
+    };
+  }
   count(type) {
     let n = 0;
     for (const b of this.game.buildings) if (!b.dead && b.team === this.team && b.type === type) n++;
@@ -174,16 +216,19 @@ export class AIController {
     this.attackTimer -= dt;
     this.raidTimer -= dt;
     if (this.timer > 0) return;
-    this.timer = 0.5;
+    const decisionInterval = clamp((this.diff.reaction || 1) * 0.5, 0.35, 1);
+    this.timer = decisionInterval;
 
     const st = g.teams.get(this.team);
     const age = st.age;
 
-    this.foeTimer -= 0.5;
+    this.foeTimer -= decisionInterval;
     if (this.foeTimer <= 0 || !this.foe) {
       this.foeTimer = 90 + this.rng() * 40;
       this.chooseFoe();
     }
+
+    if (g.victory === 'sacred') this.manageSacredSites(st, age);
 
     // ---------- economy ----------
     if (this.econTimer <= 0) {
@@ -414,6 +459,37 @@ export class AIController {
     this.rally.z = this.base.z;
   }
 
+  /** Discover sites using this crown's own sight and send monks to known sites. */
+  manageSacredSites(st, age) {
+    const g = this.game;
+    const observers = this.observers();
+    const seenAt = this.sightQuery(observers);
+    for (const site of g.buildings) {
+      if (site.dead || site.poiType !== 'sacred') continue;
+      if (seenAt(site.x, site.z)) this.knownSacred.set(site, site.siteOwner || 0);
+    }
+    if (age < 2) return;
+    for (const monk of observers.filter(u => u.kind === 'unit' && u.def.classes.includes('monk'))) {
+      if (monk.state !== STATE.IDLE && monk.state !== STATE.MOVE) continue;
+      let target = null, best = Infinity;
+      for (const [site, lastOwner] of this.knownSacred) {
+        if (site.dead || lastOwner === this.team) continue;
+        const d = dist2(monk.x, monk.z, site.x, site.z);
+        if (d < best) { target = site; best = d; }
+      }
+      if (!target || best <= 25) continue;
+      if (monk._sacredGoal === target && monk.state === STATE.MOVE) continue;
+      const spot = g.findNearestFreeTile(target.x, target.z, monk, 4);
+      if (spot) { monk._sacredGoal = target; g.orderMove([monk], spot[0], spot[1]); }
+    }
+    const pending = [...this.knownSacred.values()].some(owner => owner !== this.team);
+    if (!pending) return;
+    const monastery = this.find('monastery');
+    if (monastery && monastery.queue.length === 0 && this.countUnits('monk') < 2 &&
+        g.canAfford(this.team, g.unitCost('monk', this.team)) && g.popFree(this.team) >= 1)
+      monastery.queueUnit('monk');
+  }
+
   /* ---------------- construction ---------------- */
   manageConstruction(st, age) {
     const g = this.game;
@@ -435,7 +511,7 @@ export class AIController {
        is turtling, a siege workshop. These are cheap detours compared to the
        cost of answering a legend with spearmen for ten minutes. */
     const plan = this.plan || {};
-    if (plan.role === 'monk' && age >= 2 && this.count('monastery') === 0) {
+    if ((plan.role === 'monk' || (g.victory === 'sacred' && this.knownSacred.size)) && age >= 2 && this.count('monastery') === 0) {
       if (this.tryBuild('monastery', st)) return;
     }
     if (plan.siege && age >= 2 && this.count('siege_workshop') === 0) {
@@ -595,9 +671,8 @@ export class AIController {
   /* ---------------- the war council ---------------- */
   /**
    * Count what the enemy has been seen fielding, and what it is building.
-   * "Seen" is honest: only enemy units within 44 m of one of this AI's own
-   * units or buildings count. The AI has to scout to counter, exactly like
-   * the player, and a hidden build-up stays hidden.
+   * Only enemies inside this crown's actual unit or building sight count.
+   * The AI has to scout to counter, and a hidden build-up stays hidden.
    *
    * Refreshed every 8 s -- this is a strategic read, not a tactical one.
    */
@@ -608,48 +683,7 @@ export class AIController {
     const mine = [];
     for (const u of g.units) if (!u.dead && u.team === this.team && !u.garrisoned) mine.push(u);
     for (const b of g.buildings) if (!b.dead && b.team === this.team) mine.push(b);
-    /* What the crown can see, stamped once into a coarse grid.
-       The old census asked every enemy on the map whether he stood within
-       sight of every man and roof the crown owned -- at four crowns, forty
-       thousand distance tests in a single tick every few seconds. The same
-       question is now one array lookup: his cell, or a neighbouring one, is
-       lit or it is not. The grid is 4 m, far finer than any sight radius, so
-       nothing that used to be seen is missed. */
-    const CELL = 4;
-    const N = 128;
-    const grid = this._censusGrid || (this._censusGrid = new Uint8Array(N * N));
-    grid.fill(0);
-    const toCell = (v) => Math.max(0, Math.min(N - 1, ((v + 256) / CELL) | 0));
-    for (let i = 0; i < mine.length; i++) {
-      const m = mine[i];
-      const r = m.kind === 'building' ? 30 : 44;
-      const r2 = r * r;
-      const x0 = toCell(m.x - r), x1 = toCell(m.x + r);
-      const z0 = toCell(m.z - r), z1 = toCell(m.z + r);
-      for (let cz = z0; cz <= z1; cz++) {
-        const wz = cz * CELL + CELL * 0.5 - 256;
-        const dz = wz - m.z;
-        for (let cx = x0; cx <= x1; cx++) {
-          const wx = cx * CELL + CELL * 0.5 - 256;
-          const dx = wx - m.x;
-          if (dx * dx + dz * dz <= r2) grid[cz * N + cx] = 1;
-        }
-      }
-    }
-    const seenAt = (x, z) => {
-      const cx = toCell(x), cz = toCell(z);
-      for (let dz = -1; dz <= 1; dz++) {
-        const nz = cz + dz;
-        if (nz < 0 || nz >= N) continue;
-        const row = nz * N;
-        for (let dx = -1; dx <= 1; dx++) {
-          const nx = cx + dx;
-          if (nx < 0 || nx >= N) continue;
-          if (grid[row + nx]) return true;
-        }
-      }
-      return false;
-    };
+    const seenAt = this.sightQuery(mine);
     for (const u of g.units) {
       if (u.dead || u.garrisoned || u.wild || !g.canFight(this.team, u.team)) continue;
       if (!seenAt(u.x, u.z)) continue;
@@ -664,7 +698,7 @@ export class AIController {
       if ((u.renown || 0) >= 4) c.legend++;
     }
     for (const b of g.buildings) {
-      if (b.dead || !g.canFight(this.team, b.team)) continue;
+      if (b.dead || !g.canFight(this.team, b.team) || !seenAt(b.x, b.z)) continue;
       c.roofs++;
       if (b.def.tower || b.type === 'watch_tower' || b.type === 'castle') c.towers++;
     }
@@ -895,6 +929,7 @@ export class AIController {
       this.enemyBase = g.baseOf ? g.baseOf(this.foe) : g.world.enemyBase;
       return this.foe;
     }
+    const seenAt = this.sightQuery();
     let best = null, bestScore = -Infinity;
     for (const t of g.teamIds) {
       if (t === this.team) continue;
@@ -903,8 +938,8 @@ export class AIController {
       if (!seat) continue;
       const d = Math.hypot(seat.x - this.base.x, seat.z - this.base.z);
       let army = 0, buildings = 0;
-      for (const u of g.units) if (!u.dead && u.team === t && u.def.attack > 0) army++;
-      for (const b of g.buildings) if (!b.dead && b.team === t) buildings++;
+      for (const u of g.units) if (!u.dead && !u.garrisoned && u.team === t && u.def.attack > 0 && seenAt(u.x, u.z)) army++;
+      for (const b of g.buildings) if (!b.dead && b.team === t && seenAt(b.x, b.z)) buildings++;
       /* A competent commander does not march on the strongest enemy for its
          own sake. The old rule scored strength *positively*, so the AI spent
          every match attacking the one crown it could not beat and left the
@@ -936,15 +971,16 @@ export class AIController {
   foeAnchor() {
     const g = this.game;
     const foe = this.foe;
+    const seenAt = this.sightQuery();
     let best = null, bestD = Infinity;
     for (const b of g.buildings) {
-      if (b.dead || b.team !== foe) continue;
+      if (b.dead || b.team !== foe || !seenAt(b.x, b.z)) continue;
       const d = (b.x - this.base.x) ** 2 + (b.z - this.base.z) ** 2;
       if (d < bestD) { bestD = d; best = b; }
     }
     if (best) return best;
     for (const u of g.units) {
-      if (u.dead || u.team !== foe || u.garrisoned) continue;
+      if (u.dead || u.team !== foe || u.garrisoned || !seenAt(u.x, u.z)) continue;
       const d = (u.x - this.base.x) ** 2 + (u.z - this.base.z) ** 2;
       if (d < bestD) { bestD = d; best = u; }
     }
@@ -956,19 +992,14 @@ export class AIController {
    * Pure and side-effect free so the strategy can be tested on its own.
    */
   foeScore(team, d, seen = { army: 0, buildings: 0 }) {
-    const g = this.game;
     let score = 58 - d * 0.18;                      // distance is logistics
     const myArmy = this.militaryUnits().length;
     score += (myArmy - (seen.army || 0)) * 0.85;    // a crown I outmatch is takeable
-    let rival = 0;
-    if (g.scoreOf) rival = g.scoreOf(team);
-    const mine = g.scoreOf ? g.scoreOf(this.team) : 0;
     /* the leader must be stopped before it is unbeatable. Compare armies,
        not scores: a score is a ledger, an army is what marches. */
     const theirArmy = seen.army || 0;
     if (theirArmy > Math.max(6, myArmy * 1.45)) score += 30;        // stop the runaway
     else if (myArmy > 3 && theirArmy < myArmy * 0.6) score += 10;   // finish the weak
-    if (g.realm && g.realm.state(team) && g.realm.state(team).commons < 25) score += 12;
     if (this.raidedBy && this.raidedBy.has(team)) score += 18;
     if (this.foe === team) score += 14;              // stay the course
     return score;

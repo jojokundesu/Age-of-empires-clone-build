@@ -200,8 +200,8 @@ export const UNIT_DEFS = {
   }),
   transport_ship: U({
     name: 'Transport Ship', icon: 'ship', hp: 200, attack: 0, armor: 2, pierceArmor: 6,
-    speed: 3.7, time: 20, cost: { wood: 110 }, classes: ['ship'], naval: true, capacity: 10,
-    sight: 11, desc: 'Carries ten land units across water.'
+    speed: 3.7, time: 20, cost: { wood: 110 }, classes: ['ship'], naval: true, capacity: 12,
+    sight: 11, desc: 'Carries twelve land units across water.'
   }),
   war_galley: U({
     name: 'War Galley', icon: 'ship', hp: 150, attack: 9, armor: 1, pierceArmor: 4, range: 7.4,
@@ -373,7 +373,7 @@ export const BUILDING_DEFS = {
   wonder: B({
     name: 'Wonder', icon: 'crown', hp: 7000, armor: 10, pierceArmor: 16, size: 7.6, sight: 15,
     cost: { wood: 1000, gold: 1000, stone: 1000 }, time: 120, wonder: true,
-    desc: 'Survive 200 seconds after completion to win the game.'
+    desc: 'Survive 240 seconds after completion to win the game.'
   }),
   outpost_shrine: B({
     name: 'Shrine', icon: 'flame', hp: 1400, armor: 4, pierceArmor: 8, size: 2.6, sight: 13,
@@ -549,13 +549,13 @@ export const DIFFICULTY = {
     firstWave: 420, waveEvery: 95, maxArmy: 16, towerChance: 0.25
   },
   hard: {
-    name: 'Hard', gather: 1.16, aggression: 0.85, buildSpeed: 1.12, reaction: 1.0,
+    name: 'Hard', gather: 1.0, aggression: 0.85, buildSpeed: 1.0, reaction: 1.0,
     maxPop: 80, startRes: 340, startVillagers: 5, villagerTarget: 22,
     start: { food: 300, wood: 300, gold: 150, stone: 100 },
     firstWave: 330, waveEvery: 78, maxArmy: 24, towerChance: 0.45
   },
   extreme: {
-    name: 'Imperious', gather: 1.34, aggression: 1.0, buildSpeed: 1.25, reaction: 0.65,
+    name: 'Imperious', gather: 1.0, aggression: 1.0, buildSpeed: 1.0, reaction: 0.65,
     maxPop: 100, startRes: 460, startVillagers: 6, villagerTarget: 26,
     start: { food: 300, wood: 300, gold: 150, stone: 100 },
     firstWave: 250, waveEvery: 62, maxArmy: 34, towerChance: 0.6
@@ -576,11 +576,17 @@ export const DIFFICULTY = {
   }
 };
 
+// Legacy Hard/Imperious keys remain loadable; the public presets differ in
+// decision timing and army goals, not hidden resource or speed multipliers.
+DIFFICULTY.easy = { ...DIFFICULTY.standard, name: 'Easy', aggression: 0.4,
+  reaction: 2.0, villagerTarget: 14, firstWave: 540, waveEvery: 120, maxArmy: 10 };
+DIFFICULTY.conqueror = { ...DIFFICULTY.extreme, name: 'Conqueror', gather: 1, buildSpeed: 1 };
+
 export const GAME_MODES = {
   campaign: { name: 'Imperial Conquest', desc: 'Destroy every enemy building to claim the crown.' },
   kingdoms: { name: 'War of Crowns', desc: 'Three or four kingdoms on one island. The last crown standing rules alone.' },
   regicide: { name: 'Regicide', desc: 'Protect your king. Kill theirs.' },
-  wonder: { name: 'Wonder Race', desc: 'Raise a wonder and hold it for 200 seconds.' },
+  wonder: { name: 'Wonder Race', desc: 'Raise a wonder and hold it for 240 seconds.' },
   sandbox: { name: 'Grand Sandbox', desc: 'Ten thousand resources. Build a masterpiece.' },
   mods: { name: 'Mod Workshop', desc: 'The same war, with new rules.' }
 };
@@ -594,7 +600,7 @@ export const GAME_MODES = {
 
      Conquest    take every other crown off the map
      Regicide    one king per crown -- kill them
-     Wonder      raise a wonder and hold it for 200 seconds
+     Wonder      raise a wonder and hold it for 240 seconds
      Supremacy   when the clock runs out, the strongest crown rules
    ============================================================ */
 export const VICTORIES = {
@@ -610,8 +616,13 @@ export const VICTORIES = {
   },
   wonder: {
     id: 'wonder', name: 'Wonder', icon: 'temple',
-    desc: 'Raise a wonder and hold it for 200 seconds while the island comes for you.',
-    short: 'hold a wonder for 200s'
+    desc: 'Raise a wonder and hold it for 240 seconds while the island comes for you.',
+    short: 'hold a wonder for 240s'
+  },
+  sacred: {
+    id: 'sacred', name: 'Sacred Sites', icon: 'temple',
+    desc: 'Capture every sacred site with monks and hold them for 180 seconds.',
+    short: 'hold all sacred sites for 180s'
   },
   supremacy: {
     id: 'supremacy', name: 'Supremacy', icon: 'hourglass',

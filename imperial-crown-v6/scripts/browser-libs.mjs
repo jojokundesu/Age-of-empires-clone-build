@@ -9,10 +9,10 @@
 
    This unpacks both library sets and prints the LD_LIBRARY_PATH to use:
 
-     eval "$(node scripts/browser-libs.mjs)"      # exports IMPERIAL_LD_PATH
-     LD_LIBRARY_PATH=$IMPERIAL_LD_PATH node tests/browser.mjs
+     libdir=$(node scripts/browser-libs.mjs)
+     LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" node tests/browser.mjs
 
-   or simply:  eval "$(node scripts/browser-libs.mjs --export)"
+   or:  eval "$(node scripts/browser-libs.mjs --export)"
    which exports LD_LIBRARY_PATH directly.
 */
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';

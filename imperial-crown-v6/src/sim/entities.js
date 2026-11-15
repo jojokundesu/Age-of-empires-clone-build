@@ -94,7 +94,7 @@ export class Entity {
     this.vz = 0;
   }
   takeDamage(amount, attacker, kind = 'melee') {
-    if (this.dead) return 0;
+    if (this.dead || this.poiType === 'sacred') return 0;
     /* A dodge, a parry follow-through or a mod can make the body untouchable
        for a moment. The check lives here, once, so every damage source in the
        game -- arrows in flight, a spell, a wall of elephants -- respects it. */
@@ -226,6 +226,7 @@ export class Unit extends Entity {
     this.stance = 'aggressive';
     this.garrisoned = false;
     this.garrisonTarget = null;
+    if (def.capacity) this.garrison = [];
     this.anim = { phase: (this.game ? this.game.rng() : Math.random()) * 6.28, speed: 0, attack: 0, spin: 0, mount: 0 };
     this.speedMul = 1;
     this.attackAnimT = 0;
@@ -332,19 +333,23 @@ export class Unit extends Entity {
   onDeath(attacker) {
     const g = this.game;
     if (this.garrisoned) g.removeFromGarrison(this);
+    // Passengers go down with a destroyed transport, including in deep water.
+    if (this.garrison?.length) {
+      for (const passenger of this.garrison.slice()) if (!passenger.dead) passenger.kill(attacker);
+    }
     g.onUnitKilled(this, attacker);
     if (this.def.classes.includes('cavalry')) g.fx.dust(this.x, this.y, this.z, 6, 1.3);
     g.fx.blood(this.x, this.y, this.z, 5);
   }
 
   setPath(destX, destZ, force = false) {
-    if (!this.def.naval && !this.game.pathFinder) return;
+    if (!this.game.pathFinder) return;
     /* enemies search a grid where gates are shut; allies walk through them */
     const pf = this.game.pfFor ? this.game.pfFor(this) : this.game.pathFinder;
     /* Aim at somewhere the unit can actually reach. Orders land inside wall
        cells and building edges all the time -- a finger on a phone is 40 px
        wide -- and a path to an unreachable point is a unit that never arrives. */
-    if (!this.def.naval && this.game.freeSpotNear) {
+    if (this.game.freeSpotNear) {
       const spot = this.game.freeSpotNear(destX, destZ, this, 5);
       if (spot) { destX = spot[0]; destZ = spot[1]; }
       this._exactGoal = spot ? Math.hypot(spot[0] - this.x, spot[1] - this.z) : Infinity;
@@ -429,13 +434,6 @@ export class Unit extends Entity {
   }
 
   moveTo(x, z, force = false) {
-    if (this.def.naval) {
-      // ships ignore the land nav grid
-      this.targetPos = [x, z];
-      this.path = [[x, z]];
-      this.pathIdx = 0;
-      return;
-    }
     this.setPath(x, z, force);
   }
 
@@ -696,7 +694,7 @@ export class Unit extends Entity {
     const g = this.game;
     const b = this.garrisonTarget;
     if (!b || b.dead) { g.removeFromGarrison(this); return; }
-    if (this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 1.5 * dt);
+    if (b.kind === 'building' && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 1.5 * dt);
     this.x = b.x; this.z = b.z;
   }
 
@@ -734,7 +732,7 @@ export class Unit extends Entity {
        has worked before looks for work again by himself, on a slow staggered
        timer -- never taking a unit the player has deliberately parked, and
        never before a manual order has had a moment to land. */
-    if (this.type === 'villager' && !this.noAggro && this.team !== 0) this._selfTask(dt);
+    if ((this.type === 'villager' || this.type === 'fishing_boat') && !this.noAggro && this.team !== 0) this._selfTask(dt);
     // auto-acquire targets based on stance
     if (this.noAggro) return;
     if (this.def.classes.includes('monk')) return;
@@ -867,10 +865,14 @@ export class Unit extends Entity {
   }
 
   updateAttack(dt, stats) {
-    const target = this.target;
+    let target = this.target;
     if (!target || target.dead) { this.target = null; this.state = STATE.IDLE; return; }
-    if (target.garrisoned && target.garrisonTarget && !target.garrisonTarget.dead) {
-      // reachable only through the host building
+    if (target.garrisoned) {
+      const host = target.garrisonTarget;
+      if (!host || host.dead || !this.game.canFight(this.team, host.team)) {
+        this.target = null; this.state = STATE.IDLE; return;
+      }
+      target = this.target = host;
     }
     const d = Math.hypot(target.x - this.x, target.z - this.z);
     const stopAt = this.attackRangeTo(target, stats);
@@ -1019,7 +1021,14 @@ export class Unit extends Entity {
     if (g.calendar) dmg *= g.calendar.attackMul();
     /* Champion: armour-piercing, long-range and execution bonuses */
     if (this.champion && g.champions) dmg = g.champions.modifyOutgoing(this, target, dmg);
-    const isRanged = this.def.range > 1.2 && def.attack > 0;
+    // Fire and demolition ships close to contact; their reach is slightly
+    // above 1.2 m but neither launches arrows.
+    const isRanged = this.def.range > 1.2 && def.attack > 0 && this.type !== 'fire_ship' && !def.suicide;
+    if (def.suicide) {
+      g.explodeArea(target.x, target.z, 3.2, dmg, this, this.team);
+      this.kill(null);
+      return;
+    }
     /* the Still Air omen: an arrow that loses its way never lands. Only
        arrows -- a cannonball is not bothered by a still evening. */
     if (isRanged && g.calendar && g.calendar.omen && g.calendar.omen.arrowMiss
@@ -1036,6 +1045,7 @@ export class Unit extends Entity {
       g.sound.play(this.def.classes.includes('archer') ? 'bow' : 'siegeFire', this.x, this.z);
     } else if (def.attack > 0) {
       target.takeDamage(dmg, this, 'melee');
+      if (this.type === 'fire_ship') g.fx.fire(target.x, target.y + 0.6, target.z, 4, 1.0);
       g.fx.sparks((this.x + target.x) / 2, this.y + 0.9, (this.z + target.z) / 2, 2, [1, 0.9, 0.7]);
       g.sound.play('hit', this.x, this.z);
       /* Cleave: the swing does not stop at the first body. */
@@ -1045,10 +1055,6 @@ export class Unit extends Entity {
         const victims = g.unitsNear(target.x, target.z, def.splash, (u) => u.team !== this.team && !u.dead && u !== target);
         for (const v of victims) v.takeDamage(dmg * 0.45, this, 'melee');
       }
-    }
-    if (this.type === 'demo_ship') {
-      g.explodeArea(this.x, this.z, 3.2, 80, this);
-      this.takeDamage(this.maxHp * 2, this);
     }
   }
 
@@ -1065,7 +1071,7 @@ export class Unit extends Entity {
    */
   _findWork(kind) {
     const g = this.game;
-    const first = kind || this.lastGatherKind || 'wood';
+    const first = this.def.naval ? 'food' : (kind || this.lastGatherKind || 'wood');
     /* His own field, grove or seam first. A farmer sent back to a field he
        was already working should walk eight metres to it, not across the map
        to whichever berry bush the search happens to like today -- and a field
@@ -1081,6 +1087,7 @@ export class Unit extends Entity {
       const node = g.findNearestResource(first, this.x, this.z, r, this);
       if (node) return node;
     }
+    if (this.def.naval) return null;
     for (const other of ['wood', 'food', 'gold', 'stone']) {
       if (other === first) continue;
       for (const r of [90, 260, 900]) {
@@ -1093,7 +1100,10 @@ export class Unit extends Entity {
 
   /** See updateIdle: put an idle villager back to work without being asked. */
   _selfTask(dt) {
-    if (this.carry.amount > 0.01 && this.carry.kind) { this.returnResources(); return; }
+    if (this.carry.amount > 0.01 && this.carry.kind) {
+      if ((this._returnRetryAt || 0) <= this.game.time) this.returnResources();
+      return;
+    }
     this.retaskT = (this.retaskT === undefined ? 1.5 + (this.id % 9) * 0.35 : this.retaskT) - dt;
     if (this.retaskT > 0) return;
     this.retaskT = 3;
@@ -1169,7 +1179,15 @@ export class Unit extends Entity {
          explosion, a notification and a razed farm, which is what harvesting
          your own wheat used to look like. */
       if (node.kind === 'building') g.tryReseedFarm(this, node);
-      else node.kill(this);
+      else {
+        const replacement = g.findReplacementResource(node, this, 18);
+        node.kill(this);
+        if (replacement) {
+          this.gatherTarget = replacement;
+          this.homeNode = replacement;
+          this.moveTo(replacement.x, replacement.z, true);
+        }
+      }
     }
     if (this.carry.amount >= cap - 0.01) this.returnResources();
   }
@@ -1187,10 +1205,10 @@ export class Unit extends Entity {
   returnResources() {
     if (this.carry.amount <= 0 || !this.carry.kind) { this.carry.amount = 0; this.carry.kind = null; return; }
     const g = this.game;
-    const drop = g.findDropoff(this.team, this.carry.kind, this.x, this.z);
+    const drop = g.findDropoff(this.team, this.carry.kind, this.x, this.z, 999, this);
     if (!drop) {
       // no drop-off: deposit instantly at any TC if close (prevents softlock)
-      const tc = g.findDropoff(this.team, 'any', this.x, this.z, 60);
+      const tc = g.findDropoff(this.team, 'any', this.x, this.z, 60, this);
       if (tc && Math.hypot(tc.x - this.x, tc.z - this.z) < 12) {
         g.deposit(this, this.carry.kind, this.carry.amount);
         this.carry.amount = 0;
@@ -1199,6 +1217,7 @@ export class Unit extends Entity {
     }
     this.state = STATE.RETURN;
     this.dropOff = drop;
+    if (!this._returnAnchor) this._returnAnchor = { x: this.x, z: this.z, time: 0 };
     this.approachBuilding(drop, 1.2);
   }
 
@@ -1209,6 +1228,22 @@ export class Unit extends Entity {
       this.dropOff = null;
       this.returnResources();
       if (!this.dropOff) this.state = STATE.IDLE;
+      return;
+    }
+    // A collision or an unreachable drop-off can make an apparently valid
+    // path oscillate indefinitely. Keep the load, but stop retrying the same
+    // impossible route; the player or AI can assign new work.
+    const anchor = this._returnAnchor || (this._returnAnchor = { x: this.x, z: this.z, time: 0 });
+    if (Math.hypot(this.x - anchor.x, this.z - anchor.z) > 0.75) {
+      anchor.x = this.x; anchor.z = this.z; anchor.time = 0;
+    } else if ((anchor.time += dt) > 12) {
+      this._returnAnchor = null;
+      this._returnRetryAt = g.time + 5;
+      this.dropOff = null;
+      this.path = null;
+      this.targetPos = null;
+      this.moving = false;
+      this.state = STATE.IDLE;
       return;
     }
     const d = rectDist(this, drop);
@@ -1236,6 +1271,7 @@ export class Unit extends Entity {
     this.stallT = 0;
     this._clearNear();
     this.returnT = 0;
+    this._returnAnchor = null;
     this.desiredFacing = Math.atan2(drop.x - this.x, drop.z - this.z);
     g.deposit(this, this.carry.kind, this.carry.amount);
     this.turnIn();
@@ -1265,6 +1301,32 @@ export class Unit extends Entity {
     }
   }
 
+  /** Builders return to the resource served by the building they finished. */
+  _gatherAfterConstruction(target) {
+    if (!target || target.dead || target.buildProgress < 1) return false;
+    let node = null;
+    if (target.type === 'farm' && target.amount > 0) node = target;
+    else {
+      const kinds = target.type === 'lumber_camp' ? ['wood']
+        : target.type === 'mining_camp' ? ['gold', 'stone']
+        : target.type === 'mill' ? ['food'] : [];
+      let best = Infinity;
+      for (const kind of kinds) {
+        const candidate = this.game.findNearestResource(kind, target.x, target.z, 18, this);
+        if (!candidate) continue;
+        const d = dist2(candidate.x, candidate.z, target.x, target.z);
+        if (d < best) { best = d; node = candidate; }
+      }
+    }
+    if (!node) return false;
+    this.buildTarget = null;
+    this.gatherTarget = this.homeNode = node;
+    this.lastGatherKind = node.resKind;
+    this.state = STATE.GATHER;
+    this.moveTo(node.x, node.z, true);
+    return true;
+  }
+
   updateBuild(dt, stats) {
     const g = this.game;
     const target = this.buildTarget;
@@ -1284,6 +1346,7 @@ export class Unit extends Entity {
           return;
         }
       }
+      if (this._gatherAfterConstruction(target)) return;
       if (target && target.buildProgress >= 1 && this.lastGatherKind) {
         const node = g.findNearestResource(this.lastGatherKind, this.x, this.z, 26, this);
         if (node) { this.gatherTarget = node; this.state = STATE.GATHER; return; }
@@ -1333,7 +1396,7 @@ export class Unit extends Entity {
       }
       this.buildTarget = null;
       this._clearNear();
-      this.state = STATE.IDLE;
+      if (!this._gatherAfterConstruction(target)) this.state = STATE.IDLE;
     }
   }
 
@@ -1459,6 +1522,23 @@ export class Unit extends Entity {
   updateGarrisonMove(dt, stats) {
     const b = this.garrisonTarget;
     if (!b || b.dead) { this.garrisonTarget = null; this.state = STATE.IDLE; return; }
+    if (b.kind === 'unit') {
+      if (b.team !== this.team || !b.def.capacity || b.garrison.length >= b.def.capacity) {
+        this.garrisonTarget = null; this.state = STATE.IDLE; return;
+      }
+      if (Math.hypot(this.x - b.x, this.z - b.z) <= 4.5) {
+        this.game.boardTransport(this, b); return;
+      }
+      this.repathTimer -= dt;
+      if (!this.path || this.repathTimer <= 0) {
+        const shore = this.game.transportShoreSpot(b, this);
+        if (!shore) { this.garrisonTarget = null; this.state = STATE.IDLE; return; }
+        this.repathTimer = 1.5;
+        this.moveTo(shore[0], shore[1], true);
+      }
+      if (this.targetPos) this.stepMovement(dt, stats);
+      return;
+    }
     const d = rectDist(this, b);
     if (d > 1.0 && !(this.stallT > 0.8 && d < 3.5)) {
       this.repathTimer -= dt;
@@ -1507,34 +1587,26 @@ export class Unit extends Entity {
       // per unit per tick, for a vector that was already unit length.)
       const nx = this.x + dx * step;
       const nz = this.z + dz * step;
-      /* A full passability test is a terrain sample, a slope lookup and a
-         building query -- and it was being paid three times a tick for every
-         man on the field. Walk is checked once per two-metre nav cell instead:
-         inside a cell the ground is the same ground, so a unit that was free
-         to stand here is free to stand a hand's width further on. Walls,
-         cliffs and buildings are all stamped at cell scale, so nothing can be
-         slipped through that the pathfinder would have refused. */
+      /* Passability must be checked at the actual next position. A nav cell
+         is only a coarse pathfinding approximation: a shoreline or a building
+         edge can cross its interior. */
       if (this.def.naval) {
-        this.x = clamp(nx, -250, 250);
-        this.z = clamp(nz, -250, 250);
+        if (!g.isPassable(nx, nz, this)) {
+          // A stale or partial route must never drive a ship across land.
+          this.path = null;
+          this.pathIdx = 0;
+          this.moving = false;
+          this.repathTimer = 0;
+          return false;
+        }
+        this.x = nx;
+        this.z = nz;
         this.desiredFacing = Math.atan2(dx, dz);
         remaining -= step;
         continue;
       }
-      /* The cell the man is *standing in*, tested against the cell he last
-         proved walkable. Standing in a cell that was checked is the proof;
-         stepping into a new one is the question. Teleports (unstick, a
-         garrison door, a crown changing hands) move the man to a different
-         cell, so the proof lapses by itself. */
-      /* the key is the nav grid's own index for the cell (row-major, z first),
-         so it can be looked up in the hazard counters and in nothing else */
-      const N = g.navN || 256;
-      const hereKey = (((this.z + g.navHalf) * g.navInv) | 0) * N + (((this.x + g.navHalf) * g.navInv) | 0);
-      const haz = g.navHaz;
-      if ((this._passKey === hereKey && !(haz && haz[hereKey]))
-          || g.isPassable(nx, nz, this)) {
+      if (g.isPassable(nx, nz, this)) {
         this.x = nx; this.z = nz;
-        this._passKey = (((nz + g.navHalf) * g.navInv) | 0) * N + (((nx + g.navHalf) * g.navInv) | 0);
         this._wpBlock = 0;
       } else {
         /* A waypoint that stays blocked is a waypoint from a stale grid: the
@@ -1642,7 +1714,7 @@ export class Unit extends Entity {
       remaining -= step;
       // Crowding near a drop-off or a tree only stalls the economy, so the
       // separation push is skipped within a few metres of the destination.
-      const nearGoal = this.targetPos ? Math.hypot(this.targetPos[0] - this.x, this.targetPos[1] - this.z) < 3.5 : true;
+      const nearGoal = this.targetPos ? (this.targetPos[0] - this.x) ** 2 + (this.targetPos[1] - this.z) ** 2 < 3.5 ** 2 : true;
       if (!nearGoal && !this.def.naval && this.radius > 0.2) {
         const near = g.spatial.query(this.x, this.z, this.radius + 0.85);
         let pushX = 0, pushZ = 0;
@@ -1670,8 +1742,8 @@ export class Unit extends Entity {
       if (g.rng() < dt * 0.35 && !this.def.naval && !this.def.siege && (this.type === 'knight' || this.type === 'war_elephant' || this.type === 'scout_cavalry' || this.type === 'cataphract' || this.type === 'hero_general')) {
         g.fx.dust(this.x, this.y, this.z, 1, 0.7);
       }
-      const wpd = Math.hypot(wp[0] - this.x, wp[1] - this.z);
-      if (wpd < 0.3) {
+      const wpd2 = (wp[0] - this.x) ** 2 + (wp[1] - this.z) ** 2;
+      if (wpd2 < 0.3 ** 2) {
         this.pathIdx++;
         if (this.pathIdx >= this.path.length) { this.moving = false; return true; }
       }
@@ -2027,7 +2099,11 @@ export class ResourceNode extends Entity {
         this.moveT -= dt;
         const nx = this.x + Math.cos(this.wanderDir || 0) * dt * 0.7;
         const nz = this.z + Math.sin(this.wanderDir || 0) * dt * 0.7;
-        if (!this.game.isWater(nx, nz) && Math.hypot(nx, nz) < 245) { this.x = nx; this.z = nz; this.y = this.game.heightAt(nx, nz); }
+        if (!this.game.isWater(nx, nz) && Math.hypot(nx, nz) < 245) {
+          const oldX = this.x, oldZ = this.z;
+          this.x = nx; this.z = nz; this.y = this.game.heightAt(nx, nz);
+          this.game.resourceSpatial?.move(this, oldX, oldZ);
+        }
         this.facing = this.wanderDir || this.facing;
       }
     }

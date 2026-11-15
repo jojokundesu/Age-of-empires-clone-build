@@ -65,6 +65,45 @@ await app.boot();
 check('renderer ready', () => assert(app.renderer && app.renderer.ready, 'renderer not ready'));
 check('menu visible after boot', () => assert(!document.getElementById('menuScreen').classList.contains('hidden'), 'menu hidden'));
 check('boot screen dismissed', () => assert(document.getElementById('bootScreen').classList.contains('hidden'), 'boot still up'));
+check('explicit graphics choices survive low-end GPU detection', () => {
+  const before = { quality: app.settings.quality, autoQuality: app.settings.autoQuality };
+  try {
+    app.settings.quality = 'ultra'; app.settings.autoQuality = false;
+    app._initGovernor();
+    assert(app.governor.tier === 'ultra' && app.governor.pinTier, 'explicit tier was overridden');
+    assert(app.menu.state.quality === 'ultra', 'settings sheet displays a different tier');
+    app.settings.quality = 'ultra'; app.settings.autoQuality = true;
+    app._initGovernor();
+    assert(app.governor.tier === 'medium', 'automatic tier did not classify the low-end GPU');
+    assert(app.menu.state.quality === 'medium', 'settings sheet did not follow automatic choice');
+  } finally {
+    Object.assign(app.settings, before);
+    app._initGovernor();
+  }
+});
+
+check('graphics settings can return to adaptive mode', () => {
+  const before = { ...app.settings }, oldSaved = localStorage.getItem('imperial-crown-v6-settings');
+  try {
+    app.menu.openSettings();
+    document.querySelector('#setQuality [data-q="ultra"]').click();
+    assert(app.settings.autoQuality === false && app.governor.pinTier && app.governor.tier === 'ultra', 'manual tier was not pinned');
+    app.governor.setScale(0.7);
+    document.getElementById('setSound').click();
+    assert(Math.abs(app.governor.scale - 0.7) < 0.001, 'unrelated setting reset the performance governor');
+    document.querySelector('#setQuality [data-q="auto"]').click();
+    assert(app.settings.autoQuality === true && !app.governor.pinTier, 'automatic mode was not restored');
+    assert(JSON.parse(localStorage.getItem('imperial-crown-v6-settings')).autoQuality === true, 'automatic mode did not persist');
+    assert(document.querySelector('#setQuality [data-q="auto"]').classList.contains('active'), 'auto button not selected');
+  } finally {
+    app.menu.closeModal();
+    app.settings = before;
+    Object.assign(app.menu.state, before);
+    if (oldSaved === null) localStorage.removeItem('imperial-crown-v6-settings');
+    else localStorage.setItem('imperial-crown-v6-settings', oldSaved);
+    app._initGovernor();
+  }
+});
 
 console.log('\nMATCH START');
 await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, quality: 'medium' });
@@ -78,6 +117,33 @@ check('camera framed on base', () => {
   const b = app.game.world.playerBase;
   const d = Math.hypot(app.camera.target[0] - b.x, app.camera.target[2] - b.z);
   assert(d < 40, 'camera is ' + d.toFixed(1) + ' m from base');
+});
+await acheck('graphics recovery respects background and existing pause', async () => {
+  const oldHidden = Object.getOwnPropertyDescriptor(document, 'hidden');
+  let hidden = false;
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+  const raf = fn => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf; window.requestAnimationFrame = raf;
+  try {
+    app.paused = false;
+    app.canvas.dispatchEvent(new window.Event('webglcontextlost', { cancelable: true }));
+    assert(app.paused && app._recoveringGraphics, 'loss did not pause');
+    hidden = true; document.dispatchEvent(new window.Event('visibilitychange'));
+    app.canvas.dispatchEvent(new window.Event('webglcontextrestored'));
+    await app._graphicsRecovery;
+    assert(app.paused && !app._recoveringGraphics, 'background recovery resumed game');
+    hidden = false; document.dispatchEvent(new window.Event('visibilitychange'));
+    assert(!app.paused, 'game did not resume on foreground');
+    app.paused = true;
+    app.canvas.dispatchEvent(new window.Event('webglcontextlost', { cancelable: true }));
+    app.canvas.dispatchEvent(new window.Event('webglcontextrestored'));
+    await app._graphicsRecovery;
+    assert(app.paused, 'recovery resumed an already paused game');
+  } finally {
+    app.paused = false;
+    if (oldHidden) Object.defineProperty(document, 'hidden', oldHidden); else delete document.hidden;
+    globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = globalThis.requestAnimationFrame;
+  }
 });
 check('start pop cap and villagers', () => {
   const t = app.game.teams.get(1);
@@ -207,6 +273,24 @@ check('pause + resume', () => {
   app.menu.closeModal();
   for (let i = 0; i < 60; i++) step();
   assert(app.game.time > t, 'time did not resume');
+});
+check('native back closes pause and in-game overlays without leaving the match', () => {
+  const game = app.game;
+  app.openPause();
+  assert(app.menu.isModalOpen() && app.paused, 'pause is not an open overlay');
+  app.menu.closeModal();
+  assert(app.running && !app.paused && app.game === game, 'closing pause did not resume');
+  app.menu.openModal('TECH', 'Technology', '<p>Overlay</p>');
+  assert(app.menu.isModalOpen() && app.paused, 'in-game overlay is not modal');
+  app.menu.closeModal();
+  assert(app.running && !app.paused && app.game === game, 'closing overlay did not resume');
+});
+check('explicit quit prompts and autosaves; cancellation resumes', () => {
+  app.requestQuit();
+  assert(app.menu.isModalOpen() && app.paused, 'confirmation missing');
+  assert(window.localStorage.getItem('imperial-crown-v6-save'), 'quit did not autosave');
+  document.querySelector('[data-quit=cancel]').click();
+  assert(app.running && !app.paused && app.game, 'cancel did not resume');
 });
 check('save writes a campaign', () => {
   assert(app.saveMatch(), 'save failed');
@@ -406,6 +490,114 @@ await acheck('a reload restores the garrison and never drops a soldier', async (
     if (!u.garrisoned) continue;
     assert(u.garrisonTarget && !u.garrisonTarget.dead, 'a man is garrisoned in nothing');
   }
+});
+
+await acheck('transport passengers survive save and reload', async () => {
+  const g = app.game;
+  let ship = null;
+  for (let z = -240; z <= 240 && !ship; z += 8) for (let x = -240; x <= 240 && !ship; x += 8) {
+    if (g.isPassable(x, z, { def: { naval: true }, radius: 0.4, team: 1 }))
+      ship = g.spawnUnitRaw('transport_ship', 1, x, z);
+  }
+  assert(ship, 'no navigable water for transport');
+  for (let i = 0; i < 3; i++) {
+    const u = g.spawnUnitRaw('archer', 1, g.world.playerBase.x + 7 + i, g.world.playerBase.z + 7);
+    assert(g.boardTransport(u, ship, true), 'could not board passenger');
+  }
+  g.recomputePop();
+  const pop = g.teams.get(1).popUsed;
+  assert(app.saveMatch(), 'transport save failed');
+  const save = JSON.parse(window.localStorage.getItem('imperial-crown-v6-save'));
+  const raf = fn => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf; window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, load: save });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const loaded = app.game.units.find(u => !u.dead && u.type === 'transport_ship' && u.team === 1);
+  assert(loaded && loaded.garrison.length === 3, 'transport or passengers lost');
+  assert(loaded.garrison.every(u => u.garrisoned && u.garrisonTarget === loaded && !u.dead), 'invalid passenger references');
+  app.game.recomputePop();
+  assert(app.game.teams.get(1).popUsed === pop, 'population changed on reload');
+});
+
+await acheck('sacred site ownership and victory clock survive reload', async () => {
+  const g = app.game;
+  const sites = g.buildings.filter(b => b.poiType === 'sacred');
+  assert(sites.length > 0, 'the map has no sacred sites');
+  for (const site of sites) site.siteOwner = 1;
+  g.victory = 'sacred';
+  g.sacredClock = { team: 1, time: 73.5 };
+  assert(app.saveMatch(), 'sacred match save failed');
+  const save = JSON.parse(window.localStorage.getItem('imperial-crown-v6-save'));
+  const raf = fn => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf; window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, load: save });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const restored = app.game.buildings.filter(b => b.poiType === 'sacred');
+  assert(restored.length === sites.length && restored.every(b => b.siteOwner === 1), 'site ownership was lost');
+  assert(app.game.victory === 'sacred' && app.game.sacredClock.team === 1 && app.game.sacredClock.time === 73.5, 'sacred timer was lost');
+});
+
+await acheck('moving herds and depleted resources survive a save and reload', async () => {
+  const g = app.game;
+  const herd = g.resources.find(r => r.herd && !r.dead);
+  const exhausted = g.resources.find(r => !r.herd && !r.dead && r !== herd);
+  assert(herd && exhausted, 'map needs a herd and a resource');
+  herd.x += 10; herd.z += 4; herd.amount = 123;
+  const { x, z, worldResourceIndex: index } = herd;
+  const exhaustedIndex = exhausted.worldResourceIndex;
+  exhausted.dead = true; exhausted.amount = 0;
+  assert(app.saveMatch(), 'resource save failed');
+  const save = JSON.parse(window.localStorage.getItem('imperial-crown-v6-save'));
+  const raf = fn => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf; window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, load: save });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const restored = app.game.resources.find(r => r.worldResourceIndex === index);
+  const missing = app.game.resources.find(r => r.worldResourceIndex === exhaustedIndex);
+  assert(restored && !restored.dead && restored.amount === 123, 'the moving herd disappeared or lost its yield');
+  assert(Math.abs(restored.x - x) < 0.06 && Math.abs(restored.z - z) < 0.06, 'the herd returned to its spawn instead of its saved position');
+  assert(app.game.resourceSpatial.query(restored.x, restored.z, 1).includes(restored), 'restored herd is missing from the spatial index');
+  assert(!missing || missing.dead, 'depleted resource reappeared');
+});
+
+await acheck('worker cargo and standing orders survive reload', async () => {
+  const g = app.game;
+  const workers = g.units.filter(u => u.team === 1 && u.type === 'villager' && !u.dead && !u.garrisoned).slice(0, 3);
+  const tree = g.resources.find(r => r.resKind === 'wood' && !r.dead && r.amount > 30);
+  assert(workers.length === 3 && tree, 'workers and wood are required');
+  let foundation = null;
+  const base = g.playerBase;
+  for (let x = base.x - 25; x <= base.x + 25 && !foundation; x += 2)
+    for (let z = base.z - 25; z <= base.z + 25 && !foundation; z += 2)
+      if (g.canPlaceAt('house', 1, x, z).ok) foundation = g.placeBuilding('house', 1, x, z, { free: true });
+  assert(foundation && foundation.buildProgress < 1, 'no foundation');
+  g.orderGather([workers[0], workers[1]], tree);
+  workers[1].carry = { kind: 'wood', amount: 11 };
+  workers[1].returnResources();
+  assert(workers[1].state === 'return', 'the carrier did not begin returning');
+  g.orderBuild([workers[2]], foundation);
+  const soldier = g.spawnUnitRaw('spearman', 1, base.x + 8, base.z + 8);
+  g.orderMove([soldier], base.x + 22, base.z + 18, false);
+  const live = g.units.filter(u => !u.dead);
+  const indices = [...workers, soldier].map(u => live.indexOf(u));
+  assert(app.saveMatch(), 'order save failed');
+  const save = JSON.parse(window.localStorage.getItem('imperial-crown-v6-save'));
+  const raf = fn => setTimeout(() => fn(performance.now()), 0);
+  globalThis.requestAnimationFrame = raf; window.requestAnimationFrame = raf;
+  await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', seed: 20261, load: save });
+  globalThis.requestAnimationFrame = () => 0; window.requestAnimationFrame = () => 0;
+  const [gatherer, carrier, builder, marcher] = indices.map(i => app.game.units[i]);
+  assert(gatherer.state === 'gather' && gatherer.gatherTarget?.worldResourceIndex === tree.worldResourceIndex, 'gather assignment lost');
+  assert(carrier.state === 'return' && carrier.carry.kind === 'wood' && carrier.carry.amount === 11 && carrier.dropOff, 'returning cargo or drop-off lost');
+  assert(builder.state === 'build' && builder.buildTarget?.type === 'house' && builder.buildTarget.buildProgress < 1, 'construction assignment lost');
+  assert(marcher.state === 'move' && marcher.destX !== null && marcher.destZ !== null, 'move order lost');
+  const drop = carrier.dropOff, woodBefore = app.game.teams.get(1).res.wood;
+  carrier.x = drop.x + (drop.def.size || 3) / 2 + 0.8; carrier.z = drop.z;
+  const house = builder.buildTarget, progressBefore = house.buildProgress;
+  builder.x = house.x + (house.def.size || 3) / 2 + 0.8; builder.z = house.z;
+  for (let i = 0; i < 90; i++) app.game.update(1 / 30);
+  assert(app.game.teams.get(1).res.wood >= woodBefore + 11, 'restored carrier did not deliver its saved cargo');
+  assert(house.buildProgress > progressBefore, 'restored builder did not resume construction');
 });
 
 check('quit the war', () => {

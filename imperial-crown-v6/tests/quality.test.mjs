@@ -102,6 +102,8 @@ check('pickInitialTier respects an explicit saved choice, then the device', () =
   assert(pickInitialTier({ ...phone, savedTier: 'nonsense' }).tier === 'medium', 'garbage saved tier');
   // a mobile with an unreadable renderer string is still a mobile
   assert(pickInitialTier({ renderer: '', ua: phone.ua }).tier === 'low', 'unknown mobile');
+  assert(pickInitialTier({ renderer: '', ua: phone.ua, savedTier: 'high', cores: 2, mem: 1 }).tier === 'high', 'saved choice on unknown mobile');
+  assert(pickInitialTier({ ...phone, savedTier: 'ultra', cores: 2, mem: 1 }).tier === 'ultra', 'saved choice on low-memory mobile');
   // a desktop with a weak string is not punished twice
   assert(pickInitialTier({ renderer: 'Mali-G52', ua: 'Mozilla/5.0 (X11; Linux)' }).tier === 'medium', 'desktop mid');
   assert(pickInitialTier(phone).gpu.name === 'Adreno 610', 'gpu name');

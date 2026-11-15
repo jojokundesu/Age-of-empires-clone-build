@@ -54,7 +54,7 @@ function check(name, fn) {
 function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
 
 const { Menu } = await import('../src/game/menu.js');
-const { UI } = await import('../src/game/ui.js');
+const { UI, formatResource } = await import('../src/game/ui.js');
 const { Camera } = await import('../src/gfx/camera.js');
 const { Game } = await import('../src/sim/game.js');
 const { generateWorld } = await import('../src/sim/worldgen.js');
@@ -64,6 +64,13 @@ const { FX } = await import('../src/gfx/fx.js');
 
 const audio = { play() {}, unlock() {}, setMusic() {}, setEnabled() {}, startMusic() {}, stopMusic() {} };
 
+
+check('large resource values are compact and never rounded up', () => {
+  assert(formatResource(9999) === '9999', 'small values must remain exact');
+  assert(formatResource(10999) === '10.9k', 'thousands');
+  assert(formatResource(1234567) === '1.2m', 'millions');
+  assert(formatResource(1234567890) === '1.2b', 'billions');
+});
 
 console.log('\nMENU');
 let started = null;
@@ -189,6 +196,14 @@ check('the clock explains what the current phase is worth', () => {
 check('resources render', () => {
   const food = document.getElementById('resFood').textContent;
   assert(food !== '0' || game.teams.get(1).res.food > 0, 'food not shown');
+  const st = game.teams.get(1), before = st.res.food;
+  st.res.food = 10999;
+  ui.updateText();
+  const node = document.getElementById('resFood');
+  assert(node.textContent === '10.9k', 'large stockpile is not compact');
+  assert(node.parentElement.title === 'food: 10999', 'exact stockpile is not available');
+  st.res.food = before;
+  ui.updateText();
 });
 
 const villager = game.units.find((u) => u.team === 1 && u.type === 'villager');

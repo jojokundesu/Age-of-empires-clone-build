@@ -33,6 +33,16 @@ const STANCE_LABEL = { aggressive: 'Aggressive', defensive: 'Defensive', stand: 
 /** Deeds needed for the next rank of an office. */
 function rankTarget(rank) { return RANK_AT[Math.min(RANK_AT.length - 1, rank)] || 0; }
 
+// Keep large stockpiles readable on narrow phones without rounding up money
+// the player cannot spend. The precise count remains available in the title.
+export function formatResource(value) {
+  const n = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
+  if (n < 10000) return String(n);
+  const units = [[1e12, 't'], [1e9, 'b'], [1e6, 'm'], [1e3, 'k']];
+  const [divisor, suffix] = units.find(([size]) => n >= size);
+  return `${Math.floor(n / divisor * 10) / 10}${suffix}`;
+}
+
 function costText(cost) {
   if (!cost) return '';
   const parts = [];
@@ -62,7 +72,7 @@ export class UI {
       'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer', 'seasonChip', 'realmChip', 'climateChip',
       'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnCourt', 'courtBadge',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
-      'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
+      'leftRail', 'railToggle', 'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
       'minimap', 'miniStamp', 'btnGotoTC', 'btnMiniMode', 'btnFormation',
       'inspIcon', 'inspName', 'inspSub', 'inspMultiBtn', 'hpWrap', 'hpFill', 'hpText',
       'inspStats', 'queueWrap', 'queueFill', 'queueText', 'queueDots',
@@ -102,6 +112,15 @@ export class UI {
     const listen = (node, type, fn, options) => { if (!node) return; node.addEventListener(type, fn, options); this._listeners.push([node, type, fn, options]); };
     const click = (node, fn) => listen(node, 'click', (e) => { e.preventDefault(); this.audio?.play('click'); fn(e); });
 
+    if (el.leftRail && el.railToggle) {
+      el.leftRail.classList.remove('rail-open');
+      el.railToggle.setAttribute('aria-expanded', 'false');
+      click(el.railToggle, () => {
+        const open = el.leftRail.classList.toggle('rail-open');
+        el.railToggle.setAttribute('aria-expanded', String(open));
+        if (!open) el.leftRail.scrollTop = 0;
+      });
+    }
     click(el.btnIdle, () => this.cycleIdleVillager());
     click(el.btnArmy, () => this.selectArmy());
     click(el.btnTech, () => this.openTech());
@@ -476,6 +495,16 @@ export class UI {
     }
 
     /* ---- units (and mixed selections) ---- */
+    const transports = units.filter((u) => u.def.capacity && u.garrison?.length);
+    if (transports.length) {
+      const aboard = transports.reduce((n, u) => n + u.garrison.length, 0);
+      out.push({ icon: 'boot', label: 'Unload', cost: `${aboard} aboard`, primary: true,
+        action: () => {
+          const released = transports.reduce((n, ship) => n + g.unloadTransport(ship), 0);
+          this.toast(released ? `${released} unit${released === 1 ? '' : 's'} unloaded` : 'Move the transport closer to a free shore', released ? 'info' : 'warn');
+          this.refreshCommands(true);
+        } });
+    }
     const soldiers = units.filter((u) => u.def.attack > 0 && !u.def.classes.includes('villager'));
     const villagers = units.filter((u) => u.type === 'villager');
     if (villagers.length) {
@@ -486,6 +515,9 @@ export class UI {
         action: () => { this.input.armed = { kind: 'repair' }; this.toast('Tap a damaged building to repair'); }
       });
     }
+    if (units.some((u) => u.type === 'fishing_boat') && !villagers.length) {
+      out.push({ icon: 'fish', label: 'Fish', primary: true, action: () => { this.input.armed = { kind: 'gather' }; this.toast('Tap a fish shoal to gather'); } });
+    }
     if (soldiers.length) {
       out.push({
         icon: 'sword', label: 'Atk-Move', primary: true,
@@ -494,8 +526,8 @@ export class UI {
       });
       out.push({ icon: 'shield', label: 'Patrol', action: () => { this.input.armed = { kind: 'patrol' }; this.toast('Tap the ground to patrol'); } });
     }
-    if (units.length && soldiers.length) {
-      out.push({ icon: 'castle', label: 'Garrison', action: () => { this.input.armed = { kind: 'garrison' }; this.toast('Tap a building to garrison'); } });
+    if (units.some((u) => !u.def.naval)) {
+      out.push({ icon: 'castle', label: 'Garrison', action: () => { this.input.armed = { kind: 'garrison' }; this.toast('Tap a friendly building or transport'); } });
     }
     const monks = units.filter((u) => u.def.classes.includes('monk'));
     if (monks.length) {
@@ -783,9 +815,9 @@ export class UI {
   /* ---------------- selection helpers ---------------- */
   cycleIdleVillager() {
     const g = this.game;
-    const idle = g.units.filter((u) => !u.dead && u.team === 1 && u.type === 'villager' &&
+    const idle = g.units.filter((u) => !u.dead && !u.garrisoned && u.team === 1 && (u.type === 'villager' || u.type === 'fishing_boat') &&
       (u.state === STATE.IDLE || u.state === STATE.MOVE && !u.path));
-    if (!idle.length) { this.toast('No idle villagers'); return; }
+    if (!idle.length) { this.toast('No idle villagers or fishing boats'); return; }
     this._idleIdx = ((this._idleIdx || 0) + 1) % idle.length;
     const u = idle[this._idleIdx];
     g.setSelection([u]);
@@ -849,14 +881,14 @@ export class UI {
   setFormation(style) {
     const g = this.game;
     g.formationStyle = style;
-    const label = { box: 'Box', line: 'Line', wedge: 'Wedge', column: 'Column' }[style] || style;
+    const label = { box: 'Box', line: 'Line', staggered: 'Staggered', wedge: 'Wedge', column: 'Column' }[style] || style;
     this.toast(`Formation: ${label}`, 'info');
     this.sig = '';
     this.refreshCommands(true);
   }
 
   cycleFormation() {
-    const order = ['box', 'line', 'wedge', 'column'];
+    const order = ['box', 'line', 'staggered', 'wedge', 'column'];
     const next = order[(order.indexOf(this.game.formationStyle) + 1) % order.length];
     this.setFormation(next);
   }
@@ -1321,7 +1353,14 @@ export class UI {
     const setNum = (node, val, key) => {
       if (last[key] === val) return;
       last[key] = val;
-      if (node) node.textContent = val;
+      if (node) {
+        node.textContent = formatResource(val);
+        const chip = node.closest('[data-res]');
+        if (chip) {
+          chip.title = `${key}: ${val}`;
+          chip.setAttribute('aria-label', `${key}: ${val}`);
+        }
+      }
     };
     setNum(el.resFood, Math.floor(t.res.food), 'food');
     setNum(el.resWood, Math.floor(t.res.wood), 'wood');
@@ -1348,6 +1387,14 @@ export class UI {
         str = `\u2726 ${fmtTime(left)}`;
         side = w.theirs > w.mine ? 'enemy' : 'mine';
         done = left <= 0;
+      } else if (g.victory === 'sacred') {
+        const sacred = g.sacredStatus();
+        if (sacred?.team) {
+          const left = Math.max(0, Math.ceil(sacred.hold - sacred.time));
+          str = `✦ ${fmtTime(left)}`;
+          side = sacred.team === g.playerTeam ? 'mine' : 'enemy';
+          done = left <= 0;
+        } else if (sacred) str = `✦ ${sacred.owned}/${sacred.total}`;
       } else if (g.victory === 'supremacy' && g.supremacyClock) {
         const left = Math.max(0, Math.ceil(g.supremacyClock - g.time));
         const board = g.scoreboard ? g.scoreboard() : null;
@@ -1355,8 +1402,8 @@ export class UI {
         side = board && board.length && board[0].team !== 1 ? 'enemy' : 'mine';
         done = left <= 0;
       }
-      if (last.wonder !== str) {
-        last.wonder = str;
+      if (last.wonder !== str || last.wonderSide !== side || last.wonderDone !== done) {
+        last.wonder = str; last.wonderSide = side; last.wonderDone = done;
         el.wonderTimer.textContent = str;
         el.wonderTimer.classList.toggle('hidden', !str);
         el.wonderTimer.dataset.side = side;
@@ -1513,7 +1560,7 @@ export class UI {
     }
     // idle badge
     let idle = 0;
-    for (const u of g.units) if (!u.dead && u.team === 1 && u.type === 'villager' && u.state === STATE.IDLE) idle++;
+    for (const u of g.units) if (!u.dead && !u.garrisoned && u.team === 1 && (u.type === 'villager' || u.type === 'fishing_boat') && u.state === STATE.IDLE) idle++;
     if (last.idle !== idle) {
       last.idle = idle;
       if (el.idleBadge) {
@@ -1853,8 +1900,8 @@ export class UI {
       const b = build[i];
       if (b.dead) continue;
       if (b.team === 1 || g.isVisible(b.x, b.z)) {
-        ctx.fillStyle = b.team === TEAM_NEUTRAL ? '#b9a678' : mapColour(b.team, g);
-        const s = b.def.ageAdvance ? 5 : 3.4;
+        ctx.fillStyle = b.poiType === 'sacred' ? (b.siteOwner ? mapColour(b.siteOwner, g) : '#ffdb7b') : b.team === TEAM_NEUTRAL ? '#b9a678' : mapColour(b.team, g);
+        const s = b.poiType === 'sacred' ? 5 : b.def.ageAdvance ? 5 : 3.4;
         ctx.fillRect(px(b.x) - s / 2, pz(b.z) - s / 2, s, s);
       }
     }
@@ -1909,7 +1956,8 @@ export class UI {
        banner picture a player saw. */
     const crowns = g.crowns || 2;
     const winDesc = {
-      wonder: 'Your wonder stood unchallenged for two hundred seconds. History will remember.',
+      wonder: 'Your wonder stood unchallenged for four minutes. History will remember.',
+      sacred: 'Your monks held every sacred site for three minutes.',
       regicide: crowns > 2 ? 'Every rival king is dead. Three thrones, one crown.' : 'The enemy king is dead. Their lords kneel before yours.',
       dominance: 'Nothing of the enemy stands. The land is yours by right of arms.',
       supremacy: crowns > 2 ? 'The clock ran out with your kingdom the strongest on the island. The others bend the knee.' : 'The time of decision came, and your realm stood strongest. The war is won.',
@@ -1917,6 +1965,7 @@ export class UI {
     };
     const loseDesc = {
       wonder: 'Their wonder stood unchallenged. The chronicles will not be kind.',
+      sacred: 'A rival held every sacred site for three minutes.',
       regicide: 'Your king has fallen. The line ends here.',
       dominance: 'Not one stone of yours still stands. There is nothing left to defend.',
       supremacy: 'The clock ran out with another crown stronger than yours. The war is theirs by right of strength.',

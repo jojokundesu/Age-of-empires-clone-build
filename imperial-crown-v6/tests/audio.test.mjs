@@ -123,6 +123,20 @@ check('unlock() is idempotent and resumes a suspended context', () => withFakeWi
   a.stopMusic();
 }));
 
+check('lifecycle resume respects user mute', () => withFakeWindow(() => {
+  const a = new Audio();
+  a.unlock();
+  a.setEnabled(false);
+  a.ctx.state = 'suspended';
+  a.resume();
+  assert(a.ctx.state === 'suspended', 'muted context resumed');
+  a.unlock();
+  assert(a.ctx.state === 'suspended', 'unlock bypassed user mute');
+  a.setEnabled(true);
+  assert(a.ctx.state === 'running', 'unmuting did not resume context');
+  a.stopMusic();
+}));
+
 check(`every sound renders (${SOUND_NAMES.length} names)`, () => withFakeWindow((calls) => {
   const a = new Audio();
   a.unlock();

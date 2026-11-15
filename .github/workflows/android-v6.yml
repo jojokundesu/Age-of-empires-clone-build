@@ -124,49 +124,22 @@ jobs:
           set -euo pipefail
           TAG="v${VERSION}-preview"
           cat > "$RUNNER_TEMP/v6-release-notes.md" <<'NOTES'
-          ## Imperial Crown 3D v6.3.1 — Android preview
+          ## Imperial Crown 3D — Android preview
 
-          Built from this commit and verified in this run: the whole regression suite, the Chromium
-          first-person and panel pass, the 892x412 phone-layout check, the signatures, the alignment,
-          the package identity and every byte of the bundled web app.
+          This is a testing build, not a production release. The workflow runs the
+          regression and browser suites and checks the APK's signatures, alignment,
+          identity and bundled web assets before publishing it.
 
-          ### The spellbook can no longer vanish
+          The v6 package is separate from v5 and is signed with the repository's
+          public demo key. It can update earlier v6 preview builds signed with
+          that key when its version code is newer.
 
-          The cause was in the Workshop host, not in the spells. It retired a mod on the **first**
-          exception from any hook, so one bad frame anywhere — a storm, a stray damage event, a save
-          that came back slightly different — took the entire Arcane Order off the field for the rest
-          of the match. The only trace was one toast nobody was looking at.
+          Android 7.0 or newer, OpenGL ES 3.0 and a working WebGL2 implementation
+          are required. Browser emulation does not establish real-device WebView
+          compatibility, performance, heat, battery use or touch ergonomics.
 
-          It is a tally now: eight failures inside four seconds still retires a genuinely broken mod;
-          one failure in an hour is a hiccup a mod survives. And the Order **rebuilds a lost book** —
-          any live caster without arcane state gets its rank and mana back on the next tick, the
-          first-person shelf no longer hides itself just because that state blinked, and a mage whose
-          yard is too crowded to land in is put down beside the hall instead of the respawn timer
-          quietly stalling for ever.
-
-          ### The enemy has a mage, and he spams
-
-          The Order answers every crown, not only yours. A rival town gets its man twelve seconds in,
-          under your rules: one per team, 45 seconds to come back at Apprentice rank. He studies on
-          his own as the match goes on, walks with his army instead of standing in his yard, and casts
-          through the same code the player does — Meteor on a real cluster, Frost Nova when the ring
-          closes, Fireball and Ice Lance on the man worth killing, golems and meteors against
-          buildings, and SKYFALL once a minute at Ascendant against an army. At rank 6 that is roughly
-          a spell every half second. A red **Enemy mage** chip appears on the HUD when he is close.
-
-          In the Grand Sandbox the Free Company's mage keeps his hands to himself while the peace
-          holds, and opens the book the moment it is broken.
-
-          Nothing else from 6.2.0 or 6.3.0 was changed: the mana and cooldown ladder, three SKYFALLs a
-          day, one mage per team, no duplicate spells, golems by rank, the 30 m blink, casting while
-          running, the ice, the Codex, literal placement, and the Sandbox's third party are all as
-          they were.
-
-          It installs **over 6.3.0** (same key, versionCode 60301) and stays beside v5. Signed with the
-          repository's public demo key for testing. Sustained frame rate, heat and battery on the
-          physical Realme 9i are still unmeasured -- that needs the phone.
-
-          Download `imperial-crown-3d-v6.apk` below; the SHA-256 file lets you verify it.
+          Download `imperial-crown-3d-v6.apk` below; verify it with the accompanying
+          SHA-256 file. Back up important data before testing a preview build.
           NOTES
           if gh release view "$TAG" >/dev/null 2>&1; then
             existing=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/$TAG" --jq '.object.sha')

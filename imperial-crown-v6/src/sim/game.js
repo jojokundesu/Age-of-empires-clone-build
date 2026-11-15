@@ -4,6 +4,7 @@
    production, combat, vision and victory. Written to be stepping
    friendly: one call to update(dt) advances everything by dt.
    ============================================================ */
+import { DOMAIN } from './hydrology.js';
 import { Court } from './court.js';
 import { Veterancy } from './veterancy.js';
 import { Morale } from './morale.js';
@@ -62,7 +63,8 @@ export class Game {
     this.difficultyKey = opts.difficulty || 'standard';
     this.difficulty = DIFFICULTY[this.difficultyKey] || DIFFICULTY.standard;
     this.playerTeam = TEAM_PLAYER;
-    this.aiSpeed = this.difficultyKey === 'extreme' ? 1.18 : (this.difficultyKey === 'hard' ? 1.08 : 1);
+    // Opponents pay the same costs and use the same production/research speed.
+    this.aiSpeed = 1;
     this.time = 0;
     this.frame = 0;
     this.running = true;
@@ -138,22 +140,23 @@ export class Game {
     this.pathFinder.lineBlocked = fine;
     this.pathFinderEnemy.lineBlocked = fine;
     this.pathFinderEnemy.setGrid(this.navFinalEnemy, WORLD.half);
+    // Ships search the same domain grid with the opposite passability mask.
+    // Create this lazily so land-only matches do not pay for another A* grid.
+    this.waterPathFinder = null;
     /* --- gates, for any number of kingdoms ---
        A gate opens for its owner and closes on everybody else. With two
        sides that was a pair of grids; with four kingdoms and rebels it
        needs one grid per team. They are built lazily (a team only pays
        when it first asks), and a map with no gates at all -- the common
        case -- never builds one. */
-    /* Cells a building touches, plus a one-cell ring around it.
-       `stepMovement` skips the exact passability test while a man stays
-       inside one cell -- the cell he stands in is his proof. That proof is
-       sound in open ground and unsound beside a wall: a 2 m cell can hold
-       half a building, and a man who creeps into that half can wedge himself
-       solid. This counter marks the cells where the shortcut is not allowed,
-       so the honest geometric test runs exactly where geometry is subtle --
-       around walls, houses and gates -- and nowhere else. A count, not a
-       flag, because two huts may share a ring cell. */
-    this.navHaz = new Uint8Array(this.navTerrain.length);
+    /* Broad-phase building collision coverage: every solid footprint plus a
+       nav-cell margin. Terrain is still sampled at every actual position;
+       only the expensive building query can be skipped in uncovered cells.
+       Counts allow overlapping buildings to be removed independently. */
+    this.navHaz = new Uint32Array(this.navTerrain.length);
+    // Exact candidate bodies for each conservative hazard cell. Movement can
+    // test these directly instead of repeatedly querying surrounding buckets.
+    this.navBodies = new Array(this.navTerrain.length);
     /* Which blocked cells are *wall* cells. A house edge cuts a cell without
        claiming it (the grid stamps by centre containment), so a man standing
        in the sliver of a house is on open ground as far as the grid is
@@ -209,6 +212,8 @@ export class Game {
 
     // fog of war (player vision only; the AI plays fair with its own grid)
     this.fow = new Uint8Array(FOW * FOW);        // 0 hidden, 1 explored, 2 visible
+    this._fogExpiry = new Uint32Array(FOW * FOW);
+    this._fogEpoch = 0;
     this.fowStamp = 0;                           // bumped whenever the mask changes
     this.fowDirty = true;
     this.fowTimer = 0;
@@ -231,7 +236,10 @@ export class Game {
        mode too. One clock per team, only in wonder mode, reset by any damage
        to the wonder. */
     this.wonderClocks = new Map();
-    this.wonderHold = 200;
+    this.wonderHold = 240;
+    this.sacredClock = { team: 0, time: 0 };
+    this.sacredHold = 180;
+    this._sacredTick = 0;
     this.elapsed = 0;
     this.worldTime = 8.6;              // hour of the day, advanced by update()
     /* One full day-night cycle is 15 real minutes: ten minutes of sun and
@@ -448,6 +456,9 @@ export class Game {
         resKind: r.resKind, radius: r.radius, scale: r.scale, variant: r.variant,
         herd: r.herd, team: TEAM_NEUTRAL
       });
+      // World generation is deterministic; this stable source index survives
+      // herd movement and resource-array compaction across save/load.
+      node.worldResourceIndex = i;
       node.scale = r.scale;
       node.herd = !!r.herd;
       /* One height, in one field. v2 mirrored the sampled terrain height into
@@ -463,6 +474,9 @@ export class Game {
     // neutral shrines become capturable buildings
     for (const p of this.world.poi || []) {
       const b = new Building(this, 'outpost_shrine', TEAM_NEUTRAL, p.x, p.z, true);
+      b.poiType = p.type === 'sacred' || (p.type === 'shrine' && !this.world.hydrology) ? 'sacred' : p.type;
+      b.poiId = p.id || null;
+      if (b.poiType === 'sacred') { b.name = 'Sacred Site'; b.siteOwner = 0; b.captureTeam = 0; b.captureProgress = 0; }
       b.facing = this.rng() * 6.28;
       this.addBuilding(b);
     }
@@ -489,6 +503,39 @@ export class Game {
    */
   pfFor(unit) {
     if (!unit) return this.pathFinder;
+    if (unit.def && unit.def.naval) {
+      if (!this.waterPathFinder) {
+        const nav = this.world.nav;
+        const blocked = new Uint8Array(nav.cells * nav.cells);
+        for (let z = 0; z < nav.cells; z++) for (let x = 0; x < nav.cells; x++) {
+          const i = z * nav.cells + x;
+          if (this.world.hydrology && nav.domain) {
+            const d = nav.domain[i];
+            blocked[i] = d === DOMAIN.WATER_ONLY || d === DOMAIN.AMPHIBIOUS_SHALLO_FORD ? 0 : 1;
+          } else {
+            const wx = (x + 0.5) * nav.cell - WORLD.half;
+            const wz = (z + 0.5) * nav.cell - WORLD.half;
+            blocked[i] = this.world.height.sample(wx, wz) < -0.3 ? 0 : 1;
+          }
+        }
+        const pf = new PathFinder(nav.cells, nav.cell, WORLD.half);
+        pf.setGrid(blocked, WORLD.half);
+        // Bresenham alone can smooth diagonally through a cell corner. Sample
+        // the continuous segment as well, so the ship can follow its route.
+        pf.lineBlocked = (x0, z0, x1, z1) => {
+          const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / (nav.cell * 0.35)));
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const x = Math.floor((x0 + (x1 - x0) * t + WORLD.half) / nav.cell);
+            const z = Math.floor((z0 + (z1 - z0) * t + WORLD.half) / nav.cell);
+            if (pf.isBlocked(x, z)) return true;
+          }
+          return false;
+        };
+        this.waterPathFinder = pf;
+      }
+      return this.waterPathFinder;
+    }
     const team = unit.team;
     if (this.navGateCount === 0) return team === TEAM_PLAYER ? this.pathFinder : this.pathFinderEnemy;
     let rec = this._teamPf.get(team);
@@ -516,6 +563,7 @@ export class Game {
   beginPathTicks() {
     this.pathFinder.beginTick();
     this.pathFinderEnemy.beginTick();
+    if (this.waterPathFinder) this.waterPathFinder.beginTick();
     for (const rec of this._teamPf.values()) rec.pf.beginTick();
   }
   invalidateTeamNav() {
@@ -526,8 +574,11 @@ export class Game {
   isPassable(x, z, unit) {
     if (!this.isInside(x, z)) return false;
     const h = this.world.height.sample(x, z);
-    if (unit && unit.def && unit.def.naval) return h < -0.3;
-    if (h < -0.25) return false;
+    const domain = this.world.hydrology ? this.world.nav.domainAt(x, z) : null;
+    if (unit && unit.def && unit.def.naval) {
+      return domain === null ? h < -0.3 : domain === DOMAIN.WATER_ONLY || domain === DOMAIN.AMPHIBIOUS_SHALLO_FORD;
+    }
+    if (domain !== null ? domain === DOMAIN.WATER_ONLY || domain === DOMAIN.BLOCKED : h < -0.25) return false;
     if (this._steep) {
       /* the baked answer, from the same sample the nav grid used */
       const nc = this.navCell || 2;
@@ -537,7 +588,23 @@ export class Game {
         if (this._steep.g[cz * this._steep.n + cx]) return false;
       }
     } else if (this.world.height.slope(x, z) > 0.95) return false;
-    const near = this.buildingSpatial.query(x, z, 5);
+    // The hazard grid conservatively covers every solid building and a full
+    // cell of margin. It may only skip the building query, never the precise
+    // terrain/domain test above. Oversized custom units use the full query.
+    const cell = this.world.nav.cell, n = this.world.nav.cells;
+    const cx = Math.floor((x + WORLD.half) / cell), cz = Math.floor((z + WORLD.half) / cell);
+    const radiusPad = unit ? unit.radius * 0.4 : 0.2;
+    let near;
+    if (radiusPad <= cell && cx >= 0 && cz >= 0 && cx < n && cz < n) {
+      const index = cz * n + cx;
+      if (!this.navHaz[index]) return true;
+      near = this.navBodies[index];
+      if (!near) return true; // only walls, which are handled by navigation
+    } else {
+      // Oversized mod units need the full geometry: a fixed-radius spatial
+      // query can miss the edge or corner of a large structure.
+      near = this.buildings;
+    }
     for (let i = 0; i < near.length; i++) {
       const b = near[i];
       /* farms -- and mod traps, which declare themselves walkable for the same
@@ -673,6 +740,33 @@ export class Game {
     return null;
   }
 
+  /** Nearest unoccupied nav cell for production and disembarkation. */
+  findNearestFreeTile(x, z, unit, maxRing = 24) {
+    const pf = this.pfFor(unit);
+    const [ox, oz] = pf.worldToCell(x, z);
+    for (let ring = 0; ring <= maxRing; ring++) {
+      let best = null, bestD = Infinity;
+      for (let dz = -ring; dz <= ring; dz++) for (let dx = -ring; dx <= ring; dx++) {
+        if (ring && Math.abs(dx) !== ring && Math.abs(dz) !== ring) continue;
+        const cx = ox + dx, cz = oz + dz;
+        if (pf.isBlocked(cx, cz)) continue;
+        const [px, pz] = pf.cellToWorld(cx, cz);
+        if (!this.isPassable(px, pz, unit)) continue;
+        let occupied = false;
+        for (const other of this.units) {
+          if (other === unit || other.dead || other.garrisoned) continue;
+          const r = (other.radius || 0.4) + (unit.radius || 0.4);
+          if (dist2(px, pz, other.x, other.z) < r * r) { occupied = true; break; }
+        }
+        if (occupied) continue;
+        const d = dist2(px, pz, x, z);
+        if (d < bestD) { bestD = d; best = [px, pz]; }
+      }
+      if (best) return best;
+    }
+    return null;
+  }
+
   unstick(unit) {
     unit._passKey = -1;
     const px = unit.x, pz = unit.z;
@@ -706,9 +800,8 @@ export class Game {
     const dx = x1 - x0, dz = z1 - z0;
     const d = Math.hypot(dx, dz);
     if (d < 0.001) return true;
-    const naval = !!(unit && unit.def && unit.def.naval);
     const N = this.world.nav.cells, cell = this.world.nav.cell, half = WORLD.half;
-    const grid = naval ? null : this.pfFor(unit).blocked;
+    const grid = this.pfFor(unit).blocked;
     const steps = Math.min(40, Math.ceil(d / 1.6));
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
@@ -869,7 +962,6 @@ export class Game {
     if (kind === 'food' && unit.gatherTarget && (unit.gatherTarget.type === 'deer' || unit.gatherTarget.type === 'boar') && b.huntBonus) rate *= b.huntBonus;
     if (kind === 'food' && unit.gatherTarget && unit.gatherTarget.type === 'fish' && b.fishingBonus) rate *= b.fishingBonus;
     if (civ === 'persians' && unit.type === 'villager') rate *= 1.05;
-    if (team !== TEAM_PLAYER) rate *= this.difficulty.gather;
     if (this.difficultyKey === 'sandbox') rate *= 1.25;
     rate *= this.buffMul(team, 'gather');
     rate *= this.gatherDayMul;
@@ -900,6 +992,7 @@ export class Game {
     let nearest = null, nearestD = maxDist * maxDist;
     const consider = (r, i) => {
       const d = dist2(x, z, r.x, r.z);
+      if (d > maxDist * maxDist) return;
       if (d < nearestD) { nearestD = d; nearest = r; }
       const score = d * (0.72 + 0.56 * (((i * 31 + jitter * 997) % 100) / 100));
       if (score < bestScore) { bestScore = score; best = r; }
@@ -908,6 +1001,8 @@ export class Game {
       const r = this.resources[i];
       if (r.dead || r.amount <= 0) continue;
       if (r.resKind !== kind) continue;
+      if (unit?.def?.naval && r.type !== 'fish') continue;
+      if (unit && !unit.def?.naval && r.type === 'fish' && this.isWater(r.x, r.z)) continue;
       consider(r, i);
     }
     /* Fields are buildings, not scenery, so they live in `buildings` -- but
@@ -916,19 +1011,34 @@ export class Game {
     const buildings = this.buildings;
     for (let i = 0; i < buildings.length; i++) {
       const b = buildings[i];
-      if (b.dead || !b.def || b.def.resKind !== kind) continue;
+      if (unit?.def?.naval || b.dead || !b.def || b.def.resKind !== kind || (unit && b.team !== unit.team)) continue;
       if (b.buildProgress < 0.99 || !(b.amount > 0)) continue;
       consider(b, i + this.resources.length);
     }
     return best || nearest;
   }
 
-  findDropoff(team, kind, x, z, maxDist = 999) {
+  /** Nearest remaining node of the same type, within the depletion radius. */
+  findReplacementResource(node, unit, radius = 18) {
+    if (!node || !unit) return null;
+    let best = null, bestD = radius * radius;
+    const candidates = node.kind === 'building' ? this.buildings : this.resources;
+    for (const other of candidates) {
+      if (other === node || other.dead || other.type !== node.type || !(other.amount > 0)) continue;
+      if (other.kind === 'building' && (other.team !== unit.team || other.buildProgress < 0.99)) continue;
+      const d = dist2(node.x, node.z, other.x, other.z);
+      if (d <= bestD) { best = other; bestD = d; }
+    }
+    return best;
+  }
+
+  findDropoff(team, kind, x, z, maxDist = 999, unit = null) {
     let best = null, bestD = maxDist * maxDist;
     for (let i = 0; i < this.buildings.length; i++) {
       const b = this.buildings[i];
       if (b.dead || b.team !== team || b.buildProgress < 0.99) continue;
       if (!b.def.dropoff) continue;
+      if (unit?.def?.naval && b.type !== 'dock') continue;
       if (kind !== 'any' && b.def.dropoff.indexOf(kind) < 0) continue;
       const d = dist2(x, z, b.x, b.z);
       if (d < bestD) { bestD = d; best = b; }
@@ -1004,8 +1114,16 @@ export class Game {
   spawnUnitRaw(type, team, x, z) {
     const def = UNIT_DEFS[type];
     if (!def) return null;
-    const fx = this.isPassable(x, z, { radius: 0.4, def }) ? x : this.nudgeFree(x, z);
-    const fz = this.isPassable(fx, z, { radius: 0.4, def }) ? z : this.nudgeFree(fx, z, true);
+    let fx = x, fz = z;
+    const probe = { radius: 0.4, def, team };
+    if (def.naval && !this.isPassable(x, z, probe)) {
+      const spot = this.findNearestFreeTile(x, z, probe);
+      if (!spot) return null;
+      [fx, fz] = spot;
+    } else if (!def.naval) {
+      fx = this.isPassable(x, z, probe) ? x : this.nudgeFree(x, z);
+      fz = this.isPassable(fx, z, probe) ? z : this.nudgeFree(fx, z, true);
+    }
     const u = new Unit(this, type, team, fx, fz);
     /* A sparring partner is not an opponent: in the sandbox the second team
        exists to be drilled against, and a dummy that wanders off to chase a
@@ -1056,6 +1174,12 @@ export class Game {
       sx = fromBuilding.x + Math.cos(ang) * r;
       sz = fromBuilding.z + Math.sin(ang) * r;
     }
+    if (fromBuilding) {
+      const probe = { radius: 0.4, def, team };
+      const spot = this.findNearestFreeTile(sx, sz, probe);
+      if (!spot) return null;
+      [sx, sz] = spot;
+    }
     const u = this.spawnUnitRaw(type, team, sx, sz);
     if (!u) return null;
     /* a levy believes what his village believes */
@@ -1069,8 +1193,8 @@ export class Game {
         u.moveTo(fromBuilding.rally.x, fromBuilding.rally.z, true);
       } else {
         // gather automatically if it is a villager
-        if (type === 'villager') {
-          const kind = this.pickGatherKind(team, sx, sz);
+        if (type === 'villager' || type === 'fishing_boat') {
+          const kind = type === 'fishing_boat' ? 'food' : this.pickGatherKind(team, sx, sz);
           const node = this.findNearestResource(kind, sx, sz, 55, u);
           if (node) {
             u.gatherTarget = node;
@@ -1128,6 +1252,12 @@ export class Game {
     this.navBuild.fill(0);
     this.navGate.fill(0);
     this.navCarve.fill(0);
+    this.navHaz.fill(0);
+    this.navBodies.fill(undefined);
+    this.navWall.fill(0);
+    this.navGateTeam.fill(0);
+    this.navGateCount = 0;
+    this.invalidateTeamNav();
     this.navFinal.set(this.navTerrain);
     this.navFinalEnemy.set(this.navTerrain);
     this.navDirty = true;
@@ -1153,7 +1283,6 @@ export class Game {
    */
   markBuildingFootprint(b, blocked) {
     this.buildingSpatialDirty = true;
-    if (b.def.neutral && !b.def.wall) return;
     /* a walkable building never blocks the nav grid: a farm used to stamp four
        cells of solid obstacle into the middle of a field */
     if (b.def.walkable) return;
@@ -1185,11 +1314,24 @@ export class Game {
       for (let cz = hz0; cz <= hz1; cz++) {
         for (let cx = hx0; cx <= hx1; cx++) {
           const i = cz * N + cx;
-          if (blocked) { if (haz[i] < 255) haz[i]++; }
+          if (blocked) haz[i]++;
           else if (haz[i]) haz[i]--;
+          if (!b.wall) {
+            let bodies = this.navBodies[i];
+            if (blocked) {
+              if (!bodies) this.navBodies[i] = bodies = [];
+              bodies.push(b);
+            } else if (bodies) {
+              const at = bodies.indexOf(b);
+              if (at !== -1) bodies.splice(at, 1);
+              if (!bodies.length) this.navBodies[i] = undefined;
+            }
+          }
         }
       }
     }
+    // Neutral shrines are physical obstacles but do not stamp the path grid.
+    if (b.def.neutral && !b.def.wall) return;
     if (b.def.gate) {
       /* A gate is an obstacle to the enemy and a doorway to its owner. It lives
          in its own layer so allies path straight through; the doors themselves
@@ -1444,7 +1586,7 @@ export class Game {
   explodeArea(x, z, radius, damage, source, team) {
     const r2 = radius * radius;
     for (const u of this.units) {
-      if (u.dead || !this.isHostile(team, u.team)) continue;
+      if (u.dead || u.garrisoned || !this.isHostile(team, u.team)) continue;
       if (dist2(x, z, u.x, u.z) <= r2) {
         u.takeDamage(damage * (u.def.classes.includes('cavalry') ? 0.9 : 1), source, 'siege');
       }
@@ -1533,6 +1675,9 @@ export class Game {
     const h = Number(hour);
     if (!Number.isFinite(h)) return this.worldTime;
     this.worldTime = ((h % 24) + 24) % 24;
+    // A time jump can change sight immediately; expire the old radii on the
+    // next fog refresh rather than carrying daylight vision into the night.
+    this._fogReset = true;
     return this.worldTime;
   }
 
@@ -1671,6 +1816,37 @@ export class Game {
     this.onEvent('convert', { unit });
   }
 
+  // Only a nearby, unoccupied land cell counts as a shoreline. A transport
+  // in open water cannot unload across a strait or teleport passengers ashore.
+  transportShoreSpot(ship, unit) {
+    const spot = this.findNearestFreeTile(ship.x, ship.z, unit, 3);
+    return spot && dist2(spot[0], spot[1], ship.x, ship.z) <= 4.5 ** 2 ? spot : null;
+  }
+
+  boardTransport(unit, ship, restoring = false) {
+    if (!unit || !ship || unit.dead || ship.dead || unit.garrisoned || unit.def.naval ||
+        ship.team !== unit.team || !ship.def.capacity || !ship.garrison ||
+        ship.garrison.length >= ship.def.capacity) return false;
+    if (!restoring && dist2(unit.x, unit.z, ship.x, ship.z) > 4.5 ** 2) return false;
+    ship.garrison.push(unit);
+    unit.garrisoned = true;
+    unit.garrisonTarget = ship;
+    unit.state = STATE.IDLE;
+    unit.path = null; unit.targetPos = null; unit.target = null;
+    unit.moving = false;
+    unit.x = ship.x; unit.z = ship.z; unit.y = ship.y;
+    this.removeFromSelection(unit);
+    this.spatial.clear(); this.spatial.insertAll(this.units);
+    return true;
+  }
+
+  unloadTransport(ship) {
+    if (!ship || ship.dead || !ship.def.capacity || !ship.garrison) return 0;
+    let released = 0;
+    for (const unit of ship.garrison.slice()) if (this.removeFromGarrison(unit)) released++;
+    return released;
+  }
+
   garrisonUnit(unit, building) {
     if (!building || building.dead) return false;
     if (building.team !== unit.team) return false;
@@ -1694,25 +1870,15 @@ export class Game {
    * pathfinder can plan him away again.
    */
   placeLeaver(unit, building, index) {
-    const half = (building.def.size || 3) * 0.5;
-    const pf = this.pfFor(unit);
-    const free = (x, z) => {
-      if (!this.isPassable(x, z, unit)) return false;
-      const [cx, cz] = pf.worldToCell(x, z);
-      return !pf.isBlocked(cx, cz);
-    };
-    const base = (index * 2.399963) % (Math.PI * 2);
-    for (let ring = 0; ring < 4; ring++) {
-      const r = half + 0.9 + ring * 0.6;
-      for (let k = 0; k < 12; k++) {
-        const a = base + (k / 12) * Math.PI * 2;
-        const x = building.x + Math.cos(a) * r;
-        const z = building.z + Math.sin(a) * r;
-        if (free(x, z)) { unit.x = x; unit.z = z; return; }
-      }
-    }
-    const spot = this.freeSpotNear(building.x, building.z, unit, 10);
-    if (spot) { unit.x = spot[0]; unit.z = spot[1]; }
+    // Search the actual navigation grid and reject occupied unit footprints.
+    // Garrisoned units are excluded from occupancy; previously released units
+    // are not, so a group leaves onto distinct, walkable cells.
+    const spot = this.findNearestFreeTile(building.x, building.z, unit, 24);
+    if (!spot) return false;
+    unit.x = spot[0];
+    unit.z = spot[1];
+    unit.y = this.heightAt(unit.x, unit.z);
+    return true;
   }
 
   /**
@@ -1777,6 +1943,23 @@ export class Game {
   removeFromGarrison(unit) {
     const b = unit.garrisonTarget;
     let index = 0;
+    if (b?.kind === 'unit') {
+      const spot = !unit.dead && !b.dead ? this.transportShoreSpot(b, unit) : null;
+      if (!unit.dead && !b.dead && !spot) return false;
+      const i = b.garrison.indexOf(unit);
+      if (i >= 0) b.garrison.splice(i, 1);
+      unit.garrisoned = false; unit.garrisonTarget = null;
+      if (spot) { unit.x = spot[0]; unit.z = spot[1]; unit.y = this.heightAt(...spot); }
+      unit.state = STATE.IDLE; unit.target = null; unit.path = null;
+      unit.pathIdx = 0; unit.targetPos = null; unit.destX = unit.destZ = null;
+      unit.moving = false; unit._passKey = -1;
+      this.popDirty = true;
+      this.spatial.clear(); this.spatial.insertAll(this.units);
+      return true;
+    }
+    // An intact building retains its occupant if no free exit exists. Dead
+    // units and collapsed buildings must still be removed from the roster.
+    if (b && !unit.dead && !b.dead && !this.placeLeaver(unit, b, 0)) return false;
     if (b) {
       index = Math.max(0, b.garrison.indexOf(unit));
       const i = b.garrison.indexOf(unit);
@@ -1784,7 +1967,7 @@ export class Game {
     }
     unit.garrisoned = false;
     unit.garrisonTarget = null;
-    if (b) this.placeLeaver(unit, b, index);
+    if (b && (unit.dead || b.dead)) this.placeLeaver(unit, b, index);
     unit.state = STATE.IDLE;
     unit.target = null;
     unit.path = null;
@@ -1798,6 +1981,7 @@ export class Game {
     if (unit.team === TEAM_PLAYER) this.popDirty = true;
     this.spatial.clear();
     this.spatial.insertAll(this.units);
+    return true;
   }
 
   /**
@@ -2046,6 +2230,53 @@ export class Game {
   /* ==========================================================
      wonder race
      ========================================================== */
+  /** Monks capture uncontested sites. Ownership remains until recaptured. */
+  updateSacredSites(dt) {
+    const sites = this.buildings.filter(b => !b.dead && b.poiType === 'sacred');
+    if (!sites.length) { this.sacredClock = { team: 0, time: 0 }; return; }
+    for (const site of sites) {
+      const near = this.spatial.query(site.x, site.z, 6);
+      let first = 0, contested = false, monkTeam = 0;
+      for (const u of near) {
+        if (u.dead || u.garrisoned || u.team === 0 || u.def.naval || !this.teams.has(u.team)) continue;
+        if (dist2(u.x, u.z, site.x, site.z) > 36) continue;
+        if (first && first !== u.team) contested = true;
+        else first = u.team;
+        if (u.def.classes.includes('monk')) monkTeam = u.team;
+      }
+      if (contested || !monkTeam || monkTeam === site.siteOwner) {
+        site.captureTeam = 0; site.captureProgress = 0;
+        continue;
+      }
+      if (site.captureTeam !== monkTeam) { site.captureTeam = monkTeam; site.captureProgress = 0; }
+      site.captureProgress += dt;
+      if (site.captureProgress >= 10) {
+        site.siteOwner = monkTeam; site.captureTeam = 0; site.captureProgress = 0;
+        this.onEvent('sacredCapture', { site, team: monkTeam });
+        this.notify(monkTeam === this.playerTeam ? 'Sacred site captured' : 'A rival captured a sacred site', monkTeam === this.playerTeam ? 'good' : 'warn');
+      }
+    }
+    const team = sites[0].siteOwner || 0;
+    const holds = team && this.teams.has(team) && !this.fallenTeams?.has(team) && sites.every(s => s.siteOwner === team);
+    if (!holds) { this.sacredClock = { team: 0, time: 0 }; return; }
+    if (this.sacredClock.team !== team) {
+      // Control was just established; do not credit the capture interval as
+      // time already held (which would allow an early victory).
+      this.sacredClock = { team, time: 0 };
+      return;
+    }
+    this.sacredClock.time += dt;
+    if (this.victory === 'sacred' && this.mode !== 'sandbox' && this.sacredClock.time >= this.sacredHold)
+      this.endGame(team === this.playerTeam, 'sacred');
+  }
+
+  sacredStatus() {
+    if (this.victory !== 'sacred') return null;
+    const sites = this.buildings.filter(b => !b.dead && b.poiType === 'sacred');
+    return { team: this.sacredClock.team, time: this.sacredClock.time, hold: this.sacredHold,
+      total: sites.length, owned: sites.filter(s => s.siteOwner === this.playerTeam).length };
+  }
+
   /** Seconds a team's standing wonder has held, 0 if none stands. */
   wonderProgressOf(team) {
     return this.wonderClocks.get(team) || 0;
@@ -2216,9 +2447,21 @@ export class Game {
     // buildings
     const buildings = this.buildings;
     for (let i = 0; i < buildings.length; i++) buildings[i].update(dt);
-    // resources (herds wander, farms tick)
+    // Site control needs no per-frame decisions; amortize the spatial work
+    // while preserving elapsed capture/countdown time.
+    this._sacredTick += dt;
+    if (this._sacredTick >= 0.25) {
+      this.updateSacredSites(this._sacredTick);
+      this._sacredTick = 0;
+    }
+    // Static full resource nodes have no per-tick behaviour. Only herds and
+    // depleted-but-living trees need the ResourceNode update; farms are
+    // buildings and are updated above. This preserves their exact tick rate.
     const res = this.resources;
-    for (let i = 0; i < res.length; i++) if (!res[i].dead) res[i].update(dt);
+    for (let i = 0; i < res.length; i++) {
+      const r = res[i];
+      if (!r.dead && (r.herd || (r.resKind === 'wood' && r.amount < r.maxAmount * 0.55))) r.update(dt);
+    }
 
     /* half-second sweep: nobody may stand inside a wall or a roof */
     if (this.frame % 15 === 0) this.rescueStrays();
@@ -2436,15 +2679,24 @@ export class Game {
       for (let cx = cx0; cx <= cx1; cx++) {
         const wx = (cx + 0.5) * size - half;
         const dx = wx - x;
-        if (dx * dx + dz * dz <= r2) fow[row + cx] = 2;
+        if (dx * dx + dz * dz <= r2) {
+          const i = row + cx;
+          fow[i] = 2;
+          this._fogExpiry[i] = this._fogEpoch + 3;
+        }
       }
     }
   }
 
   updateFog(dt) {
     const fow = this.fow;
-    // decay visible -> explored
-    for (let i = 0; i < fow.length; i++) if (fow[i] === 2) fow[i] = 1;
+    // Units are stamped over three passes. Retain each visible cell until its
+    // owner's next pass so vision does not flicker between those passes.
+    this._fogEpoch++;
+    const expiry = this._fogExpiry, epoch = this._fogEpoch;
+    const full = dt === 0 || dt >= 0.5 || this._fogReset;
+    this._fogReset = false;
+    for (let i = 0; i < fow.length; i++) if (fow[i] === 2 && (full || expiry[i] <= epoch)) fow[i] = 1;
     const units = this.units;
     const sightMul = this.sightDayMul;
     /* Stamp a third of the army per pass. Vision is a 2 m grid updated 5.5x a
@@ -2453,8 +2705,9 @@ export class Game {
        8 000. The round-robin offset keeps coverage even. */
     this.fogCursor = ((this.fogCursor || 0) + 1) % 3;
     for (let i = 0; i < units.length; i++) {
-      if ((i % 3) !== this.fogCursor) continue;
       const u = units[i];
+      // IDs remain stable when dead units are compacted out of the array.
+      if (!full && (u.id % 3) !== this.fogCursor) continue;
       /* a party at peace shares its map with you: neighbours talk */
       if (u.dead || (u.team !== TEAM_PLAYER && !this.atPeace(u.team))) continue;
       if (u.garrisoned) continue;
@@ -2464,7 +2717,7 @@ export class Game {
     for (let i = 0; i < buildings.length; i++) {
       const b = buildings[i];
       if (b.dead) continue;
-      if (b.team === TEAM_PLAYER || b.team === TEAM_NEUTRAL || this.atPeace(b.team)) this._fogStamp(b.x, b.z, (b.def.sight || 8) * (b.buildProgress >= 1 ? 1 : 0.5));
+      if (b.team === TEAM_PLAYER || (b.team !== TEAM_NEUTRAL && this.atPeace(b.team))) this._fogStamp(b.x, b.z, (b.def.sight || 8) * (b.buildProgress >= 1 ? 1 : 0.5));
     }
     this.fowDirty = true;
     this.fowTimer = 0.18;
@@ -2905,7 +3158,8 @@ export class Game {
   orderGather(units, node) {
     units = this.freeUnits(units);
     for (const u of units) {
-      if (u.dead || u.type !== 'villager') continue;
+      if (u.dead || (u.type !== 'villager' && u.type !== 'fishing_boat')) continue;
+      if (u.type === 'fishing_boat' && node.type !== 'fish') continue;
       if (u.carry.kind && u.carry.kind !== node.resKind) {
         if (u.carry.amount > 0.01) u.returnResources();
         else { u.carry.kind = null; u.carry.amount = 0; }
@@ -2981,12 +3235,18 @@ export class Game {
   }
 
   orderGarrison(units, building) {
+    if (!building || building.dead) return;
     units = this.freeUnits(units);
     for (const u of units) {
-      if (u.dead || u.garrisoned) continue;
+      if (u.dead || u.garrisoned || u.team !== building.team || u === building || u.def.naval) continue;
+      if (building.kind === 'unit' && !building.def.capacity) continue;
       u.garrisonTarget = building;
       u.state = STATE.GARRISON;
-      u.moveTo(building.x, building.z, true);
+      if (building.kind === 'unit') {
+        const shore = this.transportShoreSpot(building, u);
+        if (!shore) { u.state = STATE.IDLE; u.garrisonTarget = null; continue; }
+        u.moveTo(shore[0], shore[1], true);
+      } else u.moveTo(building.x, building.z, true);
     }
   }
 
@@ -3046,7 +3306,21 @@ export class Game {
     // must be on reasonably flat land (or water for docks)
     const h = this.heightAt(x, z);
     if (def.water) {
-      if (h > -0.4) return { ok: false, reason: 'water' };
+      const waterProbe = { radius: 0.4, def: { naval: true }, team };
+      if (h > -0.4 || !this.isPassable(x, z, waterProbe)) return { ok: false, reason: 'water' };
+      // Builders must be able to stand outside the footprint on dry ground.
+      // Reject docks in open water rather than accepting unbuildable sites.
+      const landProbe = { radius: 0.4, def: {}, team };
+      const pf = this.pfFor(landProbe);
+      let shore = false;
+      const r = half + 1.8;
+      for (let i = 0; i < 16 && !shore; i++) {
+        const a = i * Math.PI / 8, sx = x + Math.cos(a) * r, sz = z + Math.sin(a) * r;
+        if (!this.isPassable(sx, sz, landProbe)) continue;
+        const [cx, cz] = pf.worldToCell(sx, sz);
+        shore = !pf.isBlocked(cx, cz);
+      }
+      if (!shore) return { ok: false, reason: 'shoreline' };
     } else {
       if (h < 0.1) return { ok: false, reason: 'water' };
       if (this.world.height.slope(x, z) > 0.55) return { ok: false, reason: 'slope' };
@@ -3333,7 +3607,7 @@ export class Game {
    the width of an archer, and a fixed 1.5 m pitch made horse float through
    horse. The whole group is centred on the point you tapped.
    ============================================================ */
-export const FORMATIONS = ['box', 'line', 'wedge', 'column'];
+export const FORMATIONS = ['box', 'line', 'staggered', 'wedge', 'column'];
 
 export function formationSlots(count, cx, cz, opts = {}) {
   const style = FORMATIONS.includes(opts.style) ? opts.style : 'box';
@@ -3347,6 +3621,13 @@ export function formationSlots(count, cx, cz, opts = {}) {
       const col = i % perRow;
       const n = Math.min(perRow, count - row * perRow);
       local.push([(col - (n - 1) / 2) * spacing, row * spacing * 0.9]);
+    }
+  } else if (style === 'staggered') {
+    const perRow = Math.min(7, Math.ceil(Math.sqrt(count * 1.35)));
+    for (let i = 0; i < count; i++) {
+      const row = Math.floor(i / perRow), col = i % perRow;
+      const n = Math.min(perRow, count - row * perRow);
+      local.push([(col - (n - 1) / 2 + (row % 2 ? 0.5 : 0)) * spacing, -row * spacing * 0.9]);
     }
   } else if (style === 'wedge') {
     /* ranks of 1, 3, 5, ... with the leader at the tip */

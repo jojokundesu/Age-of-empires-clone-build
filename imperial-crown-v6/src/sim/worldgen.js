@@ -5,6 +5,7 @@
    that, so nothing in the frame loop touches noise functions.
    ============================================================ */
 import { clamp, lerp, smoothstep, fbm2, ridged2, noise2, mulberry32, rngFor, dist2, TAU } from '../core/math.js';
+import { buildHydrology, DOMAIN } from './hydrology.js';
 
 export const WORLD = {
   size: 512,
@@ -90,7 +91,13 @@ export function generateWorld(seed = 20261, opts = {}) {
   const res = WORLD.segments;
   const size = WORLD.size;
   const hf = new HeightField(res, size);
-  const style = opts.style || rng.pick(['temperate', 'temperate', 'mediterranean', 'northern', 'arid']);
+  /* Classic remains the default while the experimental hydrology maps are
+     tested. Keeping it also preserves the terrain of existing saves. */
+  const mapType = opts.mapType || 'classic';
+  const hydro = mapType === 'classic' ? null
+    : buildHydrology(seed, mapType, { res, size, navCells: WORLD.navCells });
+  const mapInfo = hydro ? hydro.info : { id: 'classic', name: 'Classic Island', style: 'temperate' };
+  const style = hydro ? hydro.style : (opts.style || rng.pick(['temperate', 'temperate', 'mediterranean', 'northern', 'arid']));
   const n = res + 1;
   const splat = new Uint8Array(n * n * 2);      // layer id, blend byte
   const water = new Uint8Array(n * n);
@@ -104,51 +111,52 @@ export function generateWorld(seed = 20261, opts = {}) {
     arid: { hills: 0.85, trees: 0.35, sand: 0.9, snow: 2.2, moisture: 0.12 }
   }[style];
 
-  // ---- base height: rolling land, mountain ridges, a river valley
+  // ---- heightfield: hydrology (all real maps) or the legacy island
   const riverPhase = rng() * TAU;
-  for (let z = 0; z < n; z++) {
-    for (let x = 0; x < n; x++) {
-      const wx = (x / res) * size - size * 0.5;
-      const wz = (z / res) * size - size * 0.5;
-      const nx = wx / 110, nz = wz / 110;
-      // rolling countryside, biased above sea level
-      let h = 3.4 + fbm2(nx * 0.9, nz * 0.9, 4) * 6.2;
-      // mountain massifs only where the mask is strong
-      const mask = smoothstep((fbm2(nx * 0.42 + 7.3, nz * 0.42 - 3.1, 3) + 0.22) / 0.72);
-      h += mask * ridged2(nx * 1.9 + 4.4, nz * 1.9 - 2.2, 4) * 16.5 * styleParams.hills;
-      // surface detail
-      h += fbm2(nx * 5.6, nz * 5.6, 2) * 0.75;
-      // a single meandering river cutting the map in half
-      const riverZ = Math.sin(wx * 0.0125 + riverPhase) * 58 + Math.sin(wx * 0.033 + riverPhase * 2) * 17;
-      const dRiver = Math.abs(wz - riverZ);
-      h -= smoothstep(1 - clamp(dRiver / 11, 0, 1)) * 7.5;
-      // the sea beyond the square island
-      const rim = Math.max(Math.abs(wx), Math.abs(wz));
-      const edge = clamp((rim - 196) / 58, 0, 1);
-      h = h * (1 - edge * 1.25) - edge * 7.5;
-      hf.h[z * n + x] = h;
-    }
-  }
-  // ---- fords: shallow crossings so both halves of the map stay connected
-  const fords = [];
-  for (let f = 0; f < 3; f++) {
-    const fx = -145 + f * 132 + (rand() - 0.5) * 26;
-    const riverZ = Math.sin(fx * 0.0125 + riverPhase) * 58 + Math.sin(fx * 0.033 + riverPhase * 2) * 17;
-    fords.push({ x: fx, z: riverZ });
+  let fords = [];
+  if (hydro) {
+    /* Value-noise fBm + cubic Bezier river carving. No square rim of
+       border water: coastlines are a consequence of the heightfield. */
+    hf.h.set(hydro.heights);
+    fords = hydro.fords.map((f) => ({ ...f }));
+  } else {
     for (let z = 0; z < n; z++) {
       for (let x = 0; x < n; x++) {
         const wx = (x / res) * size - size * 0.5;
         const wz = (z / res) * size - size * 0.5;
-        if (Math.abs(wx - fx) > 13) continue;
-        const rz = Math.sin(wx * 0.0125 + riverPhase) * 58 + Math.sin(wx * 0.033 + riverPhase * 2) * 17;
-        if (Math.abs(wz - rz) > 16) continue;
-        const t = smoothstep(1 - Math.abs(wx - fx) / 13);
-        hf.h[z * n + x] = lerp(hf.h[z * n + x], Math.max(hf.h[z * n + x], 0.85), t);
+        const nx = wx / 110, nz = wz / 110;
+        let h = 3.4 + fbm2(nx * 0.9, nz * 0.9, 4) * 6.2;
+        const mask = smoothstep((fbm2(nx * 0.42 + 7.3, nz * 0.42 - 3.1, 3) + 0.22) / 0.72);
+        h += mask * ridged2(nx * 1.9 + 4.4, nz * 1.9 - 2.2, 4) * 16.5 * styleParams.hills;
+        h += fbm2(nx * 5.6, nz * 5.6, 2) * 0.75;
+        const riverZ = Math.sin(wx * 0.0125 + riverPhase) * 58 + Math.sin(wx * 0.033 + riverPhase * 2) * 17;
+        const dRiver = Math.abs(wz - riverZ);
+        h -= smoothstep(1 - clamp(dRiver / 11, 0, 1)) * 7.5;
+        const rim = Math.max(Math.abs(wx), Math.abs(wz));
+        const edge = clamp((rim - 196) / 58, 0, 1);
+        h = h * (1 - edge * 1.25) - edge * 7.5;
+        hf.h[z * n + x] = h;
       }
     }
+    // legacy fords: raised crossings
+    for (let f = 0; f < 3; f++) {
+      const fx = -145 + f * 132 + (rand() - 0.5) * 26;
+      const rz0 = Math.sin(fx * 0.0125 + riverPhase) * 58 + Math.sin(fx * 0.033 + riverPhase * 2) * 17;
+      fords.push({ x: fx, z: rz0 });
+      for (let z = 0; z < n; z++) {
+        for (let x = 0; x < n; x++) {
+          const wx = (x / res) * size - size * 0.5;
+          const wz = (z / res) * size - size * 0.5;
+          if (Math.abs(wx - fx) > 13) continue;
+          const rz = Math.sin(wx * 0.0125 + riverPhase) * 58 + Math.sin(wx * 0.033 + riverPhase * 2) * 17;
+          if (Math.abs(wz - rz) > 16) continue;
+          const t = smoothstep(1 - Math.abs(wx - fx) / 13);
+          hf.h[z * n + x] = lerp(hf.h[z * n + x], Math.max(hf.h[z * n + x], 0.85), t);
+        }
+      }
+    }
+    smoothField(hf, 1);
   }
-  // ---- smooth once to remove high-frequency spikes in walking space
-  smoothField(hf, 1);
 
   // ---- biome map (moisture + temperature)
   const biome = new Uint8Array(n * n);
@@ -170,6 +178,19 @@ export function generateWorld(seed = 20261, opts = {}) {
   }
 
   // ---- splat + walkability + water
+  /* Domain-aware ground: shallow fords and beaches are walkable land AND
+     navigable water, deep water is water only, cliffs are blocked. */
+  const groundAt = (i, wx, wz) => {
+    const h = hf.h[i];
+    const slope = hf.slope(wx, wz);
+    const d = hydro ? hydro.domainAt(wx, wz) : null;
+    if (d === DOMAIN.BLOCKED) return { water: h < 0 ? 1 : 0, walk: 0 };
+    if (d === DOMAIN.WATER_ONLY) return { water: 1, walk: 0 };
+    if (d === DOMAIN.AMPHIBIOUS_SHALLO_FORD) return { water: h < 0 ? 1 : 0, walk: slope < 0.62 ? 1 : 0 };
+    if (d === DOMAIN.LAND_ONLY) return { water: 0, walk: slope < 0.62 ? 1 : 0 };
+    const isWater = h < -0.35;                  // classic island
+    return { water: isWater ? 1 : 0, walk: (!isWater && slope < 0.62) ? 1 : 0 };
+  };
   for (let z = 0; z < n; z++) {
     for (let x = 0; x < n; x++) {
       const i = z * n + x;
@@ -190,9 +211,9 @@ export function generateWorld(seed = 20261, opts = {}) {
       if (h > 13.5 && slope < 0.3) { layer = TERRAIN_LAYER.SNOW; blend = 235; }
       splat[i * 2] = layer;
       splat[i * 2 + 1] = Math.min(255, blend);
-      const isWater = h < -0.35;
-      water[i] = isWater ? 1 : 0;
-      walk[i] = (!isWater && slope < 0.62) ? 1 : 0;
+      const g = groundAt(i, wx, wz);
+      water[i] = g.water;
+      walk[i] = g.walk;
     }
   }
 
@@ -212,17 +233,28 @@ export function generateWorld(seed = 20261, opts = {}) {
     SEATS.push(findBaseSite(hf, walk, CORNERS[i][0], CORNERS[i][1], rng, SEATS));
   }
   for (const b of SEATS) flattenPlateau(hf, b.x, b.z, 26, b.h);
+  if (hydro) {
+    hydro.heights.set(hf.h);
+    const N = hydro.domainCells, cell = hydro.domainCell, half = size * 0.5;
+    for (let z = 0; z < N; z++) for (let x = 0; x < N; x++) {
+      const wx = (x + 0.5) * cell - half, wz = (z + 0.5) * cell - half;
+      const h = hf.sample(wx, wz), slope = hf.slope(wx, wz);
+      const nearFord = fords.some((f) => Math.hypot(wx - f.x, wz - f.z) < f.radius * 0.7);
+      hydro.domain[z * N + x] = slope > 0.95 ? DOMAIN.BLOCKED
+        : nearFord && h < 0.5 ? DOMAIN.AMPHIBIOUS_SHALLO_FORD
+        : h < -0.35 ? DOMAIN.WATER_ONLY
+        : h < 0.25 ? DOMAIN.AMPHIBIOUS_SHALLO_FORD : DOMAIN.LAND_ONLY;
+    }
+  }
   // recompute walkability inside plateaus
   for (let z = 0; z < n; z++) {
     for (let x = 0; x < n; x++) {
       const i = z * n + x;
       const wx = (x / res) * size - size * 0.5;
       const wz = (z / res) * size - size * 0.5;
-      const h = hf.h[i];
-      const slope = hf.slope(wx, wz);
-      const isWater = h < -0.35;
-      water[i] = isWater ? 1 : 0;
-      walk[i] = (!isWater && slope < 0.62) ? 1 : 0;
+      const g = groundAt(i, wx, wz);
+      water[i] = g.water;
+      walk[i] = g.walk;
     }
   }
 
@@ -346,7 +378,13 @@ export function generateWorld(seed = 20261, opts = {}) {
     resources.push({ kind: 'relic', type: 'relic', resKind: 'relic', x, z, amount: 1, radius: 0.5, scale: 1, y: hfSample(hf, x, z) });
   }
 
-  // Decorative props: rocks, logs, reeds, flowers, pebbles
+  /* Decorative ground cover -- 100% instanced, 100% non-blocking.
+     The random decorative WOOD CHUNKS / LOGS are GONE. They used to be
+     sprinkled across the whole island at every height, where they read as
+     litter, cluttered the raycasts and sat on top of paths. Ground cover is
+     now purposeful: reeds at the waterline, rocks on slopes, flowers and
+     tussocks in clumps on the meadows. Nothing here interferes with a unit's
+     tile -- every strategic cluster is a real resource node on the grid. */
   for (let i = 0; i < 2400; i++) {
     const x = rng() * 500 - 250;
     const z = rng() * 500 - 250;
@@ -355,27 +393,22 @@ export function generateWorld(seed = 20261, opts = {}) {
     const slope = hfSlope(hf, x, z);
     const r = rng();
     let type;
-    if (h < 0.05) type = r < 0.6 ? 'reed' : 'pebble';
-    else if (slope > 0.45) type = r < 0.55 ? 'rock' : 'pebble';
-    else if (h > 10) type = r < 0.5 ? 'rock' : 'tuft';
-    else if (r < 0.42) type = 'tuft';
-    else if (r < 0.62) type = 'flower';
-    else if (r < 0.74) type = 'pebble';
-    // pebbles reuse the rock mesh at a small scale: one less instanced batch,
-    // and at RTS distance a 0.2 m stone and a 0.2 m boulder look the same
-    if (type === 'pebble') { type = 'rock'; }
-    else if (r < 0.84) type = 'log';
-    else if (r < 0.9) type = 'stump';
-    else type = 'rock';
+    if (h < 0.05) type = r < 0.72 ? 'reed' : 'rock';            // waterline
+    else if (slope > 0.45) type = r < 0.7 ? 'rock' : 'tuft';    // cliff scree
+    else if (h > 10) type = r < 0.58 ? 'rock' : 'tuft';         // highland
+    else if (r < 0.46) type = 'tuft';
+    else if (r < 0.72) type = 'flower';
+    else type = 'rock';                                          // small stones
     decor.push({ type, x, z, y: h, scale: 0.6 + rng() * 0.9, rot: rng() * TAU, tint: rng() });
   }
-  // forest floor debris inside clusters
+  /* Under-canopy clumps: grass and flowers only, placed inside forest
+     clusters so the forest floor reads as a place. No logs, no stumps. */
   for (let i = 0; i < 700; i++) {
     const x = rng() * 500 - 250, z = rng() * 500 - 250;
     const h = hfSample(hf, x, z);
     if (h < 0.3) continue;
     if (rng() < 0.5) continue;
-    decor.push({ type: rng() < 0.5 ? 'log' : 'tuft', x, z, y: h, scale: 0.5 + rng() * 0.7, rot: rng() * TAU, tint: rng() });
+    decor.push({ type: rng() < 0.5 ? 'flower' : 'tuft', x, z, y: h, scale: 0.5 + rng() * 0.7, rot: rng() * TAU, tint: rng() });
   }
 
   /* Roads between the seats of every kingdom (a curving dirt path) — pushed
@@ -419,7 +452,7 @@ export function generateWorld(seed = 20261, opts = {}) {
   /* Decor in clumps, not an even sprinkle. Meadow life comes in patches --
      a tussock, a rock, a stand of flowers -- and the eye reads a cluster as
      "a place" where it reads an even sprinkle as noise. */
-  const clumpKinds = ['tuft', 'tuft', 'flower', 'bush', 'flower', 'stump', 'tuft', 'rock'];
+  const clumpKinds = ['tuft', 'tuft', 'flower', 'bush', 'flower', 'reed', 'tuft', 'rock'];
   for (let c = 0; c < 260; c++) {
     const nearBase = c < 90;
     const base = c % 2 === 0 ? playerBase : enemyBase;
@@ -506,6 +539,68 @@ export function generateWorld(seed = 20261, opts = {}) {
     poi.push({ type: 'shrine', x, z, y: hfSample(hf, x, z), claimed: 0 });
   }
 
+  /* ---- Hydrology-driven strategic features -------------------------
+     Every one of these is a real node on the navigation grid, never a
+     decorative prop dropped on a path. This is what replaces the old
+     random wood chunks with purposeful macro-features. */
+  const stealthForests = [];
+  const sacredSites = [];
+  const tradePosts = [];
+  const bridges = [];
+  if (hydro) {
+    for (const f of hydro.stealthForests) {
+      stealthForests.push({ ...f });
+      /* Tall-canopy stealth forest: a dense but navigable stand. Units are
+         marked for a future stealth system. */
+      const count = Math.floor(f.radius * f.radius * 0.055) + 6;
+      for (let i = 0; i < count; i++) {
+        const a = rng() * TAU, d = Math.sqrt(rng()) * f.radius;
+        const x = f.x + Math.cos(a) * d, z = f.z + Math.sin(a) * d;
+        const h = hfSample(hf, x, z);
+        if (h < 0.4) continue;
+        resources.push({ kind: 'wood', type: 'tree', resKind: 'wood', x, z, amount: 240,
+          radius: 0.85, variant: (rng() * 4) | 0, scale: 1.1 + rng() * 0.35,
+          y: h, stealth: f.id });
+      }
+    }
+    for (const s of hydro.sacredSites) {
+      sacredSites.push({ ...s });
+      poi.push({ type: 'sacred', x: s.x, z: s.z, y: s.y, id: s.id, claimed: 0 });
+    }
+    for (const t of hydro.tradePosts) {
+      tradePosts.push({ ...t });
+      poi.push({ type: 'trade', x: t.x, z: t.z, y: t.y, id: t.id });
+    }
+    for (const f of hydro.shoreFish) {
+      resources.push({ kind: 'food', type: 'fish', resKind: 'food', x: f.x, z: f.z,
+        amount: f.amount, radius: 1.6, scale: 0.9, y: 0, shore: true });
+    }
+    for (const f of hydro.deepFish) {
+      resources.push({ kind: 'food', type: 'fish', resKind: 'food', x: f.x, z: f.z,
+        amount: f.amount, radius: 2.1, scale: 1.25, y: 0, deep: true });
+    }
+    for (const g of hydro.extraGold) {
+      resources.push({ kind: 'gold', type: 'gold_mine', resKind: 'gold', x: g.x, z: g.z,
+        amount: g.amount, radius: 1.25, scale: 1.15, y: g.y });
+    }
+    for (const p of hydro.palmGroves) {
+      resources.push({ kind: 'wood', type: 'tree', resKind: 'wood', x: p.x, z: p.z,
+        amount: 160, radius: 0.8, variant: 1, scale: 1.25, y: p.y, palm: true });
+    }
+    for (const b of hydro.bridges) bridges.push({ ...b });
+    /* Fords are stamped as walkable cobble, so the stone reads on the
+       ground as well as in the water shader. */
+    for (const f of fords) {
+      for (let i = 0; i < 22; i++) {
+        const a = rng() * TAU, d = rng() * f.radius * 0.8;
+        stampRoad(splat, hf, f.x + Math.cos(a) * d, f.z + Math.sin(a) * d, 0.6, 2.2);
+      }
+    }
+    /* Keep the hydrology heightfield in step with the flattened base
+       plateaus, so the live brush editor edits the heights actually used. */
+    hydro.heights.set(hf.h);
+  }
+
   // Walkability: block cells covered by large props
   for (const r of resources) {
     if (r.type === 'fish' || r.type === 'relic') continue;
@@ -515,8 +610,20 @@ export function generateWorld(seed = 20261, opts = {}) {
 
   const world = {
     seed, style,
+    mapType: mapInfo.id,
+    mapName: mapInfo.name,
     size, half: size * 0.5,
     height: hf,
+    hydrology: hydro,
+    /* Domain metadata for the experimental maps and their water shader. */
+    domain: hydro ? hydro.domain : null,
+    domainCells: hydro ? hydro.domainCells : WORLD.navCells,
+    domainCell: hydro ? hydro.domainCell : WORLD.navCell,
+    domainAt: hydro ? hydro.domainAt : null,
+    flowTex: hydro ? hydro.flowTex : null,
+    waterLevel: hydro ? hydro.waterLevel : WORLD.waterLevel,
+    stealthForests, sacredSites, tradePosts, bridges,
+    isNaval: hydro ? hydro.isNaval : true,
     splat, water, walk, props, biome,
     resources, decor, roads: roadPts, poi, fords,
     playerBase, enemyBase,
@@ -526,6 +633,9 @@ export function generateWorld(seed = 20261, opts = {}) {
   };
   world.nav = buildNavGrid(world);
   world.heightAt = (x, z) => hf.sample(x, z);
+  world.domainAtOrDefault = (x, z) => world.domainAt
+    ? world.domainAt(x, z)
+    : (hf.sample(x, z) < -0.35 ? DOMAIN.WATER_ONLY : DOMAIN.LAND_ONLY);
   return world;
 }
 
@@ -701,15 +811,35 @@ export function buildNavGrid(world) {
      bilinear height samples. Terrain never changes, so it is baked once,
      here, out of exactly the numbers the nav grid is already paying for. */
   const steep = new Uint8Array(N * N);
+  /* Keep domain metadata alongside the current land navigation grid.
+     Naval pathfinding does not yet consume this grid. */
+  const domain = new Uint8Array(N * N);
+  const hydro = world.hydrology;
   for (let z = 0; z < N; z++) {
     for (let x = 0; x < N; x++) {
       const wx = (x + 0.5) * cell - WORLD.half;
       const wz = (z + 0.5) * cell - WORLD.half;
       const h = world.height.sample(wx, wz);
       const slope = world.height.slope(wx, wz);
-      blocked[z * N + x] = (h < 0.05 || slope > 0.72) ? 1 : 0;
+      const d = hydro ? hydro.domainAt(wx, wz)
+        : (h < 0.05 ? DOMAIN.WATER_ONLY : DOMAIN.LAND_ONLY);
+      domain[z * N + x] = d;
+      /* Land A* blocked: deep water, cliffs, and (later) buildings. Fords
+         and beaches are amphibious and therefore NOT blocked for land. */
+      blocked[z * N + x] = (d === DOMAIN.WATER_ONLY || d === DOMAIN.BLOCKED || slope > 0.72) ? 1 : 0;
       steep[z * N + x] = slope > 0.95 ? 1 : 0;
     }
   }
-  return { cells: N, cell, blocked, steep };
+  return { cells: N, cell, blocked, steep, domain,
+    isWaterCell: (x, z) => {
+      const cx = clamp(((x + WORLD.half) / cell) | 0, 0, N - 1);
+      const cz = clamp(((z + WORLD.half) / cell) | 0, 0, N - 1);
+      return domain[cz * N + cx] === DOMAIN.WATER_ONLY;
+    },
+    domainAt: (x, z) => {
+      const cx = clamp(((x + WORLD.half) / cell) | 0, 0, N - 1);
+      const cz = clamp(((z + WORLD.half) / cell) | 0, 0, N - 1);
+      return domain[cz * N + cx];
+    }
+  };
 }

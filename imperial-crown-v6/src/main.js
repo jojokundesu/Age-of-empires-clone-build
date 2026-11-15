@@ -14,13 +14,14 @@ import { Menu } from './game/menu.js';
 import { Input } from './game/input.js';
 import { UI } from './game/ui.js';
 import { DirectControl } from './game/direct-control.js';
-import { Building } from './sim/entities.js';
+import { Building, STATE } from './sim/entities.js';
 import { saveModState, restoreModState } from './mods/save-state.js';
 import { AGES, CIVS, DIFFICULTY, GAME_MODES, BUILDING_DEFS, UNIT_DEFS, VICTORIES } from './sim/data.js';
 import { clamp } from './core/math.js';
 import { RANKS, MAX_RANK } from './sim/veterancy.js';
-import { Governor, pickInitialTier, TIER_ORDER } from './gfx/quality.js';
+import { Governor, pickInitialTier } from './gfx/quality.js';
 import { renownOf } from './sim/elites.js';
+import { RESOURCES } from './core/resources.js';
 
 /* 30 Hz simulation, 60+ Hz rendering. An RTS does not need 60 sim ticks a
    second -- AoE2 ran at 20 -- and halving the rate halves the CPU the
@@ -55,7 +56,13 @@ const DEFAULT_SETTINGS = {
      The defaults are phone defaults: generous look, no inversion, swings on
      its own so one thumb can steer, and a short buzz when steel lands. */
   lookSensitivity: 1, invertLookY: false, swapSticks: false, headBob: true,
-  autoAttack: true, haptics: true, buttonSize: 'comfortable'
+  autoAttack: true, haptics: true, buttonSize: 'comfortable',
+  /* Realme 9i / Adreno 610: the hardware DPR is 3 but the balanced target
+     is 1.35. `resolutionPreset` is the player-facing dial (Performance
+     1.0x, Balanced 1.35x, Ultra 1.75x) applied on top of the frame
+     governor, which still lowers resolution when frames get expensive. */
+  resolutionPreset: 'balanced',
+  mapType: 'classic'
 };
 
 function loadSettings() {
@@ -104,14 +111,25 @@ class App {
     this.matchOpts = null;
     this.menu = new Menu({
       audio: this.audio,
+      settings: this.settings,
       quality: this.settings.quality,
+      mapType: this.settings.mapType,
+      resolutionPreset: this.settings.resolutionPreset,
       onStart: (opts) => this.startMatch(opts),
-      onClose: () => { if (this.running && this.paused) this.paused = false; },
+      /* Native Back -> closeModal() must RESUME the match. */
+      onClose: () => this.resumeFromOverlay(),
+      onOverlayOpen: () => this.pauseForOverlay(),
+      isInGame: () => !!this.game && (this.running || this.paused),
       onSettingsChanged: (state) => this.applySettings(state)
     });
   }
 
-  async boot() {
+  boot() {
+    if (!this._bootPromise) this._bootPromise = this._boot();
+    return this._bootPromise;
+  }
+
+  async _boot() {
     this.menu.bind();
     this.menu.showBoot();
     this.menu.bootTip('Preparing the forge…');
@@ -122,9 +140,11 @@ class App {
     this.renderer = new Renderer(this.canvas, { quality: this.settings.quality });
     if (!this.renderer.ok) {
       this.menu.bootProgress(1, 'WebGL2 is not available on this device.');
+      this.menu.bootDone();
+      if (this.menu.el.start) this.menu.el.start.disabled = true;
       this.menu.openModal('HARDWARE', 'WebGL2 required',
-        '<p>This browser could not create a WebGL2 context. Chrome on Android 10+ supports it. ' +
-        'Try updating Chrome or enabling hardware acceleration.</p>');
+        '<p>This device could not create a WebGL2 context. Update Android System WebView or Chrome, ' +
+        'check that hardware acceleration is enabled, then restart the game. Some devices or drivers do not support WebGL2.</p>');
       return;
     }
     try {
@@ -132,11 +152,66 @@ class App {
     } catch (err) {
       console.error(err);
       this.menu.bootProgress(1, 'The renderer failed to start.');
+      this.menu.bootDone();
+      if (this.menu.el.start) this.menu.el.start.disabled = true;
       this.menu.openModal('HARDWARE', 'Renderer error',
         `<p class="dim">${String(err && err.message || err)}</p>`);
       return;
     }
+    /* Every GPU object now has one owner. A lost context (Android's
+       onRenderProcessGone) or a map regeneration releases through this
+       manager instead of three scattered hand-written disposal loops. */
+    RESOURCES.attachGL(this.renderer.gl);
+    this.renderer.trackPersistentResources();
+    this.renderer.onContextLost = () => {
+      // Stop the simulation while the battlefield is invisible. Preserve a
+      // pre-existing pause/modal instead of resuming it behind the player's back.
+      if (!this._recoveringGraphics) {
+        this._graphicsWasPaused = this.paused;
+        try { if (this.game && !this.game.gameOver) this.saveMatch(); }
+        catch (err) { console.warn('Could not save after graphics interruption:', err); }
+      }
+      this._recoveringGraphics = true;
+      this.paused = true;
+      this.directControl?.resetInput?.();
+      this.menu.el.boot?.classList.remove('hidden');
+      this.menu.bootProgress(0, 'Graphics interrupted. Waiting for the device…');
+      this.menu.bootTip('The battle is paused while graphics recover.');
+    };
+    this.renderer.onContextRestored = () => {
+      const epoch = this.renderer._contextEpoch;
+      // Serialize rebuilds if the device loses the context again mid-recovery.
+      this._graphicsRecovery = (this._graphicsRecovery || Promise.resolve()).then(async () => {
+        if (this.renderer.ctxLost || epoch !== this.renderer._contextEpoch) return;
+        try {
+          await this.renderer.restoreContext((label, frac) => this.menu.bootProgress(frac, label));
+          if (this.game) { this.game.fowDirty = true; }
+          this._syncGovernor();
+          this.onResize();
+          this._recoveringGraphics = false;
+          this.paused = this._graphicsWasPaused || document.hidden || this.menu.isModalOpen();
+          this.menu.hideBoot();
+        } catch (err) {
+          if (epoch !== this.renderer._contextEpoch) return;
+          console.error('Graphics recovery failed:', err);
+          this.menu.bootProgress(0, 'Graphics could not be restored.');
+          this.menu.bootTip('Restart the app to continue from your last save.');
+        }
+      });
+    };
     this._initGovernor();
+    if (this.renderer && this.settings.resolutionPreset) {
+      this.renderer.setResolutionPreset(this.settings.resolutionPreset);
+    }
+    /* The WebAudio context is suspended by MainActivity.onPause() and is
+       NEVER resumed by onResume(). Audio installs its own visibility,
+       focus, pageshow and passive pointer/touch listeners at construction;
+       this is the belt-and-braces path for WebViews that swallow those. */
+    this.audio.installLifecycle?.();
+    window.addEventListener('focus', () => this.audio.ensureRunning?.());
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.audio.ensureRunning?.();
+    });
     this.menu.bootProgress(1, 'Ready.');
     this.menu.bootTip(this.hardwareLine());
     await new Promise((r) => setTimeout(r, 260));
@@ -150,11 +225,11 @@ class App {
     window.addEventListener('orientationchange', () => setTimeout(() => this.onResize(), 240));
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        this.prevPaused = this.paused;
+        this.prevPaused = this._recoveringGraphics ? this._graphicsWasPaused : this.paused;
         if (this.running) { this.paused = true; this.audio.suspend(); }
       } else {
         this.audio.resume();
-        if (this.running && !this.prevPaused) this.paused = false;
+        if (this.running && !this.prevPaused && !this.menu.isModalOpen() && !this._recoveringGraphics) this.paused = false;
       }
     });
     this.onResize();
@@ -162,10 +237,9 @@ class App {
 
   /**
    * Decide where to start, from the two things a browser will tell us: the
-   * GPU string and the core/memory counts. A phone GPU is capped at the
-   * balanced tier even if the save file asks for ultra -- walking *up* from a
-   * tier that is too low is invisible, walking down from one that is too high
-   * is the stutter the player remembers.
+   * GPU string and the core/memory counts. Automatic mode starts
+   * conservatively; a quality setting explicitly pinned by the player remains
+   * their choice, while resolution can still adapt under load.
    */
   _initGovernor() {
     const gl = this.renderer && this.renderer.gl;
@@ -174,7 +248,7 @@ class App {
       const dbg = gl && gl.getExtension('WEBGL_debug_renderer_info');
       rendererName = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : (gl ? gl.getParameter(gl.RENDERER) : '');
     } catch (e) { /* privacy mode blocks it */ }
-    const saved = this.settings.quality;
+    const saved = this.settings.autoQuality === false ? this.settings.quality : null;
     const info = pickInitialTier({
       renderer: rendererName,
       cores: navigator.hardwareConcurrency || 4,
@@ -182,8 +256,7 @@ class App {
       ua: navigator.userAgent || '',
       savedTier: saved
     });
-    let tier = info.tier;
-    if (info.gpu.class === 'low' && TIER_ORDER.indexOf(tier) > 1) tier = 'medium';
+    const tier = info.tier;
     this.deviceInfo = { ...info, tier };
     this.governor = new Governor({
       tier,
@@ -191,6 +264,7 @@ class App {
       pinTier: this.settings.autoQuality === false
     });
     this.settings.quality = tier;
+    if (this.menu?.state) this.menu.state.quality = tier;
     if (this.renderer && this.renderer.ready) {
       this.renderer.setQuality(tier);
       this.renderer.setPixelScale(this.governor.scale);
@@ -277,23 +351,32 @@ class App {
   applySettings(state) {
     const prev = this.settings.quality;
     this.settings = { ...this.settings, ...state };
+    // Returning to automatic mode hands the current tier to the governor;
+    // do not jump to a more expensive tier in the middle of a battle.
+    if (this.governor && this.settings.autoQuality !== false) {
+      this.settings.quality = this.governor.tier;
+      if (this.menu?.state) this.menu.state.quality = this.governor.tier;
+    }
     /* the first-person HUD reads its own size off the body, so a change is
        visible the moment the sheet closes */
     document.body.dataset.fpButtons = this.settings.buttonSize || 'comfortable';
-    try { localStorage.setItem('imperial-crown-v6-settings', JSON.stringify(this.settings)); } catch (e) { /* ignore */ }
-    if (this.renderer) this.renderer.setQuality(this.settings.quality);
+    if (this.renderer) {
+      this.renderer.setQuality(this.settings.quality);
+      if (state.resolutionPreset) this.renderer.setResolutionPreset(state.resolutionPreset);
+    }
     if (this.governor) {
       /* A hand-picked tier is a promise: the governor keeps the art but is
          still allowed to spend resolution and the refresh divisor to hold the
          frame rate. Choosing "auto" hands the tier back. */
       this.governor.setPinned(this.settings.autoQuality === false);
-      if (this.settings.quality !== prev || this.settings.autoQuality === false) {
+      if (this.settings.autoQuality === false && this.settings.quality !== prev) {
         this.governor.tier = this.settings.quality;
         this.governor.setScale(1);
         this.governor.div = 1;
       }
       this._syncGovernor();
     }
+    try { localStorage.setItem('imperial-crown-v6-settings', JSON.stringify(this.settings)); } catch (e) { /* ignore */ }
     this.audio.setEnabled(this.settings.sound);
     this.audio.setMusic(this.settings.music);
     if (this.game) {
@@ -305,7 +388,16 @@ class App {
 
   /* ================= match lifecycle ================= */
   async startMatch(opts) {
+    // Do not build a world against half-initialised renderer batches.
+    if (!this.renderer?.ready) {
+      await this.boot();
+      if (!this.renderer?.ready) return;
+    }
     // A restart/new match owns new input handlers and a new mod registry.
+    /* Releasing the previous battle's transient pools is the difference
+       between a restart that reuses fixed arrays and one that slowly grows
+       the JS heap (and the GPU's instance buffers) forever. */
+    RESOURCES.releaseMatch();
     this.directControl?.dispose();
     this.input?.detach();
     this.ui?.dispose();
@@ -322,7 +414,7 @@ class App {
     const modHud = document.getElementById('modHud');
     if (modHud) { modHud.replaceChildren(); modHud.classList.add('hidden'); }
     document.body.classList.remove('mods');
-    this.menu.closeModal();
+    this.menu.closeModal({ silent: true });
     this.menu.hideMenu();
     this.menu.hideBoot();
     document.getElementById('endScreen')?.classList.add('hidden');
@@ -351,12 +443,21 @@ class App {
     /* A War of Crowns needs a seat per crown; every other mode is the classic
        two-corner island, generated exactly as it always was. */
     const kingdoms = opts.mode === 'kingdoms' ? Math.max(2, Math.min(4, opts.kingdoms | 0 || 3)) : 2;
-    const world = generateWorld(seed, kingdoms > 2 ? { sites: kingdoms } : undefined);
+    /* The menu can opt into experimental hydrology maps. Old saves retain
+       their original terrain by defaulting to the classic generator. */
+    const mapType = opts.load ? (opts.load.mapType || 'classic') : (opts.mapType || this.settings.mapType || 'classic');
+    const world = generateWorld(seed, { sites: kingdoms > 2 ? kingdoms : 2, mapType });
+    world.mapType = mapType;
     this.menu.bootProgress(0.4, 'Settling villages…');
 
     const fx = new FX();
+    /* Clear the existing particle and projectile pools on match teardown. */
     const sound = {
-      play: (name, o) => this.audio.play(name, o)
+      play: (name, o, z) => this.audio.play(name,
+        (o && typeof o === 'object') ? o : (Number.isFinite(o) ? { x: o, z: z || 0 } : {})),
+      playSelectionFor: (unit) => this.audio.playSelectionFor?.(unit),
+      playDropoff: (kind, x, z) => this.audio.playDropoff?.(kind, x, z),
+      noteCombat: (n) => this.audio.noteCombat?.(n)
     };
     const game = new Game({
       world,
@@ -370,6 +471,8 @@ class App {
       sound,
       rand: Math.random
     });
+    RESOURCES.registerPool('particles', fx);
+    RESOURCES.registerPool('projectiles', game.projectiles);
     game.settings.fog = this.settings.fog;
     game.settings.bars = this.settings.showBars;
     game.showFog = this.settings.fog;
@@ -471,7 +574,7 @@ class App {
 
     const ui = new UI({
       game, renderer: this.renderer, camera, audio: this.audio, menu: this.menu,
-      app: { togglePause: () => this.togglePause(), openPause: () => this.openPause(), quit: () => this.quitToMenu() }
+      app: { togglePause: () => this.togglePause(), openPause: () => this.openPause(), quit: () => this.requestQuit() }
     });
     const input = new Input({ canvas: this.canvas, game, camera, ui, audio: this.audio });
     ui.input = input;
@@ -688,6 +791,48 @@ class App {
     this.deviceCheck = txt;
   }
 
+  /* ---------------- Android back-button contract ----------------
+     MainActivity.onBackPressed():
+       if (a.menu.isModalOpen())  { a.menu.closeModal(); return 'handled'; }
+       if (a.running)             { a.openPause();       return 'handled'; }
+       ...otherwise quitToMenu().
+     A pause/tech/diplomacy/forge sheet is therefore an OPEN MODAL, and
+     closing it resumes the very same match. No fall-through to the menu. */
+  pauseForOverlay(kind = 'overlay') {
+    if (!this.game || this.game.gameOver) return;
+    this.paused = true;
+    this.directControl?.resetInput?.();
+  }
+  resumeFromOverlay(kind = 'overlay') {
+    if (!this.game || this.game.gameOver || this._quitting) return;
+    this.paused = false;
+    this.running = true;
+  }
+
+  /** Explicit "Quit to Menu": confirm first, then auto-save and leave. The
+      save happens BEFORE the confirmation so a mis-tap or a killed WebView
+      still leaves a resumable match in localStorage. */
+  requestQuit() {
+    if (!this.game) { this.quitToMenu(); return; }
+    const saved = this.saveMatch();
+    this.menu.openModal('LEAVE THE FIELD', 'Quit to menu?', `
+      <p class="dim">Your campaign is ${saved ? 'saved on this device' : 'running, but this device refused the save'}.
+      Resume from the main menu with <b>Load Campaign</b>.</p>
+      <div class="metricRow"><span>Match time</span><b>${Math.floor((this.game.time || 0) / 60)} min ${Math.floor((this.game.time || 0) % 60)} s</b></div>
+      <div class="row" style="margin-top:10px;gap:6px;display:flex;flex-wrap:wrap">
+        <button class="ghostBtn" data-quit="cancel"><svg class="ic"><use href="#i-play"/></svg> Keep playing</button>
+        <button class="ghostBtn" data-quit="confirm"><svg class="ic"><use href="#i-home"/></svg> Save and quit</button>
+      </div>`, '<span class="dim tiny">A native Back press closes this sheet and resumes the match instead.</span>',
+      { kind: 'quit' });
+    const body = document.getElementById('modalBody');
+    if (body) body.onclick = (e) => {
+      const b = e.target.closest('[data-quit]');
+      if (!b) return;
+      if (b.dataset.quit === 'confirm') this.quitToMenu();
+      else this.menu.closeModal();
+    };
+  }
+
   openPause() {
     if (!this.running) return;
     this.paused = true;
@@ -721,7 +866,8 @@ class App {
         <button class="ghostBtn" data-act="restart"><svg class="ic"><use href="#i-load"/></svg> Restart</button>
         <button class="ghostBtn" data-act="quit"><svg class="ic"><use href="#i-home"/></svg> Quit</button>
       </div>`,
-      '<span class="dim tiny">Tip: the game auto-saves every minute. “Check device” runs a six-second orbit and reports the frame rate — useful when reporting how the game runs on your phone.</span>');
+      '<span class="dim tiny">Tip: the game auto-saves every minute. “Check device” runs a six-second orbit and reports the frame rate — useful when reporting how the game runs on your phone.</span>',
+      { kind: 'pause' });
     const body = document.getElementById('modalBody');
     if (body) body.onclick = (e) => {
       const b = e.target.closest('[data-act]');
@@ -731,12 +877,15 @@ class App {
       else if (act === 'save') { const ok = this.saveMatch(); this.ui?.toast(ok ? 'Campaign saved' : 'Could not save on this device', ok ? 'good' : 'warn'); }
       else if (act === 'settings') this.menu.openSettings();
       else if (act === 'check') this.runDeviceCheck();
-      else if (act === 'restart') { this.menu.closeModal(); this.startMatch(this.matchOpts); }
-      else if (act === 'quit') this.quitToMenu();
+      else if (act === 'restart') { this.menu.closeModal({ silent: true }); this.startMatch(this.matchOpts); }
+      else if (act === 'quit') this.requestQuit();
     };
   }
 
   quitToMenu() {
+    /* An explicit quit always leaves a resumable campaign behind. */
+    this._quitting = true;
+    if (this.game && !this.game.gameOver) this.saveMatch();
     this.directControl?.dispose();
     this.input?.detach();
     this.ui?.dispose();
@@ -745,12 +894,20 @@ class App {
     document.body.classList.remove('firstPerson');
     this.running = false;
     this.paused = false;
-    this.menu.closeModal();
+    /* silent: tearing down a match must not resume the game being discarded */
+    this.menu.closeModal({ silent: true });
     if (this.modHost) {
       try { this.modHost.dispose(); } catch (e) { /* a dead mod cannot block the menu */ }
       this.modHost = null;
     }
-    if (this.renderer) { this.renderer.modAtmosphere = null; this.renderer.climateAtmosphere = null; this.renderer.flash = 0; }
+    /* GPU memory is freed the moment a match ends, not at the next GC. */
+    RESOURCES.releaseMatch();
+    if (this.renderer) {
+      this.renderer.disposeWorld?.();
+      this.renderer.modAtmosphere = null;
+      this.renderer.climateAtmosphere = null;
+      this.renderer.flash = 0;
+    }
     document.body.classList.remove('mods');
     const hud = document.getElementById('modHud');
     if (hud) { hud.classList.add('hidden'); hud.replaceChildren(); }
@@ -762,8 +919,12 @@ class App {
     this.ais = [];
     this.ui = null;
     this.menu.showMenu();
+    this.audio.setMood?.('peace');
+    this.audio.setEnvironment?.({ forest: 0, water: 0, fire: 0, combat: 0 });
     this.audio.stopMusic?.();
     this.audio.startMusic?.();
+    this.audio.ensureRunning?.();
+    this._quitting = false;
   }
 
   /* ================= save / load ================= */
@@ -774,9 +935,26 @@ class App {
     const liveBuildings = g.buildings.filter((b) => !b.dead);
     const unitIndex = new Map(liveUnits.map((u, i) => [u, i]));
     const buildingIndex = new Map(liveBuildings.map((b, i) => [b, i]));
+    const ref = e => {
+      if (!e || e.dead) return null;
+      if (unitIndex.has(e)) return ['unit', unitIndex.get(e)];
+      if (buildingIndex.has(e)) return ['building', buildingIndex.get(e)];
+      if (e.kind === 'resource' && Number.isInteger(e.worldResourceIndex)) return ['resource', e.worldResourceIndex];
+      return null;
+    };
+    const order = u => ({
+      state: u.state, destX: u.destX, destZ: u.destZ,
+      target: ref(u.target), gather: ref(u.gatherTarget), build: ref(u.buildTarget),
+      repair: ref(u.repairTarget), convert: ref(u.convertTarget), garrison: ref(u.garrisonTarget),
+      carry: u.carry ? { kind: u.carry.kind, amount: u.carry.amount } : null,
+      lastGatherKind: u.lastGatherKind, stance: u.stance,
+      patrolPoints: u.patrolPoints, patrolIdx: u.patrolIdx,
+      convertProgress: u.convertProgress
+    });
     const data = {
       version: SAVE_VERSION,
       seed: g.world.seed,
+      mapType: g.world.mapType,
       civ: g.civ,
       mode: g.mode,
       difficulty: g.difficultyKey,
@@ -793,6 +971,7 @@ class App {
          a free win that also made the enemy look broken. */
       teams: Object.fromEntries(g.teamIds.map((t) => [t, g.exportTeam(t)])),
       wonder: [...g.wonderClocks.entries()],
+      sacredClock: { ...g.sacredClock },
       court: g.court ? g.court.toJSON() : null,
       calendar: g.calendar ? g.calendar.toJSON() : null,
       climate: g.climate ? g.climate.toJSON() : null,
@@ -806,9 +985,9 @@ class App {
       modState: saveModState(g.modHost, liveUnits, liveBuildings, unitIndex, buildingIndex),
       // The indices below share exactly the same live arrays as squads,
       // guards and workshop state; no volatile runtime entity ids are used.
-      units: liveUnits.map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round((u.xp || 0) * 10) / 10, Math.round(u.morale ?? 100), Math.round(u.survived || 0), (u.garrisoned ? buildingIndex.get(u.garrisonTarget) : undefined) ?? -1, u.maxHp]),
-      buildings: liveBuildings.map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0, { queue: b.queue, researchQueue: b.researchQueue, rally: b.rally, amount: b.def && b.def.resKind ? Math.round(b.amount || 0) : undefined }]),
-      resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0])
+      units: liveUnits.map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round((u.xp || 0) * 10) / 10, Math.round(u.morale ?? 100), Math.round(u.survived || 0), (u.garrisoned ? buildingIndex.get(u.garrisonTarget) : undefined) ?? -1, u.maxHp, (u.garrisoned ? unitIndex.get(u.garrisonTarget) : undefined) ?? -1, order(u)]),
+      buildings: liveBuildings.map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0, { queue: b.queue, researchQueue: b.researchQueue, rally: b.rally, amount: b.def && b.def.resKind ? Math.round(b.amount || 0) : undefined, poiType: b.poiType, poiId: b.poiId, siteOwner: b.siteOwner, captureTeam: b.captureTeam, captureProgress: b.captureProgress }]),
+      resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0, r.worldResourceIndex ?? null])
     };
     const ok = Menu.writeSave(data);
     this.saveTimer = 0;
@@ -835,6 +1014,8 @@ class App {
     if (save.realm && game.realm) game.realm.fromJSON(save.realm);
     if (save.climate && game.climate) game.climate.fromJSON(save.climate);
     game.wonderClocks = new Map((save.wonder || []).filter(([team]) => game.teamIds.includes(team)));
+    if (save.sacredClock && game.teamIds.includes(save.sacredClock.team) && Number.isFinite(save.sacredClock.time))
+      game.sacredClock = { team: save.sacredClock.team, time: Math.max(0, save.sacredClock.time) };
 
     /* the saved order of `buildings` is the index space the units refer to */
     const placed = [];
@@ -857,6 +1038,17 @@ class App {
         b.rally = extra.rally || null;
         /* a half-harvested field comes back half-harvested */
         if (Number.isFinite(extra.amount)) b.amount = clamp(extra.amount, 0, b.maxAmount);
+      }
+      if (b.type === 'outpost_shrine') {
+        const source = (game.world.poi || []).find(p => Math.hypot(p.x - x, p.z - z) < 0.2);
+        b.poiType = extra?.poiType || (source?.type === 'sacred' || (source?.type === 'shrine' && !game.world.hydrology) ? 'sacred' : source?.type);
+        b.poiId = extra?.poiId || source?.id || null;
+        if (b.poiType === 'sacred') {
+          b.name = 'Sacred Site';
+          b.siteOwner = game.teamIds.includes(extra?.siteOwner) ? extra.siteOwner : 0;
+          b.captureTeam = game.teamIds.includes(extra?.captureTeam) ? extra.captureTeam : 0;
+          b.captureProgress = Number.isFinite(extra?.captureProgress) ? clamp(extra.captureProgress, 0, 10) : 0;
+        }
       }
       if (complete && team !== 0) game.onBuildingComplete(b);
       placed[placed.length - 1] = b;
@@ -894,19 +1086,99 @@ class App {
         u.renown = Math.min(4, renownOf(survived));
       }
     }
+    // Transport references use the same live-unit index space and are linked
+    // after every unit exists, so passenger/ship ordering in saves is irrelevant.
+    for (let i = 0; i < restoredUnits.length; i++) {
+      const hostIndex = save.units[i]?.[11];
+      if (Number.isInteger(hostIndex) && hostIndex >= 0 && restoredUnits[i] && restoredUnits[hostIndex]) {
+        game.boardTransport(restoredUnits[i], restoredUnits[hostIndex], true);
+      }
+    }
     if (game.elites && save.elites) game.elites.fromJSON(save.elites);
     if (save.modState && game.modHost) restoreModState(game.modHost, save.modState, restoredUnits, placed);
     game.squads.fromJSON(save.squads, restoredUnits);
     game.guards.fromJSON(save.guards, restoredUnits, placed);
     if (game.champions && save.champions) game.champions.fromJSON(save.champions, restoredUnits);
     if (save.resources) {
-      const map = new Map();
-      for (const [type, x, z, amount] of save.resources) map.set(`${Math.round(x)},${Math.round(z)},${type}`, amount);
+      const byIndex = new Map(), legacy = new Map();
+      for (const row of save.resources) {
+        if (!Array.isArray(row)) continue;
+        const [type, x, z, , , index] = row;
+        if (Number.isInteger(index) && index >= 0) byIndex.set(index, row);
+        else legacy.set(`${Math.round(x)},${Math.round(z)},${type}`, row);
+      }
       for (const r of game.resources) {
         const k = `${Math.round(r.x)},${Math.round(r.z)},${r.type}`;
-        if (map.has(k)) r.amount = map.get(k);
-        else r.amount = 0; // a depleted, compacted node must not reappear
-        if (r.amount <= 0) { r.dead = true; r.deadT = 9; }
+        const indexed = byIndex.get(r.worldResourceIndex);
+        const row = indexed?.[0] === r.type ? indexed : legacy.get(k);
+        r.amount = row && Number.isFinite(row[3]) ? Math.max(0, row[3]) : 0;
+        if (r.amount <= 0) { r.dead = true; r.deadT = 9; continue; }
+        // The saved position matters for herds. Matching their moved position
+        // to the regenerated spawn position made deer disappear after reload.
+        if (r.herd && Number.isFinite(row[1]) && Number.isFinite(row[2]) && game.isInside(row[1], row[2])) {
+          r.x = r.xPrev = row[1]; r.z = r.zPrev = row[2];
+          r.y = r.yPrev = game.heightAt(r.x, r.z);
+        }
+      }
+    }
+    // Reconnect standing orders only after all units, buildings and resource
+    // nodes exist. Legacy saves have no order record and remain supported.
+    game.resourceSpatial.clear();
+    game.resourceSpatial.insertAll(game.resources);
+    game.buildingSpatial.clear();
+    game.buildingSpatial.insertAll(game.buildings);
+    game.buildingSpatialDirty = false;
+    game.refreshNav();
+    game.beginPathTicks();
+    const resourceByIndex = new Map(game.resources.filter(r => !r.dead).map(r => [r.worldResourceIndex, r]));
+    const deref = ref => {
+      if (!Array.isArray(ref) || !Number.isInteger(ref[1]) || ref[1] < 0) return null;
+      if (ref[0] === 'unit') return restoredUnits[ref[1]] || null;
+      if (ref[0] === 'building') return placed[ref[1]] || null;
+      if (ref[0] === 'resource') return resourceByIndex.get(ref[1]) || null;
+      return null;
+    };
+    for (let i = 0; i < restoredUnits.length; i++) {
+      const u = restoredUnits[i], o = save.units[i]?.[12];
+      if (!u || !o || typeof o !== 'object') continue;
+      if (['aggressive', 'defensive', 'stand'].includes(o.stance)) u.stance = o.stance;
+      if (o.carry && ['food', 'wood', 'gold', 'stone'].includes(o.carry.kind) && Number.isFinite(o.carry.amount) && o.carry.amount > 0)
+        u.carry = { kind: o.carry.kind, amount: o.carry.amount };
+      if (['food', 'wood', 'gold', 'stone'].includes(o.lastGatherKind)) u.lastGatherKind = o.lastGatherKind;
+      if (u.garrisoned) continue;
+      const gather = deref(o.gather), build = deref(o.build), repair = deref(o.repair), target = deref(o.target);
+      const validDestination = Number.isFinite(o.destX) && Number.isFinite(o.destZ) && game.isInside(o.destX, o.destZ);
+      if ((o.state === STATE.GATHER || o.state === STATE.RETURN) && (u.type === 'villager' || u.type === 'fishing_boat')) {
+        if (gather && gather.resKind && gather.amount > 0) {
+          u.gatherTarget = u.homeNode = gather;
+          u.lastGatherKind = gather.resKind;
+        }
+        if (o.state === STATE.RETURN || (u.carry.amount && gather && u.carry.kind !== gather.resKind)) {
+          u.returnResources();
+        } else if (u.gatherTarget) game.orderGather([u], u.gatherTarget);
+        else if (u.lastGatherKind) u.state = STATE.GATHER;
+      } else if (o.state === STATE.BUILD && build?.kind === 'building' && !build.dead && build.team === u.team) {
+        game.orderBuild([u], build);
+      } else if (o.state === STATE.REPAIR && repair?.kind === 'building' && !repair.dead && repair.team === u.team) {
+        game.orderRepair([u], repair);
+      } else if (o.state === STATE.ATTACK && target && !target.dead && game.canFight(u.team, target.team)) {
+        game.orderAttack([u], target);
+      } else if (o.state === STATE.HEAL && target && !target.dead && target.team === u.team) {
+        game.orderHeal([u], target);
+      } else if (o.state === STATE.CONVERT && deref(o.convert)) {
+        game.orderConvert([u], deref(o.convert));
+        if (Number.isFinite(o.convertProgress)) u.convertProgress = Math.max(0, o.convertProgress);
+      } else if (o.state === STATE.GARRISON && deref(o.garrison)) {
+        game.orderGarrison([u], deref(o.garrison));
+      } else if ((o.state === STATE.MOVE || o.state === STATE.ATTACK_MOVE) && validDestination) {
+        if (o.state === STATE.MOVE) game.orderMove([u], o.destX, o.destZ, false);
+        else game.orderAttackMove([u], o.destX, o.destZ);
+      } else if (o.state === STATE.PATROL && Array.isArray(o.patrolPoints) && o.patrolPoints.length === 2 &&
+        o.patrolPoints.every(p => Array.isArray(p) && Number.isFinite(p[0]) && Number.isFinite(p[1]) && game.isInside(p[0], p[1]))) {
+        u.patrolPoints = o.patrolPoints.map(p => [p[0], p[1]]);
+        u.patrolIdx = o.patrolIdx === 0 ? 0 : 1;
+        u.state = STATE.PATROL;
+        u.moveTo(...u.patrolPoints[u.patrolIdx], true);
       }
     }
     if (save.explored) restoreExplored(game, save.explored);
@@ -929,12 +1201,39 @@ class App {
     requestAnimationFrame(this.loop);
     this._detectRefresh(now);
     if (!this.last) this.last = now;
-    let dt = (now - this.last) / 1000;
+    /* Strict delta-time clamp. After a native onPause(), a screen lock or a
+       tab switch the next rAF can be seconds late: 0.25 s of catch-up let
+       units teleport across rivers and made siege physics explode. 0.05 s
+       is one and a half sim ticks at 30 Hz -- the largest honest step. */
+    const dt = Math.min(Math.max((now - this.last) / 1000, 0), 0.05);
     this.last = now;
-    if (dt > 0.25) dt = 0.25;
-    if (dt <= 0) dt = 1 / 60;
+    // A restored context is rebuilt asynchronously; no GL upload or game
+    // simulation may run against partially rebuilt or invalid GPU objects.
+    if (this._recoveringGraphics) return;
 
     const g = this.game;
+    /* The landscape's soundscape follows the camera: forest birds, lapping
+       water and crackling fire are mixed from the actual world, not a loop
+       that plays everywhere. Cheap: one query per half second. */
+    if (g && this.camera) {
+      this._envT = (this._envT || 0) + dt;
+      if (this._envT > 0.55) {
+        this._envT = 0;
+        const cx = this.camera.target?.[0] || 0, cz = this.camera.target?.[2] || 0;
+        const nearWater = g.world?.domainAt ? g.world.domainAt(cx, cz) : (g.heightAt(cx, cz) < 0 ? 2 : 1);
+        let forest = 0, fire = 0;
+        for (const f of g.world?.stealthForests || []) {
+          const d = Math.hypot(f.x - cx, f.z - cz);
+          if (d < f.radius + 40) forest = Math.max(forest, 1 - d / (f.radius + 40));
+        }
+        for (const b of g.buildings) {
+          if (b.dead || b.hp > b.maxHp * 0.55) continue;
+          const d = Math.hypot(b.x - cx, b.z - cz);
+          if (d < 55) fire = Math.max(fire, (1 - d / 55) * (1 - b.hp / b.maxHp));
+        }
+        this.audio.setEnvironment?.({ forest, water: nearWater === 2 || nearWater === 3 ? 0.85 : 0.08, fire });
+      }
+    }
     this.audio.update(dt);
     if (!g) {
       // menu: idle rotation of the camera over a static painted backdrop
@@ -1013,6 +1312,7 @@ class App {
       if (act) this._syncGovernor();
       if (this.settings.quality !== gov.tier && this.settings.autoQuality !== false) {
         this.settings.quality = gov.tier;
+        if (this.menu?.state) this.menu.state.quality = gov.tier;
       }
     }
     this.statsFrames++;

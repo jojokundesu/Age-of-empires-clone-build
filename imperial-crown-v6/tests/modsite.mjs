@@ -352,18 +352,28 @@ await check('tapping the spell card and then the ground casts it', async () => {
     const y = g.heightAt(zombie.x, zombie.z);
     const p = a.camera.project(zombie.x, y, zombie.z, [0, 0, 0]);
     const r = a.canvas.getBoundingClientRect();
-    return { hp: zombie.hp, id: zombie.id, x: r.left + (p[0] * 0.5 + 0.5) * r.width, y: r.top + (-p[1] * 0.5 + 0.5) * r.height };
-  }, targetId);
-  assert(target, 'the target zombie vanished');
-  await page.evaluate((x, y) => {
-    const c = window.__imperial.canvas;
+    const x = r.left + (p[0] * 0.5 + 0.5) * r.width;
+    const screenY = r.top + (-p[1] * 0.5 + 0.5) * r.height;
+    const ground = a.input.groundAt(x, screenY, [0, 0, 0]);
+    const picked = a.input.pick(x, screenY);
+    const result = { hp: zombie.hp, id: zombie.id, x, y: screenY,
+      picked: picked ? `${picked.type}:${picked.id}` : 'none',
+      nearby: g.units.filter(u => !u.dead && u.team === zombie.team && Math.hypot(u.x - ground[0], u.z - ground[2]) < 5.28)
+        .map(u => `${u.type}:${u.id}:${Math.hypot(u.x - ground[0], u.z - ground[2]).toFixed(1)}`),
+      aimError: Math.hypot(ground[0] - zombie.x, ground[2] - zombie.z), groundHit: a.input._groundHit };
+    // Project and tap in one browser task: on slow software WebGL, separate
+    // round trips can take several simulation frames and a moving target is no
+    // longer under the pixel that was measured.
     for (const type of ['pointerdown', 'pointerup']) {
-      c.dispatchEvent(new PointerEvent(type, {
-        pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y,
+      a.canvas.dispatchEvent(new PointerEvent(type, {
+        pointerId: 1, pointerType: 'touch', isPrimary: true, clientX: x, clientY: screenY,
         bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerdown' ? 1 : 0
       }));
     }
-  }, target.x, target.y);
+    return result;
+  }, targetId);
+  assert(target, 'the target zombie vanished');
+  assert(target.groundHit, 'the projected target did not hit the ground');
   await wait(700);
   const after = await page.evaluate((mageId, zid) => {
     const g = window.__imperial.game;
@@ -373,7 +383,7 @@ await check('tapping the spell card and then the ground casts it', async () => {
   }, scene.mage[0], target.id);
   assert(!after.armed, 'the cast stayed armed after the tap');
   assert(after.mana <= armed.mana - 10, `mana did not fall enough (${armed.mana} → ${after.mana})`);
-  assert(after.hp < target.hp, `the zombie took no damage (${target.hp} → ${after.hp})`);
+  assert(after.hp < target.hp, `the zombie took no damage (${target.hp} → ${after.hp}; ground aim error ${target.aimError.toFixed(2)} m; picked ${target.picked}; nearby ${target.nearby.join(',')})`);
   return `mana ${Math.round(armed.mana)} → ${Math.round(after.mana)}, zombie ${Math.round(after.hp)}/${after.max} hp`;
 });
 await shot('03-arcane-fireball');

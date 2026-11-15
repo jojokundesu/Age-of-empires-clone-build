@@ -63,8 +63,8 @@ check('the census counts only what the crown can actually see', () => {
   assert(far.total === 0, `a man 120 m away was counted (total ${far.total})`);
   /* now bring him into sight of the AI's own town */
   const base = g.baseOf(2);
-  enemy.x = base.x + 12;
-  enemy.z = base.z + 12;
+  enemy.x = base.x + 8;
+  enemy.z = base.z + 8;
   ai.census = null;
   const near = ai.readEnemy();
   assert(near.total === 1, `a man standing in the square was not counted (total ${near.total})`);

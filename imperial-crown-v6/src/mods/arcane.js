@@ -276,20 +276,16 @@ const SPELLS = [
          visibly aimed at. It is one blast, on one man, which is the whole
          promise of the spell. */
       let cx = x, cz = z;
-      let targets = enemiesIn(api, unit, x, z, r);
-      if (!targets.length) {
-        let best = null, bestD = (r * 2.4) ** 2;
-        for (const e of enemiesIn(api, unit, x, z, r * 2.4)) {
-          const d = (e.x - x) ** 2 + (e.z - z) ** 2;
-          if (d < bestD) { bestD = d; best = e; }
-        }
-        if (best) { cx = best.x; cz = best.z; targets = [best]; }
+      let best = null, bestD = (r * 2.4) ** 2;
+      for (const e of enemiesIn(api, unit, x, z, r * 2.4)) {
+        const d = (e.x - x) ** 2 + (e.z - z) ** 2;
+        if (d < bestD) { bestD = d; best = e; }
       }
       let hit = 0;
-      for (const e of targets) {
-        const d = Math.hypot(e.x - cx, e.z - cz);
-        api.damage(e, 96 * pw * (1 - 0.35 * (d / r)), unit);
-        const es = api.unitState(e);
+      if (best) {
+        cx = best.x; cz = best.z;
+        api.damage(best, 96 * pw, unit);
+        const es = api.unitState(best);
         es.burn = { until: api.time + 5, dps: 8 * pw, source: unit.team };
         hit++;
       }
@@ -1472,8 +1468,13 @@ export const arcane = {
           id: spell.id, label: spell.name, range: spell.range || 14,
           radius: spell.radius || 1.6, color: spell.color || [0.55, 0.8, 1],
           target: 'ground', unit: mage,
-          onCast: (x, z) => {
-            const done = performCast(api, mage, spell, x, z);
+          onCast: (x, z, hit) => {
+            // Fireball is a single-body spell. If the player actually tapped
+            // an enemy, aim at that body rather than the terrain behind it.
+            // Ground-targeted area spells retain their literal ground point.
+            const aimed = spell.id === 'fireball' && hit && hit.kind === 'unit' &&
+              !hit.dead && !hit.garrisoned && hit.team !== mage.team;
+            const done = performCast(api, mage, spell, aimed ? hit.x : x, aimed ? hit.z : z);
             ui.refreshCommands(true);
             return done;
           }

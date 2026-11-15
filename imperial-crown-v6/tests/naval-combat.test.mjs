@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict';
+import { generateWorld } from '../src/sim/worldgen.js';
+import { Game } from '../src/sim/game.js';
+import { PROJ } from '../src/sim/projectiles.js';
+
+const world = generateWorld(90);
+world.height.sample = () => -2;
+world.height.slope = () => 0;
+const g = new Game({ world, seed: 90 });
+const fire = g.spawnUnitRaw('fire_ship', 1, -20, 0);
+const enemy = g.spawnUnitRaw('war_galley', 2, -19, 0);
+const before = enemy.hp;
+fire.performAttack(enemy, fire.stats());
+assert(enemy.hp < before, 'fire ship damages an enemy at contact');
+assert.equal(g.projectiles.activeCount, 0, 'fire ship does not fire an arrow');
+const demo = g.spawnUnitRaw('demo_ship', 1, -20, 8);
+const victim = g.spawnUnitRaw('war_galley', 2, -19, 8);
+const friend = g.spawnUnitRaw('war_galley', 1, -18, 8);
+const hp = victim.hp, friendlyHp = friend.hp;
+demo.performAttack(victim, demo.stats());
+assert(demo.dead, 'demolition ship is consumed');
+assert(victim.hp < hp, 'demolition damages enemies');
+assert.equal(friend.hp, friendlyHp, 'demolition does not damage allies');
+const cannon = g.spawnUnitRaw('cannon_galleon', 1, -20, 18);
+const target = g.spawnUnitRaw('war_galley', 2, -14, 18);
+cannon.performAttack(target, cannon.stats());
+assert(g.projectiles.items.some(p => p.active && p.kind === PROJ.CANNONBALL), 'galleons fire cannonballs');
+console.log('NAVAL COMBAT CHECKS PASSED');

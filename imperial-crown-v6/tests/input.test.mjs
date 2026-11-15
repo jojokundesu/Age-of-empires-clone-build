@@ -255,6 +255,26 @@ check('a two-finger tap selects the soldiers on screen', () => {
   assert(sel.every((e) => e.team === 1 && e.kind === 'unit'), 'selected a non-unit');
 });
 
+check('tap immediately after pinch is ignored for 180 ms', () => {
+  const input = app.input;
+  const originalTap = input.tap;
+  let calls = 0;
+  input.tap = () => { calls++; };
+  pointer('pointerdown', 400, 180, { id: 41 });
+  pointer('pointerdown', 500, 180, { id: 42 });
+  pointer('pointermove', 540, 180, { id: 42 });
+  pointer('pointerup', 400, 180, { id: 41 });
+  pointer('pointerup', 540, 180, { id: 42 });
+  pointer('pointerdown', 450, 200, { id: 43 });
+  pointer('pointerup', 450, 200, { id: 43 });
+  assert(calls === 0, 'post-pinch tap issued a command');
+  input._lastMultitouchEnd = performance.now() - 181;
+  pointer('pointerdown', 450, 200, { id: 44 });
+  pointer('pointerup', 450, 200, { id: 44 });
+  assert(calls === 1, 'tap remained locked after 180 ms');
+  input.tap = originalTap;
+});
+
 check('tap slop: a 20 px wobble is a pan, not a tap', () => {
   const unit = app.game.units.find((u) => u.team === 1 && u.type === 'villager' && !u.dead);
   app.game.clearSelection();
@@ -277,11 +297,37 @@ check('a long press becomes attack-move', () => {
   app.camera.project(tx, app.game.heightAt(tx, tz) + 0.5, tz, g);
   const px = (g[0] * 0.5 + 0.5) * W, py = (-g[1] * 0.5 + 0.5) * H;
   pointer('pointerdown', px, py);
-  app.input._longPress(px, py);       // the timer callback, called directly
+  app.input._beginHold();             // the hold timer callback, called directly
   pointer('pointerup', px, py);
   step(2);
   const ordered = army.filter((u) => u.state === 'attackmove').length;
   assert(ordered > 0, `no unit received an attack-move (states: ${army.map((u) => u.state).join(',')})`);
+});
+
+check('hold and drag draws a marquee without issuing an attack order', () => {
+  const oldCommit = app.input.commitBox, oldAttack = app.game.orderAttackMove;
+  let box = null, attacks = 0;
+  app.input.commitBox = b => { box = { ...b }; };
+  app.game.orderAttackMove = () => { attacks++; };
+  pointer('pointerdown', 200, 160, { id: 48 });
+  app.input._beginHold();
+  pointer('pointermove', 320, 240, { id: 48 });
+  assert(app.input.mode === 'box', 'hold drag did not enter marquee mode');
+  pointer('pointerup', 320, 240, { id: 48 });
+  assert(box && box.x0 === 200 && box.y0 === 160 && box.x1 === 320 && box.y1 === 240, 'wrong marquee bounds');
+  assert(attacks === 0, 'marquee issued an attack order');
+  app.input.commitBox = oldCommit; app.game.orderAttackMove = oldAttack;
+});
+
+check('a seven-pixel touch remains a tap', () => {
+  const originalTap = app.input.tap;
+  let calls = 0;
+  app.input.tap = () => calls++;
+  pointer('pointerdown', 250, 200, { id: 49 });
+  pointer('pointermove', 257, 200, { id: 49 });
+  pointer('pointerup', 257, 200, { id: 49 });
+  assert(calls === 1, 'small touch movement was treated as a pan');
+  app.input.tap = originalTap;
 });
 
 console.log('\nPOINTER PICKS');
@@ -298,6 +344,24 @@ check('a tap picks the unit under the finger, not the first in the list', () => 
 check('taps outside every entity return null instead of the nearest one', () => {
   const hit = app.input.pick(4, 4);
   assert(hit === null, 'picked something from an empty corner');
+});
+
+check('an armed spell is not spent on a sky tap', () => {
+  const input = app.input, game = app.game;
+  const originalGround = input.groundAt, originalPick = input.pick;
+  const oldCast = game.modCast, oldHost = game.modHost;
+  let casts = 0;
+  try {
+    game.modCast = { id: 'fireball' };
+    game.modHost = { castAt() { casts++; } };
+    input.pick = () => null;
+    input.groundAt = () => { input._groundHit = false; return [0, 0, 0]; };
+    input.tap(20, 20);
+    assert(casts === 0 && game.modCast, 'sky tap spent an armed spell');
+  } finally {
+    input.groundAt = originalGround; input.pick = originalPick;
+    game.modCast = oldCast; game.modHost = oldHost;
+  }
 });
 
 /* No keyboard. Escape, W/A/S/D and the number row used to drive the camera

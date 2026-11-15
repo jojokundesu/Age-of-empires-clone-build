@@ -25,7 +25,11 @@ export class SpatialHash {
   clear() {
     const used = this.used;
     const b = this.buckets;
-    for (let i = 0; i < used.length; i++) b[used[i]].length = 0;
+    for (let i = 0; i < used.length; i++) {
+      const index = used[i];
+      b[index].length = 0;
+      this.stamp[index] = 0;
+    }
     used.length = 0;
     this.count = 0;
   }
@@ -39,9 +43,20 @@ export class SpatialHash {
     const i = this.cellIndex(e.x, e.z);
     if (i < 0) return;
     const bucket = this.buckets[i];
-    if (!bucket.length) this.used.push(i);
+    if (!this.stamp[i]) { this.stamp[i] = 1; this.used.push(i); }
     bucket.push(e);
     this.count++;
+  }
+  /** Move an already indexed entity when it crosses a bucket boundary. */
+  move(e, oldX, oldZ) {
+    const from = this.cellIndex(oldX, oldZ), to = this.cellIndex(e.x, e.z);
+    if (from === to || from < 0) return;
+    const bucket = this.buckets[from];
+    const index = bucket.indexOf(e);
+    if (index < 0) return; // do not insert entities that were never indexed
+    bucket.splice(index, 1);
+    this.count--;
+    if (to >= 0) this.insert(e);
   }
   insertAll(list) {
     for (let i = 0; i < list.length; i++) {

@@ -6,7 +6,8 @@
      • two finger pinch     → zoom IN when the fingers spread
      • two finger twist     → rotate
      • two finger tap       → select every soldier on screen
-     • long press (1 finger) → attack-move
+     • hold then drag (1 finger) → marquee selection
+     • hold and release      → attack-move
      • tap                  → select / order
      • mouse drag (LMB)     → box select, right drag → pan, wheel → zoom at cursor
 
@@ -17,8 +18,9 @@
 import { clamp } from '../core/math.js';
 import { STATE } from '../sim/entities.js';
 
-const TAP_MOVE_PX = 14;        // a thumb is not a mouse: 12 px was too tight
-const TAP_TIME_MS = 480;
+const TAP_MOVE_PX = 8;
+const TAP_TIME_MS = 250;
+const POST_PINCH_LOCKOUT_MS = 180;
 const LONG_PRESS_MS = 520;
 const TWO_FINGER_TAP_MS = 340;
 const TWO_FINGER_TAP_PX = 26;
@@ -47,6 +49,7 @@ export class Input {
     this.lastTapEntity = null;
     this.lastTapTime = 0;
     this._gestureStart = 0;
+    this._lastMultitouchEnd = -Infinity;
     this._bind();
   }
 
@@ -218,7 +221,8 @@ export class Input {
       const mouseLeft = e.pointerType === 'mouse' && e.button === 0;
       this.mode = mouseLeft ? 'maybeBox' : 'maybePan';
       if (e.pointerType === 'mouse' && e.button !== 0) this.mode = 'pan';
-      this.longPressTimer = setTimeout(() => this._longPress(e.clientX, e.clientY), LONG_PRESS_MS);
+      if (e.pointerType !== 'mouse')
+        this.longPressTimer = setTimeout(() => this._beginHold(), LONG_PRESS_MS);
     } else if (this.pointers.size === 2) {
       this.clearLongPress();
       this.tapValid = false;
@@ -233,6 +237,7 @@ export class Input {
         moved: 0
       };
       this._gestureStart = performance.now();
+      this._lastMultitouchEnd = this._gestureStart;
     }
   }
 
@@ -281,7 +286,7 @@ export class Input {
       return;
     }
 
-    if (this.mode === 'maybeBox' || this.mode === 'box') {
+    if (this.mode === 'maybeBox' || this.mode === 'box' || this.mode === 'held') {
       if (moved > TAP_MOVE_PX) {
         this.mode = 'box';
         this.box = {
@@ -301,7 +306,7 @@ export class Input {
     }
     if (this.mode === 'wallDraw') { this._updateWall(e.clientX, e.clientY); return; }
     if (this.mode === 'pan' || this.mode === 'maybePan') {
-      if (moved > 3) this.mode = 'pan';
+      if (moved > TAP_MOVE_PX) this.mode = 'pan';
       if (this.mode === 'pan') {
         this.cam.panPixels(dx, dy);
         // remember the last motion for the fling: exponential moving average
@@ -328,6 +333,7 @@ export class Input {
       // camera gesture and must not order a single unit
       const g = this.pinch;
       if (g && this.pointers.size === 0) {
+        this._lastMultitouchEnd = now;
         const dur = now - g.startT;
         if (dur < TWO_FINGER_TAP_MS && g.moved < TWO_FINGER_TAP_PX) this.selectArmyOnScreen();
         this.mode = 'idle';
@@ -337,6 +343,11 @@ export class Input {
     }
 
     if (this.pointers.size === 0) {
+      if (this.mode === 'held') {
+        this._longPress(this.tapStart.x, this.tapStart.y);
+        this.mode = 'idle';
+        return;
+      }
       if (this.mode === 'wallDraw') {
         this._commitWall();
         this.mode = 'idle';
@@ -349,7 +360,8 @@ export class Input {
         this.mode = 'idle';
         return;
       }
-      if (this.tapValid && moved < TAP_MOVE_PX && dt < TAP_TIME_MS && this.mode !== 'pan') {
+      if (this.tapValid && moved < TAP_MOVE_PX && dt < TAP_TIME_MS && this.mode !== 'pan'
+        && this.tapStart.t - this._lastMultitouchEnd >= POST_PINCH_LOCKOUT_MS) {
         this.tap(e.clientX, e.clientY);
       } else if (this.mode === 'pan') {
         // fling: only when the finger lifted quickly after moving
@@ -368,9 +380,11 @@ export class Input {
 
   pointerCancel(e) {
     if (this.game.directControl?.active) { this.game.directControl.pointerUp(e); return; }
+    if (this.mode === 'gesture' || this.pointers.size > 1) this._lastMultitouchEnd = performance.now();
     this.pointers.delete(e.pointerId);
     this.clearLongPress();
     this.ui?.hideSelBox();
+    this.box = null;
     if (this.game && this.game.placing) this.game.placing.cells = null;
     this.mode = 'idle';
     this.pinch = null;
@@ -476,6 +490,16 @@ export class Input {
     if (this.longPressTimer) { clearTimeout(this.longPressTimer); this.longPressTimer = null; }
   }
 
+  _beginHold() {
+    this.longPressTimer = null;
+    if (!this.enabled || this.mode !== 'maybePan' || this.pointers.size !== 1 ||
+        this.game.placing || this.armed || this.tapStart.t - this._lastMultitouchEnd < POST_PINCH_LOCKOUT_MS) return;
+    this.mode = 'held';
+    this.tapValid = false;
+    this.vel.x = this.vel.y = 0;
+    navigator.vibrate?.(8);
+  }
+
   _longPress(x, y) {
     this.longPressTimer = null;
     if (!this.enabled) return;
@@ -483,6 +507,7 @@ export class Input {
     if (!units.length) return;
     this.tapValid = false;           // the release must not also fire a tap
     const g = this.groundAt(x, y);
+    if (!this._groundHit) return;
     this.game.orderAttackMove(units, g[0], g[2]);
     this.game.marker(g[0], g[2], { kind: 1, r0: 1, g0: 0.35, b0: 0.3, r: 2.0 });
     this.audio?.play('order');
@@ -514,7 +539,9 @@ export class Input {
     }
     const g = this.groundAt(x, y, [0, 0, 0]);
     const now = performance.now();
-    const doubleTap = now - this.lastTapTime < 320 && this.lastTapEntity === hit;
+    const doubleTap = now - this.lastTapTime < 320 && !!hit && !!this.lastTapEntity
+      && hit.kind === 'unit' && hit.team === 1 && this.lastTapEntity.kind === 'unit'
+      && this.lastTapEntity.type === hit.type;
 
     /* 0a. an armed court appointment: the next tap picks the person */
     if (game.courtArmed) {
@@ -539,6 +566,10 @@ export class Input {
     /* 0. an armed mod spell takes the tap before anything else: the player has
        already chosen the ability, so the next tap is its target */
     if (game.modCast) {
+      if (!this._groundHit) {
+        this.ui?.toast('Tap the ground to cast', 'warn');
+        return;
+      }
       game.castReticle = null;
       game.modHost.castAt(g[0], g[2], hit);
       this.lastTapTime = 0;
@@ -605,15 +636,40 @@ export class Input {
     if (hit) {
       if (hit.team === 1) {
         if (own.length && hit !== game.selection[0] && hit.kind === 'building' && this._contextOrder(hit, own)) return;
+        if (own.length && hit.kind === 'unit' && hit.def.capacity && !own.includes(hit)) {
+          const passengers = own.filter(u => u.kind === 'unit' && !u.def.naval);
+          if (passengers.length) {
+            game.orderGarrison(passengers, hit);
+            this.ui?.toast('Units ordered aboard the transport');
+            this.audio?.play('order');
+            return;
+          }
+        }
         this.selectEntity(hit, doubleTap);
         this.lastTapEntity = hit;
         this.lastTapTime = now;
         return;
       }
+      // A monk directed at a sacred site walks to a free point within its
+      // capture radius instead of attempting to attack the neutral landmark.
+      if (hit.poiType === 'sacred' && own.length) {
+        const monks = own.filter(u => u.kind === 'unit' && u.def.classes.includes('monk'));
+        if (monks.length) {
+          for (const monk of monks) {
+            const spot = game.findNearestFreeTile(hit.x, hit.z, monk, 4);
+            if (spot) game.orderMove([monk], spot[0], spot[1]);
+          }
+          this.ui?.toast('Monks ordered to capture the sacred site');
+          this.audio?.play('order');
+          return;
+        }
+        this.selectEntity(hit, doubleTap);
+        return;
+      }
       // enemy / neutral / resource
       if (own.length) {
         if (hit.kind === 'resource') {
-          const villagers = own.filter((u) => u.type === 'villager');
+          const villagers = own.filter((u) => u.type === 'villager' || (u.type === 'fishing_boat' && hit.type === 'fish'));
           if (villagers.length) {
             game.orderGather(villagers, hit);
             game.marker(hit.x, hit.z, { r: Math.max(1.4, hit.radius * 2), r0: 0.9, g0: 0.85, b0: 0.4 });
@@ -737,7 +793,7 @@ export class Input {
         game.marker(g[0], g[2], { r: 1.7, r0: 0.6, g0: 0.8, b0: 1 });
         break;
       case 'garrison':
-        if (hit && hit.kind === 'building') game.orderGarrison(units, hit);
+        if (hit && (hit.kind === 'building' || (hit.kind === 'unit' && hit.def.capacity))) game.orderGarrison(units, hit);
         else { this.armed = null; return false; }
         break;
       case 'repair':
@@ -828,7 +884,8 @@ export class Input {
       if (sx >= box.x0 && sx <= box.x1 && sy >= box.y0 && sy <= box.y1) list.push(u);
     }
     if (list.length) {
-      game.setSelection(list);
+      const military = list.filter((u) => u.def && u.def.attack > 0 && !u.def.classes.includes('villager'));
+      game.setSelection(military.length ? military : list);
       this.ui?.refreshCommands(true);
       this.audio?.play('select');
     }

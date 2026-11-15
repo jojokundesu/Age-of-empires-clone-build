@@ -1,16 +1,29 @@
 /* Runs the whole suite in order and prints a single verdict.
-   `node tests/run.mjs`            — everything that works offline
-   `node tests/run.mjs --ci`       — same, non-zero exit on failure
-   `node tests/run.mjs --browser`  — plus the Chromium play-test and soak-lite
+   `node tests/run.mjs`            — suites available with the current build
+   `node tests/run.mjs --ci`       — require the bundle and all suite files
+   `node tests/run.mjs --browser`  — plus the Chromium smoke test
    The APK build itself is exercised by GitHub Actions. */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 const SUITES = [
   ['shell', 'tests/shell.test.mjs'],
   ['contract', 'tests/contract.test.mjs'],
+  ['runner', 'tests/runner.test.mjs'],
+  ['webgl fallback', 'tests/webgl-fallback.test.mjs'],
   ['geo', 'tests/geo.test.mjs'],
   ['audio', 'tests/audio.test.mjs'],
+  ['overhaul', 'tests/overhaul.test.mjs'],
+  ['naval', 'tests/naval.test.mjs'],
+  ['movement', 'tests/movement-boundary.test.mjs'],
+  ['spatial', 'tests/spatial-movement.test.mjs'],
+  ['transport', 'tests/transport.test.mjs'],
+  ['naval combat', 'tests/naval-combat.test.mjs'],
+  ['projectiles', 'tests/projectiles.test.mjs'],
+  ['sacred', 'tests/sacred.test.mjs'],
+  ['fog', 'tests/fog.test.mjs'],
+  ['ai fairness', 'tests/ai-fairness.test.mjs'],
+  ['workers', 'tests/workers.test.mjs'],
   ['shaders', 'tests/shaders.test.mjs'],
   ['sim', 'tests/sim.test.mjs'],
   ['survey', 'tests/survey.test.mjs'],
@@ -50,28 +63,29 @@ const SUITES = [
   ['v6', 'tests/champion.test.mjs'],
   ['bundle', 'tests/dist.test.mjs', true],
   ['shots', 'tests/shots.mjs', true],
+  ['responsive', 'tests/responsive.mjs', true],
   ['playtest', 'tests/playtest.mjs', true],
   ['fuzzcrowns', 'tests/fuzzcrowns.mjs', ['--seconds', '180', '--seeds', '2']]
 ];
 
-/* Chromium needs NSS, and a slim container may not have it. If a local copy
-   of the shared libraries has been unpacked into `.toolchain/nss` (see
-   `docs-browser-tests.md`), the browser suites pick it up automatically
-   instead of dying at launch with "libnss3.so: cannot open shared object". */
-if (!process.env.LD_LIBRARY_PATH || !process.env.LD_LIBRARY_PATH.includes('.toolchain/nss')) {
-  const localNss = new URL('../.toolchain/nss/', import.meta.url).pathname;
-  if (existsSync(localNss)) {
-    process.env.LD_LIBRARY_PATH = [localNss, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
+/* Prepare the Chromium libraries shipped with the dependency, just as the
+   standalone browser npm scripts do. Do not guess availability from a few
+   library paths: actually run the suites so launch failures are visible. */
+if (process.platform === 'linux' && (existsSync('dist') || process.argv.includes('--browser'))) {
+  try {
+    const libDir = execFileSync(process.execPath, ['scripts/browser-libs.mjs'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
+    process.env.LD_LIBRARY_PATH = [libDir, process.env.LD_LIBRARY_PATH].filter(Boolean).join(':');
+  } catch (error) {
+    console.warn(`Chromium library setup failed; browser suites will still run and report launch errors: ${error.message}`);
   }
 }
-
 const ci = process.argv.includes('--ci');
-const chromiumLibs = () => {
-  const nss = process.env.LD_LIBRARY_PATH || '';
-  if (nss.split(':').some((p) => p && existsSync(p) && existsSync(`${p}/libnss3.so`))) return true;
-  return ['/usr/lib/x86_64-linux-gnu/libnss3.so', '/usr/lib64/libnss3.so', '/usr/lib/libnss3.so'].some((p) => existsSync(p));
-};
 const results = [];
+
+function skip(name, reason, required = ci) {
+  console.log(`${required ? 'FAIL' : 'SKIP'}  ${name.padEnd(12)} (${reason})`);
+  if (required) results.push({ name, code: 1, ms: 0, out: reason });
+}
 
 function run(name, file, arg) {
   return new Promise((resolve) => {
@@ -101,34 +115,24 @@ function run(name, file, arg) {
 
 for (const [name, file, argOrOptional] of SUITES) {
   const optional = argOrOptional === true;
-  const arg = typeof argOrOptional === 'string' ? argOrOptional : null;
+  const arg = optional ? null : argOrOptional;
   if (optional && !existsSync('dist')) {
-    console.log(`SKIP  ${name.padEnd(12)} (run npm run build first)`);
+    skip(name, 'run npm run build first', ci || process.argv.includes('--browser'));
     continue;
   }
-  /* The browser suites need Chromium's shared libraries as well as the
-     bundle; a container without libnss3.so used to turn "optional" into
-     "failed". CI runs these in their own steps, after `npm run build`. */
-  if (optional && (name.endsWith('site') || name === 'shots' || name === 'playtest') && !chromiumLibs()) {
-    console.log(`SKIP  ${name.padEnd(12)} (Chromium libraries not found — see docs-browser-tests.md)`);
-    continue;
-  }
-  if (!existsSync(file)) { console.log(`SKIP  ${name.padEnd(12)} (missing ${file})`); continue; }
+  if (!existsSync(file)) { skip(name, `missing ${file}`); continue; }
   await run(name, file, arg);
 }
 
-/* ---- the suites that need a real browser ---------------------------------
-   Play-testing is not optional, but it needs Chromium, a built bundle and two
-   minutes of wall clock, so it is opt-in: `node tests/run.mjs --browser`.
-   These drive the actual game in an actual page -- taps, box drags, camera
-   buttons, the build menu, an age advance, a battle and the frame budget. */
+/* The bundled playtest and site checks run above. The longer smoke test is
+   additional and opt-in with --browser. */
 if (process.argv.includes('--browser')) {
+  // The playtest is already included above when the production bundle exists.
   const BROWSER_SUITES = [
-    ['browse', 'tests/browser.mjs', ['--seconds', '6', '--dpr', '1.5']],
-    ['playtest', 'tests/playtest.mjs', []]
+    ['browse', 'tests/browser.mjs', ['--seconds', '6', '--dpr', '1.5']]
   ];
   for (const [name, file, args] of BROWSER_SUITES) {
-    if (!existsSync(file)) { console.log(`SKIP  ${name.padEnd(12)} (missing ${file})`); continue; }
+    if (!existsSync(file)) { skip(name, `missing ${file}`, true); continue; }
     await run(name, file, args);
   }
 }
