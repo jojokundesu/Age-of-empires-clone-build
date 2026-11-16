@@ -15,8 +15,11 @@ import { parse } from '@shaderfrog/glsl-parser';
 import { B, BONE_COUNT, PARENT, REST, Pose, buildPalette } from '../src/gfx/rig/skeleton.js';
 import { DETAIL, SkinnedBuilder } from '../src/gfx/rig/meshbuilder.js';
 import { buildRig, RIGS, PROFILES } from '../src/gfx/rig/rigs.js';
-import { UNIT_VS, UNIT_FS } from '../src/gfx/rig/unitShaders.js';
+import { UNIT_VS, UNIT_FS, UNIT_MAX_ROWS } from '../src/gfx/rig/unitShaders.js';
 import { evaluate, AnimState, strikeCurve, STRIKE, GAITS } from '../src/gfx/rig/animator.js';
+import * as paletteMod from '../src/gfx/rig/palette.js';
+import * as unitRendererMod from '../src/gfx/unitRenderer.js';
+import * as batchMod from '../src/gfx/batch.js';
 
 const fails = [];
 const check = (name, fn) => {
@@ -289,6 +292,97 @@ check('the vertex shader writes every varying the fragment shader reads', () => 
   const outs = [...UNIT_VS.matchAll(/^\s*(?:flat\s+)?out\s+(\w+)\s+v(\w+)\s*;/gm)].map((m) => m[1]);
   const ins = [...UNIT_FS.matchAll(/^\s*(?:flat\s+)?in\s+(\w+)\s+v(\w+)\s*;/gm)].map((m) => m[1]);
   for (const i of ins) assert(outs.includes(i), `fragment reads ${i} but the vertex shader never writes it`);
+});
+
+/* ---------- palette + draw path (integration) ---------- */
+
+const mockGL = (await import('./mockgl.mjs')).createMockGL(0);
+
+check('the palette never leaks a row when a unit re-poses', () => {
+  const { BonePalette } = paletteMod;
+  const gl = mockGL;
+  const p = new BonePalette(gl, 64, 128);
+  const a = p.allocRow(7);
+  const b = p.allocRow(7);
+  const c = p.allocRow(7);
+  assert(a === b && b === c, `re-posing allocated rows ${a}, ${b}, ${c}`);
+  assert(p.usedRows === 1, `${p.usedRows} rows used for one unit`);
+  const other = p.allocRow(8);
+  assert(other !== a, 'two units share a row');
+  p.releaseRow(a, 7);
+  assert(p.allocRow(11) === a, 'a released row was not reusable');
+});
+
+check('the draw path culls before posing and never leaks rows', () => {
+  const { UnitRenderer } = unitRendererMod;
+  const gl = mockGL;
+  const ur = new UnitRenderer(gl, {});
+  /* build geometry synchronously so the test does not need to await */
+  for (const key of Object.keys(RIGS)) {
+    for (const tier of [DETAIL.NEAR, DETAIL.MID, DETAIL.FAR]) {
+      const rig = buildRig(key, tier, { age: 3 });
+      const batch = new (batchMod.InstanceBatch)(gl, rig, 256);
+      ur.batches.set(key + ':' + tier, batch);
+    }
+  }
+  const f = 1 / Math.tan(0.5), asp = 1.5;
+  const vp = new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, -1.002, -1, 0, 0, -0.2, 0]);
+  const units = [];
+  for (let i = 0; i < 300; i++) {
+    units.push({
+      id: i, type: 'man_at_arms', x: (i % 20) * 3 - 30, y: 0, z: Math.floor(i / 20) * 3 - 30,
+      facing: 0, xPrev: null, yPrev: null, zPrev: null, animSeed: i * 0.137,
+      anim: { speed: 1, phase: i * 0.4, attack: 0 }, moving: true
+    });
+  }
+  const game = { units, ageOf: () => 3 };
+  const cam = { eye: [0, 40, 0] };
+  ur.time = 0;
+  for (let fr = 0; fr < 120; fr++) {
+    ur.time += 1 / 60;
+    ur.update(cam, game, vp, 0.5);
+  }
+  assert(ur.stats.units > 0, 'nothing was drawn');
+  assert(ur.stats.posed <= ur.stats.units,
+    `posed ${ur.stats.posed} but only drew ${ur.stats.units} — culling happens after posing`);
+  assert(ur.stats.rows <= ur.stats.units,
+    `${ur.stats.rows} palette rows for ${ur.stats.units} units — rows are leaking`);
+  assert(ur.stats.rows <= UNIT_MAX_ROWS, 'palette overflowed');
+});
+
+check('animation LOD runs far units at a lower rate', () => {
+  const { UnitRenderer } = unitRendererMod;
+  const gl = mockGL;
+  const ur = new UnitRenderer(gl, {});
+  for (const key of Object.keys(RIGS)) {
+    for (const tier of [DETAIL.NEAR, DETAIL.MID, DETAIL.FAR]) {
+      ur.batches.set(key + ':' + tier, new (batchMod.InstanceBatch)(gl, buildRig(key, tier, { age: 3 }), 256));
+    }
+  }
+  const f = 1 / Math.tan(1.2), asp = 1.5;
+  const vp = new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, -1.002, -1, 0, 0, -0.2, 0]);
+  const mk = (id, z) => ({
+    id, type: 'man_at_arms', x: 0, y: 0, z, facing: 0,
+    xPrev: 0, yPrev: 0, zPrev: z, animSeed: id * 0.1,
+    anim: { speed: 1, phase: 0, attack: 0 }, moving: true
+  });
+  const units = [mk(1, -5), mk(2, -40), mk(3, -90)];
+  const game = { units, ageOf: () => 3 };
+  const cam = { eye: [0, 1, 0] };
+  ur.time = 0;
+  const counts = { 1: 0, 2: 0, 3: 0 };
+  for (let fr = 0; fr < 60; fr++) {
+    ur.time += 1 / 60;
+    const before = new Map();
+    for (const [id, a] of ur.actors) before.set(id, a.lastPose);
+    ur.update(cam, game, vp, 0.5);
+    for (const [id, a] of ur.actors) {
+      if (a.lastPose !== before.get(id) && counts[id] !== undefined) counts[id]++;
+    }
+  }
+  assert(counts[1] > 50, `near unit only posed ${counts[1]} times in 60 frames`);
+  assert(counts[2] < counts[1] * 0.75, `mid unit posed ${counts[2]} vs near ${counts[1]} — no LOD`);
+  assert(counts[3] < counts[2] * 0.85, `far unit posed ${counts[3]} vs mid ${counts[2]} — no LOD`);
 });
 
 console.log('');

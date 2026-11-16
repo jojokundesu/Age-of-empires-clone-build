@@ -133,11 +133,13 @@ export function buildManAtArms(g, prop, opts = {}) {
   } else {
     /* barbute: dome plus the cheek flare that makes it recognisable */
     g.ellipsoid(B.HEAD, [0, headY + hr * 0.26, 0], [hr * 1.10, hr * 0.98, hr * 1.10], { cut: 0.35 });
-    g.lathe(B.HEAD, [
-      [hr * 1.06, headY - hr * 0.55],
-      [hr * 1.12, headY - hr * 0.10],
-      [hr * 1.10, headY + hr * 0.30]
-    ], { seg: g.seg(1) });
+    if (g.detail <= DETAIL.MID) {
+      g.lathe(B.HEAD, [
+        [hr * 1.06, headY - hr * 0.55],
+        [hr * 1.12, headY - hr * 0.10],
+        [hr * 1.10, headY + hr * 0.30]
+      ], { seg: g.seg(1) });
+    }
   }
   /* ---------- HAIR ----------
      A cap plus swept locks. Locks are what read as hair rather than a
@@ -232,7 +234,7 @@ export function buildManAtArms(g, prop, opts = {}) {
   const rh = [x(0.258), y(0.79), 0.03];
   g.material(MAT.PLATE).color(0.80, 0.82, 0.86);
   g.blade(B.HAND_R, rh, [rh[0] - 0.02, y(0.44), 0.05], 0.030,
-    { thick: 0.010, guard: 0.10 });
+    { thick: 0.010, guard: g.detail <= DETAIL.MID ? 0.10 : 0 });
   /* shield on the left, facing out */
   g.material(MAT.WOOD).color(0.55, 0.46, 0.34);
   /* A heater shield is carried on the forearm, tilted, hanging just below

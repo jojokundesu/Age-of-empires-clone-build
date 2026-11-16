@@ -290,7 +290,7 @@ export class SkinnedBuilder {
    */
   heater(bone, c, size, opts = {}) {
     const [w, h, d] = size;
-    const steps = opts.steps || Math.max(3, Math.round(this.seg() * 0.6));
+    const steps = opts.steps || Math.max(2, Math.round(this.seg() * 0.55));
     const dome = opts.dome ?? 0.22;        // how far the face bulges
     const rot = opts.rot || 0;
     const cs = Math.cos(rot), sn = Math.sin(rot);

@@ -26,14 +26,20 @@ export const BONES_PER_ROW = 32;                 // texture width / 4
 export const ROW_TEXELS = BONES_PER_ROW * 4;
 
 export class BonePalette {
-  constructor(gl, maxRows = 512) {
+  constructor(gl, maxRows = 512, texWidth = null) {
     this.gl = gl;
     this.maxRows = maxRows;
-    this.width = ROW_TEXELS;
+    /* The texture is wider than a row needs to be so a rider's extra bones
+       fit later without a new texture. Rows still start at column 0. */
+    this.width = texWidth && texWidth >= ROW_TEXELS ? texWidth : ROW_TEXELS;
     /* CPU staging buffer: one row = BONES_PER_ROW * 16 floats */
     this.rowFloats = BONES_PER_ROW * 16;
     this.data = new Float32Array(this.width * maxRows * 4);
-    this.rowOwner = new Int32Array(maxRows).fill(0);
+    this.rowOwner = new Int32Array(maxRows).fill(-1);
+    /* unitId -> row, so a unit re-posing does not leak a fresh row every
+       time it is evaluated. This was allocating a row per pose update, at
+       60 Hz, and exhausting the table within seconds. */
+    this.ownerRow = new Map();
     this.dirty = new Uint8Array(maxRows);
     this.freeRows = [];
     for (let i = maxRows - 1; i >= 0; i--) this.freeRows.push(i);
@@ -55,22 +61,34 @@ export class BonePalette {
     });
   }
 
-  /** Claim a row for a unit. Returns -1 when the table is full. */
-  allocRow() {
+  /**
+   * Claim a row for a unit, or return the one it already owns.
+   * Returns -1 only when the table is genuinely full.
+   */
+  allocRow(unitId = null) {
+    if (unitId !== null) {
+      const have = this.ownerRow.get(unitId);
+      if (have !== undefined) return have;
+    }
     const r = this.freeRows.pop();
     if (r === undefined) return -1;
     this.used++;
     this.rowOwner[r] = 1;
+    if (unitId !== null) this.ownerRow.set(unitId, r);
     return r;
   }
 
-  releaseRow(row) {
+  releaseRow(row, unitId = null) {
     if (row < 0 || row >= this.maxRows) return;
     if (this.rowOwner[row] !== 1) return;
     this.rowOwner[row] = 0;
     this.freeRows.push(row);
+    if (unitId !== null) this.ownerRow.delete(unitId);
     this.used--;
   }
+
+  /** Rows currently in use — for the inspector and for tests. */
+  get usedRows() { return this.used; }
 
   /**
    * Copy a composed palette (BONE_COUNT*16 floats) into a row and mark it
@@ -108,6 +126,8 @@ export class BonePalette {
       if (isDirty && runStart < 0) runStart = r;
       if (!isDirty && runStart >= 0) {
         const rows = r - runStart;
+        /* `this.data` is laid out at the texture's full width, so the row
+           offset is runStart * width * 4 whether or not the row is padded. */
         gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, runStart, W, rows, gl.RGBA, gl.FLOAT,
           this.data, (runStart * W * 4));
         this.uploadsThisFrame++;
