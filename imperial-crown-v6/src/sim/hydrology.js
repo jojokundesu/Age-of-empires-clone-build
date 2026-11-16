@@ -1123,6 +1123,25 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
       if (s) shoreFish.push({ x: s.x, z: s.z, y: WATER_LEVEL, amount: 750, type: 'fish' });
     }
   }
+  /* A lake is a fishery even where the map is not a naval one. Dry Arabia's
+     oasis is real water with real depth, and a shore with no fish on it is a
+     shore nobody has a reason to visit -- the whole point of putting a lake in
+     the desert is that it is worth holding. Naval maps already seeded their
+     grounds above; this only fills in for the rest. */
+  if (!info.naval) {
+    /* Does this map actually have water in it? Test the heightfield, not a
+       constant: a land map with no lake should stay a land map with no fish. */
+    let wetCells = 0;
+    for (let i = 0; i < heights.length; i += 7) if (heights[i] < WATER_LEVEL - 0.4) wetCells++;
+    if (wetCells > 6) {
+      for (let i = 0; i < 10; i++) {
+        const s = spot('shore', 8, half - 40, 160);
+        if (s && shoreFish.every((o) => Math.hypot(o.x - s.x, o.z - s.z) >= 14)) {
+          shoreFish.push({ x: s.x, z: s.z, y: WATER_LEVEL, amount: 620, type: 'fish' });
+        }
+      }
+    }
+  }
   if (id === 'archipelago') {
     for (let i = 0; i < 10; i++) {
       const a = featRng() * TAU, d = 12 + featRng() * 46;
