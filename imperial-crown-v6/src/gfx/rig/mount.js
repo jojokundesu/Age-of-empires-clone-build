@@ -249,23 +249,45 @@ export function buildMount(g, coat, opts = {}) {
     g.tube(head, [0, L.pollY - 0.06, L.pollZ - 0.02], [0, L.muzzleY + 0.18, L.muzzleZ - 0.12],
       R * 0.40, R * 0.27, { seg: 5, rings: 1, squash: [0.86, 1.05] });
 
-    /* crinet: three overlapping bands following the neck's own lean */
+    /* crinet: three overlapping bands down the neck.
+       These had the same defect as the peytral -- radius 0.17 against a neck
+       that is 0.15 wide but 0.23 deep, with the squash applied on the wrong
+       axis, so each band is narrower than the neck across the grain and its
+       open ends stand off it as flat wings. A band has to enclose the
+       segment it covers, so each is built between the same two points as its
+       neck segment with both radii grown past the neck's own. */
     for (let i = 0; i < 3; i++) {
-      const t0 = i / 3, t1 = Math.min(1, (i + 1) / 3 + 0.14);   // +0.14 overlap
-      const y0 = (L.withers - 0.20) + (L.pollY - L.withers) * t0;
-      const z0 = (L.neckBaseZ - 0.10) + (L.pollZ - L.neckBaseZ) * t0;
-      const y1 = (L.withers - 0.20) + (L.pollY - L.withers) * t1;
-      const z1 = (L.neckBaseZ - 0.10) + (L.pollZ - L.neckBaseZ) * t1;
-      g.tube(neck, [0, y0, z0], [0, y1, z1],
-        R * (0.62 - t0 * 0.16), R * (0.62 - t1 * 0.16),
-        { seg: 5, rings: 1, squash: [0.84, 1.22] });
+      const t0 = i / 3, t1 = Math.min(1, (i + 1) / 3 + 0.16);   // overlap
+      const y0 = (L.withers - 0.26) + (L.pollY - 0.06 - (L.withers - 0.26)) * t0;
+      const z0 = (L.neckBaseZ - 0.10) + (L.pollZ - (L.neckBaseZ - 0.10)) * t0;
+      const y1 = (L.withers - 0.26) + (L.pollY - 0.06 - (L.withers - 0.26)) * t1;
+      const z1 = (L.neckBaseZ - 0.10) + (L.pollZ - (L.neckBaseZ - 0.10)) * t1;
+      /* the neck tapers R*0.66 -> R*0.34 over its run; match it and add */
+      const ra = R * (0.66 - 0.32 * t0) + 0.022;
+      const rb = R * (0.66 - 0.32 * t1) + 0.022;
+      g.tube(neck, [0, y0, z0], [0, y1, z1], ra, rb,
+        { seg: 5, rings: 1, squash: [0.86, 1.34] });
     }
 
-    /* peytral: the breast, inflated. Built on the BODY from the same points
-       the breast ellipsoid uses, so it sits on the animal instead of beside
-       it -- this is the plate that was hanging off the near flank. */
-    g.tube(body, [0, L.withers - 0.22, L.chestZ + 0.04], [0, L.belly + 0.10, L.chestZ - 0.04],
-      R * 0.78, R * 0.66, { seg: 6, rings: 1, squash: [1.0, 0.64] });
+    /* peytral: the breast, inflated.
+       This was a vertical tube of radius 0.21 built on the body centreline,
+       which is NARROWER than the barrel (0.27) -- so instead of wrapping the
+       chest it sat inside the animal and only its open ends poked out the
+       sides, reading as two flat grey sheets standing off the shoulders.
+       Cover the breast with a shell of the breast's own dimensions, grown by
+       22 mm: same centre, same radii, plus a little. A shell that matches the
+       form underneath cannot float off it by construction, which is the rule
+       this whole barding block exists to obey. */
+    g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02],
+      [R * 0.70 + 0.022, R * 0.86 + 0.022, 0.18 + 0.022],
+      { sph: [6, 4] });
+    /* A drop below the breastbone, so the plate reads as hanging armour
+       rather than as paint on the chest. Same discipline as the shell: it is
+       an ellipsoid twice the barrel's depth, not a narrow tube -- a tube of
+       radius 0.157 against a 0.27 barrel is another plate sitting inside the
+       animal with only its ends showing. */
+    g.ellipsoid(body, [0, L.withers - 0.46, L.chestZ - 0.14],
+      [R * 0.60, 0.15, 0.20], { sph: [5, 3] });
   }
 
   return { body, neck, head };
