@@ -41,6 +41,11 @@ ground, and the two fight for it.
   contested core -- gold, stone, a herd, timber, and a cleared yard to fight in
   -- so the match has a middle game that is not "walk to the enemy town".
   Fishing grounds are on every map with water in it.
+- **The moat's bridges are visible.** Highview has always had three walkable
+  crossings -- units route over them and the nav domain marks the deck -- but
+  nothing drew them, so men crossed the water on nothing. There is a stone
+  bridge prop now: cambered deck, parapets, piers down to the bed, recentred on
+  the wet stretch it spans rather than on the rim point it was found at.
 - **Scatter is placed, not sprinkled.** 96 hand-weighted patches (flowers,
   tussocks, scree, reeds, pebbles) with a square-root density falloff replaced
   the even 2400-item sprinkle that read as debris on every hillside. Rocks live
