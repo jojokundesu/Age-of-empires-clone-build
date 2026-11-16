@@ -67,6 +67,16 @@ export const LANDMARKS = {
   tailZ: -0.72
 };
 
+/* Where the saddle sits, for a given mount profile. The rider's pelvis rest
+   is y = 0.95 and Pose.seat lifts it, so the lift is however far the saddle
+   is above that. This has to be derived rather than fixed: `RIDE_SEAT` was a
+   constant 0.50 while the pony is 0.88 of the standard height, so a scout on
+   his pony floated 6 cm above the saddle. */
+export function mountSeatHeight(profile) {
+  const h = (profile && profile.height) || 1;
+  return LANDMARKS.back * h + 0.09;
+}
+
 export const MOUNT_STANDARD = {
   height: 1.00,   // scales every Y landmark
   length: 1.00,   // scales every Z landmark
@@ -87,7 +97,26 @@ export function buildMount(g, coat, opts = {}) {
   const caparison = opts.caparison || null;
   const barding = !!opts.barding;
 
-  const L = LANDMARKS;
+  /* RULE 3, actually applied.
+     `MOUNT_STANDARD` and `MOUNT_PONY` have been declared since the mount
+     existed and were never read: rigs.js tested `prop.mount` for truthiness
+     and then built the same destrier for everybody, so the scout's pony was
+     a full-size warhorse with a shorter rider on it. Scaling the landmark
+     block here is the whole reason the block is one table -- every
+     coordinate in this file comes from L, so this is the only line needed. */
+  const prof = opts.mount || MOUNT_STANDARD;
+  const L = {};
+  for (const k of Object.keys(LANDMARKS)) {
+    /* Z landmarks grow with `length`, Y with `height`; the radius is a limb
+       dimension and takes the mean of the two, which keeps the barrel round
+       instead of oval when a profile is stretched on one axis. */
+    const isY = /Y$|^hoof$|^belly$|^back$|^withers$/.test(k);
+    const isR = /R$/.test(k) || k === 'hipX';
+    L[k] = isR
+      ? LANDMARKS[k] * (prof.limbW ?? 1)
+      : LANDMARKS[k] * (isY ? (prof.height ?? 1) : (prof.length ?? 1));
+  }
+  const limbW = prof.limbW ?? 1;
   const body = B.HORSE_BODY;
   const neck = B.HORSE_NECK;
   const head = B.HORSE_HEAD;

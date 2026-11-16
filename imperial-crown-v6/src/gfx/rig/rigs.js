@@ -144,6 +144,10 @@ export function buildRig(key, detail = DETAIL.MID, opts = {}) {
      reading the file. */
   if (prop.mount) {
     const mountOpts = def.mount ? def.mount(opts) : {};
+    /* prop.mount is the horse's own dimensions -- MOUNT_STANDARD or a
+       MOUNT_PONY. Passing it through is what makes the scout's pony a pony;
+       without it every cavalry class rode the same destrier. */
+    mountOpts.mount = prop.mount;
     buildMount(g, mountOpts.coat || [0.34, 0.25, 0.18], mountOpts);
   }
   return g.finish();

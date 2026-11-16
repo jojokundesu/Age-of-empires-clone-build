@@ -15,6 +15,7 @@ import { B, BONE_COUNT, Pose, buildPalette, buildBindPalette, buildSkinPalette }
 import { DETAIL } from '../src/gfx/rig/meshbuilder.js';
 import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS, isMounted } from '../src/gfx/rig/rigs.js';
 import { evaluate, AnimState } from '../src/gfx/rig/animator.js';
+import { mountSeatHeight } from '../src/gfx/rig/mount.js';
 
 /* ---------------- PNG ---------------- */
 
@@ -142,9 +143,12 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
   width = 720, height = 900, cls = 'man_at_arms', yaw = null }) {
   const rig = buildRig(cls, tier, { age, skin: SKIN_TONES[0], hair: HAIR_COLORS[0] });
   const mounted = isMounted(cls);
-  const rideInp = { mounted };
   const profileName = (RIGS[cls] || { profile: 'spearman' }).profile;
   const prop = PROFILES[profileName];
+  /* The seat lift comes from the mount's own height. A scout's pony is 0.88
+     of a destrier, so a fixed lift leaves him sitting on air. */
+  const seatH = mounted ? mountSeatHeight(prop.mount) - 0.95 : 0;
+  const rideInp = { mounted, seat: seatH };
   const packed = rig.packed;
   const u8 = new Uint8Array(packed);
   const i8 = new Int8Array(packed);
@@ -182,15 +186,19 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
      numbers crops the hooves off the bottom and the tail off the side. */
   const target = [0, aim * scale, mounted ? 0.12 : 0];
   const baseEye = [(mounted ? 3.6 : 2.05), (mounted ? 2.05 : 1.42), (mounted ? 4.1 : 2.55)];
-  /* `yaw` orbits the camera around the figure, which is the only way to see
-     a horse side-on -- the default 3/4 view hides the neck junction behind
-     the rider's arm. */
-  const ry = yaw === null ? 0 : yaw;
-  const cr = Math.cos(ry), sr = Math.sin(ry);
+  /* `yaw` is an ABSOLUTE azimuth about the figure, measured from +Z, which is
+     the way the model faces. `yaw 0` is dead in front, PI/2 is the +X flank,
+     PI is behind.
+     It used to be a rotation applied ON TOP of the default 3/4 camera, so
+     PI/2 landed at a front-quarter view and every "side view" taken with it
+     for a week was still three-quarters. Orbiting at a fixed radius from an
+     azimuth makes the label mean what it says. */
+  const r = Math.hypot(baseEye[0], baseEye[2]);
+  const ry = yaw === null ? Math.atan2(baseEye[0], baseEye[2]) : yaw;
   const eye = [
-    (baseEye[0] * cr - baseEye[2] * sr) * scale,
+    r * Math.sin(ry) * scale,
     baseEye[1] * scale,
-    (baseEye[0] * sr + baseEye[2] * cr) * scale
+    r * Math.cos(ry) * scale
   ];
   const view = lookAt(eye, target, [0, 1, 0]);
   const proj = perspective(0.60, width / height, 0.1, 60);

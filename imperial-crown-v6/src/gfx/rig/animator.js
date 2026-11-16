@@ -345,10 +345,11 @@ export function evaluate(pose, st, inp) {
  * the horse gets its own gait.
  */
 function applyRiding(pose, st, inp, gait, speed, phase) {
-  /* Hips to the saddle. The saddle sits at y = 1.45 on the barrel and the
-     rider's pelvis rest is y = 0.95, so 0.50 of lift puts the seat bones on
-     the leathers rather than inside the horse. */
-  pose.seat = RIDE_SEAT;
+  /* Hips to the saddle. The lift is whatever puts the seat bones on the
+     leathers for THIS mount -- a standard destrier wants 0.55 and the scout's
+     pony wants 0.44. It used to be the constant RIDE_SEAT, which is why a
+     scout floated above his pony once the pony stopped being a warhorse. */
+  pose.seat = inp.seat ?? RIDE_SEAT;
 
   /* --- rider's legs: knees forward and OUT, feet down in the stirrup ---
      The abduction is the number that matters. The hip joints sit about
@@ -412,8 +413,14 @@ function applyRiding(pose, st, inp, gait, speed, phase) {
     0, Math.sin(st.t * 1.3) * 0.12);
 }
 
-/** Metres the whole rider is lifted to sit in the saddle. */
-export const RIDE_SEAT = 0.50;
+/**
+ * Default metres the whole rider is lifted to sit in the saddle.
+ *
+ * Callers should pass `inp.seat` from mountSeatHeight(profile.mount) instead;
+ * this constant is only the fallback for a mounted pose built without a
+ * profile, and it matches the standard destrier.
+ */
+export const RIDE_SEAT = 0.55;
 
 /** Clamp an angle to +/- limit, but ease rather than clip. */
 function clampAngle(v, limit) {

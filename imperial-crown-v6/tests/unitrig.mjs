@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { B, BONE_COUNT, HUMANOID_BONES, PARENT, REST, Pose, buildPalette, buildBindPalette, buildSkinPalette } from '../src/gfx/rig/skeleton.js';
 import { DETAIL, SkinnedBuilder } from '../src/gfx/rig/meshbuilder.js';
 import { buildRig, RIGS, PROFILES, isMounted } from '../src/gfx/rig/rigs.js';
-import { LANDMARKS } from '../src/gfx/rig/mount.js';
+import { LANDMARKS, MOUNT_STANDARD, MOUNT_PONY, mountSeatHeight } from '../src/gfx/rig/mount.js';
 const MOUNTED_PROFILE = 'knightMounted';
 import { UNIT_VS, UNIT_FS, UNIT_MAX_ROWS } from '../src/gfx/rig/unitShaders.js';
 import { evaluate, AnimState, strikeCurve, STRIKE, GAITS } from '../src/gfx/rig/animator.js';
@@ -184,6 +184,35 @@ check('the mount seats its rider and keeps its feet on the ground', () => {
   }
   assert(Math.abs(lowest) < 0.06, `the hooves sit at ${lowest.toFixed(3)}, not on the ground`);
   assert(highest > 2.0 && highest < 3.0, `the rider's helm tops out at ${highest.toFixed(2)} m`);
+});
+
+check('a pony-sized mount seats its rider at its own saddle height', () => {
+  /* MOUNT_PONY was declared and never read: rigs.js tested `prop.mount` for
+     truthiness and built every class the same destrier. Applying it exposed
+     the matching fault in the rider -- the seat lift was the constant
+     RIDE_SEAT, so lowering the pony left the scout sitting on air. Both are
+     now derived, and this pins them together. */
+  const standard = mountSeatHeight(MOUNT_STANDARD);
+  const pony = mountSeatHeight(MOUNT_PONY);
+  assert(pony < standard - 0.05,
+    `the pony's saddle (${pony.toFixed(2)}) is not below the destrier's (${standard.toFixed(2)})`);
+
+  /* the rider's pelvis must land on the saddle, not above it */
+  const seatOf = (profileName) => {
+    const prop = PROFILES[profileName];
+    const world = new Float32Array(BONE_COUNT * 16);
+    const pose = new Pose();
+    pose.seat = mountSeatHeight(prop.mount) - 0.95;
+    buildPalette(world, pose, prop);
+    return world[B.PELVIS * 16 + 13];
+  };
+  for (const name of ['knightMounted', 'scoutMounted']) {
+    const saddle = mountSeatHeight(PROFILES[name].mount);
+    const pelvis = seatOf(name);
+    /* pelvis rest is y = 0.95; the seat bones should sit on the leathers */
+    assert(Math.abs(pelvis - saddle) < 0.12,
+      `${name}: rider sits at ${pelvis.toFixed(2)} but the saddle is at ${saddle.toFixed(2)}`);
+  }
 });
 
 check('every mount bone origin agrees with the geometry it drives', () => {

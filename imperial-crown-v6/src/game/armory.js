@@ -321,7 +321,14 @@ export class Armory {
     const st = this._state;
     /* A mounted class has to be told, or the inspector shows a rider
        standing on the ground with a horse through its middle. */
-    const ride = { classKey: key, mounted: isMounted(key) };
+    const rideProp = PROFILES[(RIGS[key] || {}).profile] || null;
+    const ride = {
+      classKey: key,
+      mounted: isMounted(key),
+      seat: isMounted(key) && rideProp && rideProp.mount
+        ? mountSeatHeight(rideProp.mount) - 0.95
+        : undefined
+    };
     if (this.pose === 'walk') {
       evaluate(this._pose, st, {
         ...ride, dt, speed: 1, phase: st.t * 5.4, attack: 0, moving: true

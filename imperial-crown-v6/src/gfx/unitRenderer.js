@@ -29,6 +29,7 @@ import { B, BONE_COUNT, Pose, buildBindPalette, buildSkinPalette } from './rig/s
 import { DETAIL } from './rig/meshbuilder.js';
 import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS, hasRig, isMounted } from './rig/rigs.js';
 import { evaluate, AnimState } from './rig/animator.js';
+import { mountSeatHeight } from './rig/mount.js';
 import { UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from './rig/unitShaders.js';
 import { InstanceBatch } from './batch.js';
 import { BonePalette } from './rig/palette.js';
@@ -45,6 +46,17 @@ export const GEO_LOD = { NEAR: 26, MID: 70 };
  * The A/B silhouette variant (man_at_arms_tight) is deliberately not in this
  * map: it exists to be inspected on the pedestal, not to be shipped.
  */
+/**
+ * Saddle height above the rider's pelvis rest, for this unit's mount.
+ * A scout's pony is 0.88 of a destrier, so the lift has to come from the
+ * mount's own profile rather than from a constant.
+ */
+export function seatFor(key) {
+  const prof = PROFILES[(RIGS[key] || {}).profile];
+  if (!prof || !prof.mount) return undefined;
+  return mountSeatHeight(prof.mount) - 0.95;
+}
+
 export function rigKeyFor(type) {
   if (type === 'man_at_arms_tight') return null;
   return hasRig(type) ? type : null;
@@ -180,6 +192,7 @@ export class UnitRenderer {
           moving: !!u.moving,
           hitFlash: u.hitFlash || 0,
           classKey: key,
+          seat: seatFor(key),
           lookYaw: u.lookYaw || 0,
           lookPitch: u.lookPitch || 0,
           /* Without this a rider stands on the ground with a horse through
