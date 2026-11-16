@@ -210,6 +210,12 @@ export class SkinnedBuilder {
     const seg = Math.max(3, opts.seg ?? this.seg(2));
     const squash = opts.squash || [1, 1];
     const cx = opts.x || 0, cy = opts.y || 0, cz = opts.z || 0;
+    /* A lathe that only sweeps part of a circle is a garment open at the
+       front: a cape, a cowl, a tabard split for the legs. Without this
+       every "cape" is a closed cone that swallows the whole body. */
+    const arc = opts.arc ?? Math.PI * 2;
+    const arcStart = opts.arcStart ?? 0;
+    const full = arc >= Math.PI * 2 - 1e-6;
     const base = this.count;
     this._skin(bone, opts.blend !== undefined ? [opts.blend, bone, 0.5] : null);
     for (let p = 0; p < profile.length; p++) {
@@ -222,7 +228,7 @@ export class SkinnedBuilder {
       const nl = Math.hypot(dy, dr) || 1;
       const nUp = -dr / nl, nOut = dy / nl;
       for (let s = 0; s <= seg; s++) {
-        const th = (s / seg) * Math.PI * 2;
+        const th = arcStart + (s / seg) * arc;
         const ct = Math.cos(th), st = Math.sin(th);
         const px = cx + ct * rad * squash[0];
         const py = cy + yy;

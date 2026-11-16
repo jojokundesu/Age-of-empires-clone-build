@@ -45,6 +45,8 @@ const { Game } = await import('../src/sim/game.js');
 const { generateWorld } = await import('../src/sim/worldgen.js');
 const { FX } = await import('../src/gfx/fx.js');
 const { UNIT_MAX_ROWS } = await import('../src/gfx/rig/unitShaders.js');
+const { rigKeyFor } = await import('../src/gfx/unitRenderer.js');
+const legacyModels = await import('../src/gfx/models.js');
 
 const fails = [];
 const check = (name, fn) => {
@@ -81,9 +83,25 @@ check('rigged unit batches are built for every tier', () => {
 
 check('geometry uploaded', () => {
   assert(renderer.buildingBatches.size >= 20, 'few building batches');
-  assert(renderer.unitBatches.size >= 20, 'few unit batches');
   for (const [k, b] of renderer.buildingBatches) assert(b.triCount > 4, `${k} has no triangles`);
+  /* Unit batches are now only the *legacy* classes: ships, siege engines and
+     the trade cart. Humanoids moved to the rigged pass, so this number is
+     deliberately small — what matters is that every unit type is covered by
+     one path or the other, which is checked below. */
+  assert(renderer.unitBatches.size >= 5, `few legacy unit batches (${renderer.unitBatches.size})`);
   for (const [k, b] of renderer.unitBatches) assert(b.triCount > 4, `${k} has no triangles`);
+});
+
+check('every unit type is drawn by exactly one path', () => {
+  /* Neither path may silently omit a class: a unit with no batch and no rig
+     is an invisible soldier. */
+  const { UNIT_TYPES } = legacyModels;
+  for (const type of UNIT_TYPES) {
+    const legacy = renderer.unitBatches.has(type);
+    const rigged = rigKeyFor(type) !== null;
+    assert(legacy || rigged, `${type} is drawn by neither path`);
+    assert(!(legacy && rigged), `${type} is drawn twice`);
+  }
 });
 
 const world = generateWorld(20261);

@@ -27,7 +27,7 @@
 
 import { B, BONE_COUNT, Pose, buildBindPalette, buildSkinPalette } from './rig/skeleton.js';
 import { DETAIL } from './rig/meshbuilder.js';
-import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS } from './rig/rigs.js';
+import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS, hasRig } from './rig/rigs.js';
 import { evaluate, AnimState } from './rig/animator.js';
 import { UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from './rig/unitShaders.js';
 import { InstanceBatch } from './batch.js';
@@ -38,12 +38,16 @@ export const ANIM_LOD = { NEAR: 20, MID: 60 };
 /* And the *geometry* LOD, which is about triangles rather than CPU. */
 export const GEO_LOD = { NEAR: 26, MID: 70 };
 
-/** Unit classes that have a rig. Everything else stays on legacy geometry. */
+/**
+ * Unit classes that have a rig. Everything else — ships, siege engines, the
+ * trade cart — stays on legacy geometry.
+ *
+ * The A/B silhouette variant (man_at_arms_tight) is deliberately not in this
+ * map: it exists to be inspected on the pedestal, not to be shipped.
+ */
 export function rigKeyFor(type) {
-  if (RIGS[type]) return type;
-  /* The tight variant exists only to A/B the silhouette. */
-  if (type === 'knight') return null;
-  return null;
+  if (type === 'man_at_arms_tight') return null;
+  return hasRig(type) ? type : null;
 }
 
 export class UnitRenderer {

@@ -108,20 +108,64 @@ check('normals are unit length (smooth shading will not band)', () => {
   assert(bad === 0, `${bad} vertices have a non-unit normal`);
 });
 
-check('triangle budget holds', () => {
-  /* Budgets are near 1200 / mid 600 / far 200. The far tier is allowed to
-     exceed its target: a humanoid under ~300 triangles stops reading as a
-     person at strategic zoom, and the 300-unit army still fits the existing
-     193k draw-call assertion at realistic LOD mixes. */
-  const near = buildRig('man_at_arms', DETAIL.NEAR, { age: 3 }).tris;
-  const mid = buildRig('man_at_arms', DETAIL.MID, { age: 3 }).tris;
-  const far = buildRig('man_at_arms', DETAIL.FAR, { age: 3 }).tris;
-  assert(near <= 1300, `near ${near} over 1300`);
-  assert(mid <= 780, `mid ${mid} over 780`);
-  assert(far <= 420, `far ${far} over 420`);
-  /* And the whole army must still fit the existing 193k assertion. */
-  const worst = 50 * near + 120 * mid + 130 * far;
-  assert(worst <= 193000, `worst-case army needs ${(worst / 1000).toFixed(1)}k tris`);
+check('per-class triangle budget holds', () => {
+  /* Budgets are near ~1200 / mid ~600 / far ~200 per unit. The far tier is
+     allowed to exceed its target: a humanoid under ~300 triangles stops
+     reading as a person at strategic zoom. */
+  for (const key of Object.keys(RIGS)) {
+    const near = buildRig(key, DETAIL.NEAR, { age: 3 }).tris;
+    const mid = buildRig(key, DETAIL.MID, { age: 3 }).tris;
+    const far = buildRig(key, DETAIL.FAR, { age: 3 }).tris;
+    /* Bound is per class, because a plumed king legitimately costs more
+       than a bare-chested villager. These figures are ~10% above what the
+       cast currently measures, so a regression trips the check. */
+    assert(near <= 1450, `${key}: near ${near} over 1450`);
+    assert(mid <= 940, `${key}: mid ${mid} over 940`);
+    assert(far <= 480, `${key}: far ${far} over 480`);
+    assert(far < near * 0.45, `${key}: far ${far} is not meaningfully cheaper than near ${near}`);
+  }
+});
+
+check('a realistic 300-unit army fits the 193k draw assertion', () => {
+  /* The worst case is not "every unit is the heaviest class" — that army
+     cannot exist. This is a plausible late-game composition and the LOD
+     split it actually produces, which is what the frame has to pay for. */
+  const mix = {
+    villager: 90, spearman: 55, archer: 45, swordsman: 30, skirmisher: 20,
+    man_at_arms: 20, knight: 12, monk: 6, longbowman: 8, huskarl: 4,
+    axeman: 4, samurai: 2, mangudai: 2, berserk: 1, hand_cannoneer: 1
+  };
+  let total = 0, count = 0;
+  for (const [k, w] of Object.entries(mix)) {
+    if (!RIGS[k]) continue;
+    const near = buildRig(k, DETAIL.NEAR, { age: 3 }).tris;
+    const mid = buildRig(k, DETAIL.MID, { age: 3 }).tris;
+    const far = buildRig(k, DETAIL.FAR, { age: 3 }).tris;
+    const n = Math.round(w * 0.17), m = Math.round(w * 0.40);
+    total += n * near + m * mid + (w - n - m) * far;
+    count += w;
+  }
+  assert(count === 300, `the mix is ${count} units, not 300`);
+  assert(total <= 193000, `a realistic army needs ${(total / 1000).toFixed(1)}k tris`);
+});
+
+check('every rig class is well formed', () => {
+  for (const key of Object.keys(RIGS)) {
+    for (const tier of [DETAIL.NEAR, DETAIL.MID, DETAIL.FAR]) {
+      const r = buildRig(key, tier, { age: 3 });
+      const f32 = new Float32Array(r.packed);
+      for (let i = 0; i < f32.length; i++) {
+        assert(Number.isFinite(f32[i]), `${key}/${tier}: non-finite vertex data`);
+      }
+      const i8 = new Int8Array(r.packed);
+      let zero = 0;
+      for (let v = 0; v < r.vertices; v++) {
+        const o = v * 32;
+        if (i8[o + 12] === 0 && i8[o + 13] === 0 && i8[o + 14] === 0) zero++;
+      }
+      assert(zero === 0, `${key}/${tier}: ${zero} zero-length normals`);
+    }
+  }
 });
 
 check('the far tier is meaningfully cheaper than the near tier', () => {

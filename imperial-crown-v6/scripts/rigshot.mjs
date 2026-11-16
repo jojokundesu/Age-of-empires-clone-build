@@ -13,7 +13,7 @@ import { deflateSync } from 'node:zlib';
 
 import { B, BONE_COUNT, Pose, buildPalette, buildBindPalette, buildSkinPalette } from '../src/gfx/rig/skeleton.js';
 import { DETAIL } from '../src/gfx/rig/meshbuilder.js';
-import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS } from '../src/gfx/rig/rigs.js';
+import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS } from '../src/gfx/rig/rigs.js';
 import { evaluate, AnimState } from '../src/gfx/rig/animator.js';
 
 /* ---------------- PNG ---------------- */
@@ -138,8 +138,10 @@ function skinVertex(packed, u8, i8, vi, pal, out) {
 
 /* ---------------- render ---------------- */
 
-function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scale = 1, width = 720, height = 900 }) {
-  const rig = buildRig('man_at_arms', tier, { age, skin: SKIN_TONES[0], hair: HAIR_COLORS[0] });
+function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scale = 1, width = 720, height = 900, cls = 'man_at_arms' }) {
+  const rig = buildRig(cls, tier, { age, skin: SKIN_TONES[0], hair: HAIR_COLORS[0] });
+  const profileName = (RIGS[cls] || { profile: 'spearman' }).profile;
+  const prop = PROFILES[profileName];
   const packed = rig.packed;
   const u8 = new Uint8Array(packed);
   const i8 = new Int8Array(packed);
@@ -150,22 +152,22 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
   const st = new AnimState(0.37);
   if (poseName === 'walk') {
     for (let i = 0; i < 40; i++) {
-      evaluate(pose, st, { dt: 1 / 60, speed: 1, phase: 2.1, attack: 0, moving: true, classKey: 'man_at_arms' });
+      evaluate(pose, st, { dt: 1 / 60, speed: 1, phase: 2.1, attack: 0, moving: true, classKey: cls });
     }
   } else if (poseName === 'attack') {
     for (let i = 0; i < 40; i++) {
-      evaluate(pose, st, { dt: 1 / 60, speed: 0, phase: 0, attack: 0.55, classKey: 'man_at_arms' });
+      evaluate(pose, st, { dt: 1 / 60, speed: 0, phase: 0, attack: 0.55, classKey: cls });
     }
   } else {
     for (let i = 0; i < 90; i++) {
-      evaluate(pose, st, { dt: 1 / 60, speed: 0, phase: 0, attack: 0, classKey: 'man_at_arms' });
+      evaluate(pose, st, { dt: 1 / 60, speed: 0, phase: 0, attack: 0, classKey: cls });
     }
   }
   /* Skinning matrices, not raw bone transforms: the mesh is authored in
      model space, so it needs world * inverseBind. */
   const bind = new Float32Array(BONE_COUNT * 16);
-  buildBindPalette(bind, PROFILES.manAtArms);
-  buildSkinPalette(pal, pose, PROFILES.manAtArms, bind);
+  buildBindPalette(bind, prop);
+  buildSkinPalette(pal, pose, prop, bind);
 
   /* Camera: the game's 3/4 view, close enough to read the face. The figure
      is roughly 1.9 m tall, so frame 0..2 m rather than guessing. */
@@ -284,6 +286,7 @@ const tierName = opt('tier', 'mid');
 const tier = tierName === 'near' ? DETAIL.NEAR : tierName === 'far' ? DETAIL.FAR : DETAIL.MID;
 const r = render({
   out,
+  cls: opt('cls', 'man_at_arms'),
   pose: opt('pose', 'idle'),
   tier,
   age: parseInt(opt('age', '3'), 10),
