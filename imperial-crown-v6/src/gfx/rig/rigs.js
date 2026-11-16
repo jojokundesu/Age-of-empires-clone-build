@@ -187,24 +187,26 @@ export function buildManAtArms(g, prop, opts = {}) {
     const UP = side < 0 ? B.UPPER_ARM_L : B.UPPER_ARM_R;
     const FORE = side < 0 ? B.FOREARM_L : B.FOREARM_R;
     const HAND = side < 0 ? B.HAND_L : B.HAND_R;
-    const sx = side * x(0.215);
+    /* The arm hangs from the deltoid, which must clear the ribcage:
+       at 0.215 the forearm was drawing inside the torso. */
+    const sx = side * x(0.268);
 
     g.material(age >= 3 ? MAT.MAIL : MAT.LINEN).color(0.66, 0.62, 0.55);
     /* deltoid / pauldron shelf */
-    g.ellipsoid(SHO, [sx, y(1.44), 0], [0.098 * lw, 0.088 * lw, 0.098 * lw], { sph: [5, 3] });
-    g.tube(UP, [sx, y(1.42), 0], [sx * 1.06, y(1.14), 0],
+    g.ellipsoid(SHO, [sx, y(1.42), 0], [0.108 * lw, 0.100 * lw, 0.108 * lw], { sph: [6, 4] });
+    g.tube(UP, [sx, y(1.40), 0], [sx * 0.98, y(1.13), 0],
       0.070 * lw, 0.056 * lw, { seg: g.seg(0), rings: g.rings(0), blend: SHO });
-    g.tube(FORE, [sx * 1.06, y(1.14), 0], [sx * 1.10, y(0.87), 0],
+    g.tube(FORE, [sx * 0.98, y(1.13), 0], [sx * 0.96, y(0.86), 0],
       0.058 * lw, 0.044 * lw, { seg: g.seg(0), rings: g.rings(0), blend: UP });
     /* hand: a small tapered block, not a sphere */
     g.material(MAT.SKIN).color(skin);
-    g.tube(HAND, [sx * 1.10, y(0.87), 0], [sx * 1.12, y(0.79), 0],
+    g.tube(HAND, [sx * 0.96, y(0.86), 0], [sx * 0.95, y(0.78), 0],
       0.045 * lw, 0.038 * lw, { seg: 4, rings: 1, blend: FORE });
 
     if (age >= 3 && g.detail <= DETAIL.MID) {
       /* pauldron cap over the deltoid */
       g.material(MAT.PLATE).color(0.68, 0.70, 0.74);
-      g.ellipsoid(SHO, [sx, y(1.46), 0], [0.118 * lw, 0.075 * lw, 0.112 * lw], { cut: 0.5, sph: [6, 4] });
+      g.ellipsoid(SHO, [sx, y(1.40), 0], [0.128 * lw, 0.098 * lw, 0.122 * lw], { cut: 0.45, sph: [6, 4] });
     }
   }
 
@@ -213,23 +215,30 @@ export function buildManAtArms(g, prop, opts = {}) {
      mid-thigh, weighted to the skirt bone so it can swing. */
   if (age >= 2 && g.detail <= DETAIL.MID) {
     g.material(MAT.LINEN).color(0.72, 0.70, 0.74);
+    /* Widen it at the hem and pinch it at the belt: a garment swinging off
+       the hips, not a bucket with legs coming out of it. */
     g.lathe(B.SKIRT, [
-      [x(0.175), y(1.00)],
-      [x(0.205), y(0.86)],
-      [x(0.225), y(0.70)],
-      [x(0.215), y(0.60)]
-    ], { seg: g.seg(2), squash: [1.0, cd / sw] });
+      [x(0.170), y(1.02)],
+      [x(0.196), y(0.93)],
+      [x(0.214), y(0.82)],
+      [x(0.232), y(0.70)],
+      [x(0.236), y(0.62)],
+      [x(0.222), y(0.56)]
+    ], { seg: g.seg(1), squash: [1.0, cd / sw] });
   }
 
   /* ---------- ARMS: SWORD AND SHIELD ----------
      Held in the hands, weighted to them, so they follow the wrist. */
-  const rh = [x(0.235), y(0.80), 0.02];
+  const rh = [x(0.258), y(0.79), 0.03];
   g.material(MAT.PLATE).color(0.80, 0.82, 0.86);
   g.blade(B.HAND_R, rh, [rh[0] - 0.02, y(0.44), 0.05], 0.030,
     { thick: 0.010, guard: 0.10 });
   /* shield on the left, facing out */
   g.material(MAT.WOOD).color(0.55, 0.46, 0.34);
-  g.slab(B.HAND_L, [-x(0.25), y(1.02), 0.10], [0.34, 0.50, 0.035]);
+  /* A heater shield is carried on the forearm, tilted, hanging just below
+     the elbow — not floating at shoulder height. */
+  g.heater(B.HAND_L, [-x(0.285), y(1.12), 0.13], [0.34, 0.48, 0.030],
+    { rot: 0.22, dome: 0.30 });
 
   return g;
 }

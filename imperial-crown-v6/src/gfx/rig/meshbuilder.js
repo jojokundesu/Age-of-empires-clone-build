@@ -278,6 +278,98 @@ export class SkinnedBuilder {
     return this;
   }
 
+  /**
+   * Heater shield: a broad top, straight sides, curving to a point.
+   *
+   * A slab would be a rectangle, and a rectangle is exactly the placeholder
+   * this overhaul exists to remove. The outline is sampled so the taper and
+   * the point are real geometry, and the face is domed slightly outward so
+   * it catches the light along its length.
+   *
+   * The outline lives in (u = across, v = down) with v in 0..1.
+   */
+  heater(bone, c, size, opts = {}) {
+    const [w, h, d] = size;
+    const steps = opts.steps || Math.max(3, Math.round(this.seg() * 0.6));
+    const dome = opts.dome ?? 0.22;        // how far the face bulges
+    const rot = opts.rot || 0;
+    const cs = Math.cos(rot), sn = Math.sin(rot);
+    const hw = w / 2, hd = d / 2;
+    this._skin(bone);
+
+    /* Outline: a rounded top, near-vertical sides, then a curve to the point.
+       Sampled from the top edge down one side and mirrored. */
+    const outline = [];
+    for (let i = 0; i <= steps; i++) {
+      const v = i / steps;
+      /* width multiplier: 1 at the top, narrowing to 0 at the point */
+      let uw;
+      if (v < 0.16) {
+        /* rounded shoulders */
+        const t = v / 0.16;
+        uw = Math.sqrt(1 - (1 - t) * (1 - t) * 0.36);
+      } else {
+        /* the taper to the point, slightly convex */
+        const t = (v - 0.16) / 0.84;
+        uw = Math.pow(1 - t, 0.72);
+      }
+      outline.push([uw, v]);
+    }
+
+    const place = (u, v, zoff) => {
+      const px = u * hw, pz = zoff;
+      const rx = px * cs - pz * sn;
+      const rz = px * sn + pz * cs;
+      return [c[0] + rx, c[1] - v * h, c[2] + rz];
+    };
+
+    /* Front face: two columns per step (left and right) so the dome is a
+       shallow ridge down the centre. */
+    const front = [];
+    for (let i = 0; i <= steps; i++) {
+      const [uw, v] = outline[i];
+      const bulge = hd + hd * dome * (1 - v * 0.5);
+      const a = this.count;
+      this._vert(...place(-uw, v, bulge), 0, 0, 1, 0, v);
+      this._vert(...place(uw, v, bulge), 0, 0, 1, 1, v);
+      front.push(a);
+    }
+    for (let i = 0; i < steps; i++) {
+      const a = front[i], b = a + 1, c2 = front[i + 1], d2 = c2 + 1;
+      this._tri(a, b, c2);
+      this._tri(b, d2, c2);
+    }
+
+    /* Back face, flat, wound the other way. */
+    const back = [];
+    for (let i = 0; i <= steps; i++) {
+      const [uw, v] = outline[i];
+      const a = this.count;
+      this._vert(...place(-uw, v, -hd), 0, 0, -1, 0, v);
+      this._vert(...place(uw, v, -hd), 0, 0, -1, 1, v);
+      back.push(a);
+    }
+    for (let i = 0; i < steps; i++) {
+      const a = back[i], b = a + 1, c2 = back[i + 1], d2 = c2 + 1;
+      this._tri(b, a, c2);
+      this._tri(d2, b, c2);
+    }
+
+    /* Rim: stitch the two faces together down both edges. The rim is the
+       hard-edged part, which is why it gets its own normals. */
+    for (let i = 0; i < steps; i++) {
+      const f0 = front[i], f1 = front[i + 1];
+      const b0 = back[i], b1 = back[i + 1];
+      /* right edge */
+      this._tri(f0 + 1, b0 + 1, f1 + 1);
+      this._tri(f1 + 1, b0 + 1, b1 + 1);
+      /* left edge */
+      this._tri(b0, f0, b1);
+      this._tri(b1, f0, f1);
+    }
+    return this;
+  }
+
   /** Convex swept blade: a thin, tapered, double-edged wedge. */
   blade(bone, from, to, width, opts = {}) {
     const thick = opts.thick ?? 0.012;
