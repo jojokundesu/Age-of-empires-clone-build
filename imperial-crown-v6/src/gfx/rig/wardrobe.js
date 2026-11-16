@@ -43,8 +43,8 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
     /* Cloth over the skull, falling to the shoulders. A full dome (no `cut`,
        which removes the crown and leaves a brim-shaped ring) plus a short
        cowl down the back of the neck. */
-    g.ellipsoid(B.HEAD, [0, headY + hr * 0.04, -hr * 0.12],
-      [hr * 1.18, hr * 1.12, hr * 1.20], { sph: [6, 4] });
+    g.ellipsoid(B.HEAD, [0, headY + hr * 0.06, -hr * 0.12],
+      [hr * 1.04, hr * 1.06, hr * 1.08], { sph: [6, 4] });
     g.lathe(B.HEAD, [
       [hr * 1.16, headY - hr * 0.30],
       [hr * 1.22, headY - hr * 0.62],
@@ -65,17 +65,25 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
   }
 
   if (kind === 'nasal') {
-    /* Spangenhelm: a dome with a nose guard, the early knight's helm. */
-    g.ellipsoid(B.HEAD, [0, headY + hr * 0.16, 0],
-      [hr * 1.10, hr * 1.06, hr * 1.10], { cut: 0.32, sph: [6, 4] });
-    g.slab(B.HEAD, [0, headY + hr * 0.02, hr * 1.02], [hr * 0.16, hr * 0.85, hr * 0.10]);
+    /* Spangenhelm: a dome with a nose guard, the early knight's helm.
+       Sized to the SKULL (0.94 of it in X, the lathe's own figure) plus a
+       millimetre, not to 1.10 of the head sphere it is not shaped like --
+       at 1.10 all round the helm was wider than the face and swallowed it,
+       leaving a helmet with a beard under it and no visible eyes. */
+    /* `cut` is the fraction of the ellipsoid's lower half that is thrown
+       away, so 0.34 keeps two thirds of it and the rim lands well BELOW the
+       eyes -- a nasal helm is a skullcap, and its rim belongs above the
+       brow. 0.60 keeps the top 40%. */
+    g.ellipsoid(B.HEAD, [0, headY + hr * 0.30, -hr * 0.04],
+      [hr * 0.98, hr * 1.04, hr * 0.96], { cut: 0.50, sph: [6, 4] });
+    g.slab(B.HEAD, [0, headY + hr * 0.06, hr * 0.90], [hr * 0.14, hr * 0.62, hr * 0.10]);
     return;
   }
 
   if (kind === 'cone') {
     /* Tall conical helm: the steppe and the Rus. */
-    g.ellipsoid(B.HEAD, [0, headY + hr * 0.14, 0],
-      [hr * 1.08, hr * 1.00, hr * 1.08], { cut: 0.28, sph: [6, 4] });
+    g.ellipsoid(B.HEAD, [0, headY + hr * 0.26, -hr * 0.04],
+      [hr * 0.96, hr * 1.00, hr * 0.94], { cut: 0.55, sph: [6, 4] });
     g.lathe(B.HEAD, [
       [hr * 1.02, headY + hr * 0.70],
       [hr * 0.52, headY + hr * 1.36],
@@ -85,8 +93,8 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
   }
 
   if (kind === 'turban') {
-    g.ellipsoid(B.HEAD, [0, headY + hr * 0.18, 0],
-      [hr * 1.18, hr * 0.86, hr * 1.18], { cut: 0.42, sph: [6, 4] });
+    g.ellipsoid(B.HEAD, [0, headY + hr * 0.22, -hr * 0.04],
+      [hr * 1.02, hr * 0.80, hr * 1.00], { cut: 0.44, sph: [6, 4] });
     /* the brow band sits ABOVE the eyes and stops at the temples */
     g.lathe(B.HEAD, [
       [hr * 1.16, headY + hr * 0.14],
@@ -109,10 +117,10 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
      is: a neck flare, a cheek line, a temple, a crown. The face opening is
      cut out of the front by sweeping an arc that stops at the temples. */
   g.lathe(B.HEAD, [
-    [hr * 1.10, headY - hr * 0.52],
-    [hr * 1.15, headY - hr * 0.14],
-    [hr * 1.12, headY + hr * 0.16],
-    [hr * 1.10, headY + hr * 0.66],
+    [hr * 0.99, headY - hr * 0.50],
+    [hr * 1.04, headY - hr * 0.12],
+    [hr * 1.02, headY + hr * 0.18],
+    [hr * 1.00, headY + hr * 0.68],
     [hr * 0.62, headY + hr * 1.16],
     [0.0, headY + hr * 1.30]
   ], { seg: g.seg(1), arc: FLARE_ARC, arcStart: FLARE_START });

@@ -44,35 +44,39 @@ export function buildBody(g, prop, opts = {}) {
      A lathe, because a ribcage is wider at the chest than at the waist and
      a cylinder is the thing this overhaul exists to remove. The `squash`
      makes it deeper than it is wide: a barrel chest, not a tube. */
+  /* THE TORSO PROFILE.
+     A lathe is a body of revolution, so the only thing carrying the figure
+     is its silhouette from the front, and that silhouette has to taper.
+     The previous profile went 0.150 -> 0.168 -> 0.175 -> 0.165 -> 0.205 ->
+     0.225: three near-equal rings from the hip to the sternum, which is a
+     barrel with a lid, and every unarmoured soldier read as a slab-chested
+     robot. It also ran straight up the neck, so the collar was a wide funnel.
+
+     This is a person: hip, waist (narrower than the hip -- that is what a
+     waist is), ribcage flaring to the chest, then a steep slope in to the
+     shoulders and the base of the neck. The top closes on the neck, which is
+     what removes the hole in the collar. */
+  /* Top of the neck, just under the chin. */
+  const neckTopY = y(1.68) - 0.098 * prop.headR * 0.96;
   const torsoProfile = [
-    /* Start below the hip joint, not at it. Without a surcoat to cover the
-       join (ages I-II) a profile starting at 0.98 leaves a visible gap
-       between the tunic hem and the thighs. */
-    [x(0.150), y(0.90)],
-    [x(0.168), y(0.96)],
-    [x(0.175), y(1.12)],
-    [x(0.165), y(1.24)],
-    [x(0.205), y(1.36)],
-    [x(0.225), y(1.45)],
-    [x(0.205), y(1.52)],
-    /* Close the collar onto the neck.
-       The lathe used to stop at x(0.130), y(1.56) and leave a flat open
-       annulus of radius 0.13 around a 0.058 neck -- a visible hole you could
-       see down into from any elevated angle. It now tapers to the neck's own
-       radius and tucks below the jaw. */
-    /* CLOSE THE TORSO OVER THE NECK.
-       A lathe's top rim is an open ring, and an open ring seen from above
-       is a hole -- you could look down the collar into the chest cavity,
-       and no amount of patching with a separate neck tube or a trapezius
-       dome fixed it, because two surfaces crossing always leave a seam
-       somewhere. So the torso profile now runs right up the neck and closes
-       on it. One surface, no rim, no hole, no seam.
-       Everything above 1.52 sits inside the head, which is weighted to the
-       same bone chain, so it can never be seen. */
-    [x(0.128), y(1.520)],
-    [x(0.096), y(1.560)],
-    [x(0.076), y(1.610)],
-    [x(0.072), y(1.660)]
+    [x(0.148), y(0.90)],   /* below the hip joint, so the tunic meets the thigh */
+    [x(0.162), y(0.97)],
+    [x(0.150), y(1.06)],   /* waist: narrower than the hip */
+    [x(0.166), y(1.16)],
+    [x(0.205), y(1.28)],   /* ribcage */
+    [x(0.226), y(1.38)],   /* chest, widest */
+    [x(0.222), y(1.44)],
+    [x(0.196), y(1.49)],   /* shoulder slope */
+    /* The neck run must stop BELOW the chin.
+       Head centre is y(1.68) and the chin is 1.06 hr under it -- about
+       1.58 at a standard height. Carrying the torso up to 1.66 put it
+       through the jaw: the beard and the whole lower face were buried
+       inside the tunic, and what showed at the collar was the inside of
+       the torso. These heights are relative to the head, not fixed. */
+    [x(0.140), y(1.525)],
+    [x(0.100), neckTopY - 0.052],
+    [x(0.078), neckTopY - 0.016],
+    [x(0.074), neckTopY]
   ];
   g.material(fabric);
   if (opts.bodyCol) g.color(opts.bodyCol[0], opts.bodyCol[1], opts.bodyCol[2]);
@@ -114,15 +118,20 @@ export function buildBody(g, prop, opts = {}) {
   const crownY = headY + hr * 1.14;
   const headH = crownY - chinY;
   /* radius fractions of hr at even steps from chin to crown */
+  /* The radius fractions are of `hr`, which is already the head's half-width,
+     so the widest ring must be 1.0 -- at 0.94 times a further 0.94 the skull
+     came out 12% too narrow and read as a cone with a forehead. The chin is
+     lifted off zero for the same reason: a true zero radius is a point, and a
+     point chin on a seven-segment lathe is a spike. */
   const skull = [
-    [0.00, 0.00],   /* chin point */
-    [0.30, 0.44],   /* jaw */
-    [0.52, 0.72],   /* cheekbone */
-    [0.74, 0.94],   /* widest, at the temples */
-    [0.90, 0.86],   /* upper skull turning over */
-    [1.00, 0.00]    /* crown */
+    [0.00, 0.16],   /* chin, blunt */
+    [0.22, 0.52],   /* jaw */
+    [0.46, 0.80],   /* cheekbone */
+    [0.70, 1.00],   /* temples: widest */
+    [0.88, 0.92],   /* upper skull turning over */
+    [1.00, 0.34]    /* crown, rounded rather than pointed */
   ];
-  g.lathe(B.HEAD, skull.map(([t, r]) => [r * hr * 0.94, chinY + headH * t]), {
+  g.lathe(B.HEAD, skull.map(([t, r]) => [r * hr, chinY + headH * t]), {
     seg: g.seg(0), squash: [1.0, 1.10], blend: B.NECK
   });
   if (g.detail === DETAIL.NEAR) {
@@ -244,8 +253,20 @@ export function buildFaceDetail(g, m, opts = {}) {
   const hair = opts.hair || [0.16, 0.12, 0.09];
   g.material(5).color(hair);
   if (opts.beard) {
-    /* a beard is a flattened blob under the jaw, not a second sphere */
-    g.ellipsoid(B.HEAD, [0, headY - hr * 0.98, hr * 0.34],
-      [hr * 0.62, hr * 0.42, hr * 0.52], { sph: [5, 3] });
+    /* A beard sits ON the jaw. This was at headY - hr*0.98, which is below
+       the chin and inside the collar, so it rendered as a dark hexagonal
+       hole at the throat rather than as a beard -- and being pure hair
+       colour it read as a gap in the body. It is now centred on the jaw
+       line, slightly proud of the face, and lifted off black. */
+    /* On the jaw, projecting forward, and lifted well clear of the hair.
+       HAIR_COLORS[0] is 0.16/0.12/0.09, so multiplying it -- even by two --
+       still lands at 0.42 and a beard under a helmet reads as a hole. A
+       beard is also greyer than the hair it belongs to, which this uses. */
+    g.material(5).color(
+      Math.min(1, 0.30 + hair[0] * 0.85),
+      Math.min(1, 0.26 + hair[1] * 0.85),
+      Math.min(1, 0.22 + hair[2] * 0.85));
+    g.ellipsoid(B.HEAD, [0, headY - hr * 0.62, hr * 0.42],
+      [hr * 0.56, hr * 0.40, hr * 0.50], { sph: [5, 3] });
   }
 }
