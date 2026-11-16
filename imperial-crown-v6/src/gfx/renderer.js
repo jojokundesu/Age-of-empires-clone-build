@@ -301,7 +301,8 @@ export class Renderer {
     this.resBatches = new Map();
     this.resFadeBatches = new Map();
     const decorNames = ['bush', 'rock', 'stump', 'reed', 'tuft', 'flower', 'pebble', 'log', 'ruin',
-      'crate', 'barrel', 'haystack', 'firewood', 'cart', 'well', 'fence', 'drying_rack'];
+      'crate', 'barrel', 'haystack', 'firewood', 'cart', 'well', 'fence', 'drying_rack',
+      'stone_bridge'];
     for (const name of decorNames) {
       const res = buildProp(name);
       if (!res) continue;

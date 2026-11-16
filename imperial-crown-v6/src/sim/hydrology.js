@@ -451,6 +451,15 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
       }
       if (best) {
         const ang = Math.atan2(best.z, best.x);
+        /* The angle is the direction from the moat's centre to the crossing,
+           i.e. across the channel -- but `best` is a point *on* the outer
+           rim, and the deck has to span the water, which is not centred on
+           that point: walk outwards and back, and the crossing's middle is
+           the middle of the wet stretch. Without this the deck was drawn
+           four metres short of the water it is supposed to bridge. */
+        /* The deck is recentred on the wet span below, once the bed exists:
+           `best` is a point on the outer rim, and the water is not centred on
+           it. */
         bridges.push({ x: best.x, z: best.z, radius: 13, angle: ang, length: 26, deck: 2.1 });
         /* A bridge is a crossing, so it is also a ford as far as the
            navigation domain is concerned -- the difference is only the deck
@@ -806,6 +815,30 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
     }
   }
   /* Bridge cuttings: the deck is walkable across the moat. */
+  /* A bridge is drawn along its own angle, so the deck has to be centred on
+     the water it spans, not on the rim point the crossing was found at. Walk
+     the crossing's axis along the finished bed, find the wet stretch, and
+     move the deck to its middle with enough length to reach both banks. The
+     ford that shares the crossing moves with it, or the paving and the deck
+     end up in different places. */
+  for (const b of bridges) {
+    const ax = Math.cos(b.angle), az = Math.sin(b.angle);
+    let lo = Infinity, hi = -Infinity;
+    for (let d = -34; d <= 34; d += 0.5) {
+      if (sample(b.x + ax * d, b.z + az * d) < -0.15) {
+        if (d < lo) lo = d;
+        if (d > hi) hi = d;
+      }
+    }
+    if (!(hi > lo)) continue;
+    const mid = (lo + hi) * 0.5;
+    const span = Math.max(20, hi - lo + 7);
+    const twin = fords.find((f) => f.kind === 'stone bridge'
+      && Math.hypot(f.x - b.x, f.z - b.z) < 1);
+    b.x += ax * mid; b.z += az * mid; b.length = span;
+    if (twin) { twin.x = b.x; twin.z = b.z; }
+  }
+
   for (const b of bridges) {
     const r = b.radius;
     for (let j = Math.max(0, Math.floor((b.z - r + half) / cell)); j <= Math.min(res, Math.ceil((b.z + r + half) / cell)); j++) {

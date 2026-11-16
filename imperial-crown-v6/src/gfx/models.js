@@ -1775,6 +1775,57 @@ P('ruin', () => {
   return { geo: g, height: 2.0 };
 });
 
+/* A stone bridge across a moat. The map generator has always produced the
+   crossings -- they are walkable, the pathfinder routes over them, and the
+   navigation domain marks the deck -- but nothing ever drew them, so men and
+   carts crossed the water on an invisible bridge. The deck is 26 m long and
+   4 m wide with a low parapet and two piers, matching `bridges[]` in
+   hydrology.js; the prop is rotated to the crossing's angle. */
+P('stone_bridge', () => {
+  const g = new Geo();
+  /* The generator's crossings are 26 m spans (length: 26 in hydrology.js),
+     laid along the local X. Twelve deck courses, each `step` long, is the
+     whole span; the first version placed every course at the *step* offset
+     rather than its own index, so the bridge came out seven metres long and
+     ended in the middle of the water. */
+  const N = 12, L = 26, W = 2.15, step = L / N;
+  const arch = (t) => 0.34 * (1 - t * t);          // camber above the springing
+  const DECK = 1.9;
+  g.material(M.STONE).color(0.60, 0.585, 0.55);
+  for (let i = 0; i < N; i++) {
+    const t = (i - (N - 1) / 2) / ((N - 1) / 2);
+    g.box(i * step - L / 2 + step / 2, DECK + arch(t), 0, step + 0.06, 0.32, W * 2);
+  }
+  /* Parapets: a low wall either side, with a pier block every third course. */
+  g.material(M.MARBLE).color(0.76, 0.74, 0.68);
+  for (const sz of [-1, 1]) {
+    for (let i = 0; i < N; i++) {
+      const t = (i - (N - 1) / 2) / ((N - 1) / 2);
+      const tall = i % 3 === 0 ? 0.28 : 0;
+      g.box(i * step - L / 2 + step / 2, DECK + arch(t) + 0.36 + tall, sz * (W - 0.18),
+        step + 0.06, 0.52 + tall * 2, 0.30);
+    }
+  }
+  /* Piers down to the bed. The moat here is three to four metres deep, so a
+     pier is a long block, not a stub. */
+  g.material(M.STONE).color(0.54, 0.53, 0.50);
+  for (const sx of [-0.34, 0, 0.34]) {
+    for (const sz of [-1, 1]) {
+      g.box(sx * L, DECK - 1.6, sz * (W - 0.5), 1.5, 5.2, 1.1);
+    }
+  }
+  /* Two arch rings under the deck, so the span reads as carried. */
+  for (const sz of [-1, 1]) {
+    g.box(0, DECK - 0.35, sz * (W - 0.15), L * 0.94, 0.7, 0.26);
+  }
+  g.color(1, 1, 1);
+  /* `sinks`: a bridge is the one prop whose geometry is *supposed* to go
+     below the ground it is placed on -- its piers stand on the river bed, and
+     a deck that floats above the water would be the bug. The geometry test
+     reads this instead of treating it as a barrel sunk into a hillside. */
+  return { geo: g, height: DECK + 0.8, sinks: true };
+});
+
 /* ============================================================
    MOD CONTENT
    ------------------------------------------------------------

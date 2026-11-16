@@ -54,11 +54,41 @@ const tx = process.argv[5] || '0';
 const tz = process.argv[6] || '0';
 const pitch = process.argv[7] || '1.0';
 const yaw = process.argv[8] || '0';
-await page.evaluate((map) => { window.__imperial.settings.mapType = map; window.__imperial.settings.fog = false; }, mapArg);
-await page.evaluate((z, x, tzz) => { window.__zoom = z; window.__tx = x; window.__tz = tzz; const a = window.__imperial; a.menu && a.menu.pickMode && a.menu.pickMode('sandbox'); }, zoom, tx, tz);
+/* Start the match through the same call the game's own menu uses: setting
+   settings.mapType alone leaves the menu's pickMode to decide the archetype,
+   and the menu's default is Confluence -- so every "highview" screenshot was
+   quietly a picture of Confluence. */
+await page.evaluate((map) => {
+  const a = window.__imperial;
+  a.settings.mapType = map; a.settings.fog = false;
+  a.startMatch({ mapType: map, mode: 'sandbox', seed: 20261, civ: 'franks', difficulty: 'standard' });
+  return true;
+}, mapArg);
+const started = await page.waitForFunction((m) => {
+  const a = window.__imperial;
+  return a.running === true && a.game && a.game.world && a.game.world.mapType === m;
+}, { timeout: 180000, polling: 500 }, mapArg).then(() => true).catch(() => false);
+if (!started) {
+  const st = await page.evaluate(() => ({
+    running: window.__imperial.running,
+    mt: window.__imperial.game && window.__imperial.game.world && window.__imperial.game.world.mapType
+  }));
+  console.log('!! match did not start on', mapArg, JSON.stringify(st));
+  await page.screenshot({ path: out });
+  await browser.close();
+  server.close();
+  process.exit(2);
+}
+/* startMatch() boots the world but does not dismiss the shell -- the menu's
+   own button does that -- so a direct call leaves the menu painted over the
+   battle. Dismiss it the way the button does. */
+await page.evaluate(() => {
+  const a = window.__imperial;
+  a.menu && a.menu.hideMenu && a.menu.hideMenu();
+  document.getElementById('menuScreen')?.classList.add('hidden');
+});
+await page.evaluate((z, x, tzz) => { window.__zoom = z; window.__tx = x; window.__tz = tzz; }, zoom, tx, tz);
 await page.evaluate((p,y)=>{window.__pitch=p;window.__yaw=y;}, pitch, yaw);
-await page.evaluate(() => document.getElementById('btnStart').click());
-await page.waitForFunction('window.__imperial.running === true', { timeout: 180000 });
 await new Promise(r => setTimeout(r, 4000));
 await page.evaluate(() => {
   const a = window.__imperial;
@@ -71,6 +101,12 @@ await page.evaluate(() => {
   c.dist = c.desiredDist = Number(window.__zoom || 210); c.pitch = Number(window.__pitch||1.16); c.yaw = Number(window.__yaw || 0); c.setTarget(Number(window.__tx||0), Number(window.__tz||0), true);
 });
 await new Promise(r => setTimeout(r, 2500));
+console.log('state', JSON.stringify(await page.evaluate(() => ({
+  running: window.__imperial.running,
+  mt: window.__imperial.game && window.__imperial.game.world && window.__imperial.game.world.mapType,
+  menuHidden: document.getElementById('menu') ? document.getElementById('menu').classList.contains('hidden') : 'no-menu',
+  splash: [...document.querySelectorAll('.splash')].map(e => e.className)
+}))));
 await page.screenshot({ path: out });
 console.log('wrote', out);
 await browser.close(); server.close();

@@ -169,7 +169,8 @@ check('every prop stands on the ground it is placed on', () => {
     for (let i = 1; i < g.v.length; i += STRIDE) { lo = Math.min(lo, g.v[i]); hi = Math.max(hi, g.v[i]); }
     // mines and boulders are allowed to sink into the hillside
     if (lo > 0.12) floating.push(`${type} floats at ${lo.toFixed(2)} m`);
-    if (lo < -0.7) floating.push(`${type} sinks to ${lo.toFixed(2)} m`);
+    // A bridge's piers stand on the bed by design (models.js marks it `sinks`).
+    if (lo < -0.7 && !res.sinks) floating.push(`${type} sinks to ${lo.toFixed(2)} m`);
     assert(hi <= res.height * 1.45 + 0.05, `${type} reaches ${hi.toFixed(2)} m but declares ${res.height}`);
   }
   assert(!floating.length, floating.join(', '));

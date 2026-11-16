@@ -650,7 +650,19 @@ export function generateWorld(seed = 20261, opts = {}) {
       resources.push({ kind: 'wood', type: 'tree', resKind: 'wood', x: p.x, z: p.z,
         amount: 160, radius: 0.8, variant: 1, scale: 1.25, y: p.y, palm: true });
     }
-    for (const b of hydro.bridges) bridges.push({ ...b });
+    for (const b of hydro.bridges) {
+      bridges.push({ ...b });
+      /* Lay the deck. The generator has always produced these crossings --
+         walkable, routed over, marked in the nav domain -- but nothing drew
+         them, so men crossed the moat on an invisible bridge. The prop is
+         modelled 26 m along its own local X, so it takes the crossing's
+         angle directly. */
+      decor.push({
+        type: 'stone_bridge', x: b.x, z: b.z,
+        y: Math.max(world_water_level_fallback(hydro, b), 0) + 0.05,
+        rot: b.angle, scale: 1, tint: 0.5
+      });
+    }
     /* A stone ford is *paved*: the paving is stamped into the splat so the
        cobbles read on the ground as well as under the water. The stamp
        follows the shelf's own oval shape, so the paving stops where the
@@ -887,6 +899,12 @@ export function buildRenderTerrain(world) {
     }
   }
   return { n, cell, heights, splat4: s4, splat2: s2, size: hf.size };
+}
+
+/* A bridge deck is at the water surface by definition: piers go down to the
+   bed, the deck stays just above the line the boats float on. */
+function world_water_level_fallback(hydro, b) {
+  return Number.isFinite(hydro.waterLevel) ? hydro.waterLevel : (b.deck ? b.deck - 2.1 : 0);
 }
 
 function stampDisc(grid, hf, wx, wz, radius, value) {
