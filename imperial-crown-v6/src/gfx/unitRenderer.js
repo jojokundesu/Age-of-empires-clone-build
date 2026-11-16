@@ -29,10 +29,9 @@ import { B, BONE_COUNT, Pose, buildBindPalette, buildSkinPalette } from './rig/s
 import { DETAIL } from './rig/meshbuilder.js';
 import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS } from './rig/rigs.js';
 import { evaluate, AnimState } from './rig/animator.js';
-import { UNIT_VS, UNIT_FS, UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from './rig/unitShaders.js';
+import { UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from './rig/unitShaders.js';
 import { InstanceBatch } from './batch.js';
 import { BonePalette } from './rig/palette.js';
-import { Shader } from '../core/gl.js';
 
 /* Animation LOD thresholds, in metres from the camera. */
 export const ANIM_LOD = { NEAR: 20, MID: 60 };
@@ -48,10 +47,14 @@ export function rigKeyFor(type) {
 }
 
 export class UnitRenderer {
-  constructor(gl, textures) {
+  /**
+   * @param gl        WebGL2 context
+   * @param program   the shared 'unit' Shader, owned by the renderer so the
+   *                  lighting uniforms are bound in one place
+   */
+  constructor(gl, program) {
     this.gl = gl;
-    this.textures = textures;
-    this.program = new Shader(gl, 'unit', UNIT_VS, UNIT_FS);
+    this.program = program || null;
     this.palette = new BonePalette(gl, UNIT_MAX_ROWS, UNIT_TEX_WIDTH);
     /* One batch per (rig, detail tier). A rig is built once per tier and
        never rebuilt: geometry is static, only the pose changes. */

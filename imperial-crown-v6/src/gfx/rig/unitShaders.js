@@ -60,6 +60,7 @@ layout(location=14) in vec4 iD;   // spare
 ${LIGHT_UNIFORMS}
 uniform mat4 uViewProj;
 uniform highp sampler2D uBoneTex;
+uniform float uSwayAmount;      // garment/foliage flutter, matching MODEL_VS
 out vec3 vWorld;
 out vec3 vNormal;
 out vec2 vUV;
@@ -131,6 +132,12 @@ flat in int vMat;
 flat in vec4 vPack;
 out vec4 fragColor;
 
+/* Shared with the legacy model program: the same material atlas drives
+   the same albedo and roughness lookups. */
+uniform highp sampler2DArray uMaterials;
+uniform float uBoneRows;
+uniform float uTexWidth;
+
 #define MAT_LINEN    0
 #define MAT_MAIL     1
 #define MAT_PLATE    2
@@ -140,7 +147,7 @@ out vec4 fragColor;
 #define MAT_LEATHER  6
 #define MAT_WOOD     7
 
-/* hash12 comes from COMMON — redeclaring it is a link error on a real
+/* hash12 comes from COMMON: redeclaring it is a link error on a real
    driver even though the two bodies are identical. */
 
 /* Crossed thread weave: two sine trains at 90 degrees, jittered by a hash

@@ -33,6 +33,8 @@ import {
   DECAL_VS, DECAL_FS, POST_VS, POST_FS, FLASH_FS
 } from './shaders.js';
 import { InstanceBatch, QuadBatch } from './batch.js';
+import { UnitRenderer, rigKeyFor } from './unitRenderer.js';
+import { UNIT_VS, UNIT_FS } from './rig/unitShaders.js';
 import { buildTextures, uploadBaked, MAT, SPRITE } from './textures.js';
 import { bakeTerrain } from './bake.js';
 import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
@@ -252,6 +254,8 @@ export class Renderer {
     this.pDecal = new Shader(gl, 'decal', DECAL_VS, DECAL_FS);
     this.pPost = new Shader(gl, 'post', POST_VS, POST_FS);
     this.pFlash = new Shader(gl, 'flash', POST_VS, FLASH_FS);
+    /* The skinned unit program: same lighting, different vertex stage. */
+    this.pUnit = new Shader(gl, 'unit', UNIT_VS, UNIT_FS);
     this.fsTri = createFullscreenVAO(gl);
     this.emptyVao = gl.createVertexArray();
 
@@ -282,7 +286,12 @@ export class Renderer {
     await frame();
     this.unitBatches = new Map();
     this.unitMeta = new Map();
+    /* Rigged units own their own program, palette and batches; the legacy
+       MODEL batches keep every building, prop, ship and siege engine. */
+    this.unitRig = new UnitRenderer(gl, this.pUnit);
     for (const type of UNIT_TYPES) {
+      /* A rigged class is built by the UnitRenderer instead. */
+      if (rigKeyFor(type)) continue;
       const res = buildUnit(type);
       if (!res) continue;
       const geo = res.geo.finish();
@@ -294,6 +303,10 @@ export class Renderer {
         mounted: !!res.mounted, siege: !!res.siege, naval: !!res.naval
       });
     }
+
+    onProgress('Forging armour…', 0.84);
+    await frame();
+    await this.unitRig.init();
 
     onProgress('Growing forests…', 0.88);
     await frame();
@@ -1049,7 +1062,7 @@ export class Renderer {
 
     // opaque, near-to-far: the driver's early-z kills the hidden overdraw
     this._drawTerrain(cam);
-    this._drawModels(cam);
+    this._drawModels(cam, game);
     this._drawAmmo(cam, game);
     this._drawIceShells(cam, game);
 
@@ -1257,6 +1270,7 @@ export class Renderer {
       if (u.dead && (u.deadT || 0) > 6) continue;
       const dx = u.x - cx, dz = u.z - cz;
       if (dx * dx + dz * dz > uCull2) continue;
+      if (rigKeyFor(u.type)) continue;      // drawn by the rigged pass
       const batch = this.unitBatches.get(u.type);
       if (!batch) continue;
       const meta = this.unitMeta.get(u.type) || UNIT_META_FALLBACK;
@@ -1636,7 +1650,7 @@ export class Renderer {
     gl.disable(gl.BLEND);
   }
 
-  _drawModels(cam) {
+  _drawModels(cam, game) {
     const list = this._activeBatches;
     if (!list.length) return;
     const gl = this.gl;
@@ -1659,6 +1673,12 @@ export class Renderer {
     }
     gl.enable(gl.CULL_FACE);
 
+    /* ---------- rigged units ----------
+       Same lighting model and the same material atlas, but the vertex stage
+       skins from a bone-palette texture instead of the five rigid chunks.
+       Separate program, so it is its own pass. */
+    this._drawRiggedUnits(cam, game);
+
     /* the veiled canopies: a second, tiny pass with blending on so the camera
        can stand inside a tree and still show the battlefield. No depth write,
        so two overlapping canopies do not darken each other into a wall. */
@@ -1676,6 +1696,42 @@ export class Renderer {
       gl.depthMask(true);
       gl.disable(gl.BLEND);
     }
+  }
+
+  /**
+   * The skinned unit pass.
+   *
+   * Units are posed and enqueued here (not in _collectBatches) because the
+   * pose depends on the final interpolated camera position, and because a
+   * skipped frame must not advance an animation twice.
+   */
+  _drawRiggedUnits(cam, game) {
+    const ur = this.unitRig;
+    if (!ur || !game || !game.units) return;
+    const gl = this.gl;
+    if (!ur.batches.size) return;
+
+    ur.time = this.time;
+    ur.cullDist2 = this.quality.unitCull * this.quality.unitCull;
+    ur.update(cam, game, cam.viewProj, this._alpha !== undefined ? this._alpha : 0.5);
+    if (!ur.stats.units) return;
+
+    const s = this.pUnit.use();
+    s.m4('uViewProj', cam.viewProj);
+    s.f('uSwayAmount', this.quality.foliage);
+    /* withNoise 0: the unit shader generates its weave procedurally and has
+       no use for the noise tile. */
+    this._bindLight(s, 0);
+    s.tex('uMaterials', this.textures.materials, gl.TEXTURE_2D_ARRAY);
+    s.tex('uBoneTex', ur.palette.texture, gl.TEXTURE_2D);
+    s.f('uBoneRows', ur.palette.maxRows);
+    s.f('uTexWidth', ur.palette.width);
+
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+    ur.draw(null, s, this.stats, gl);
+    this.stats.tris += ur.stats.tris;
+    this.stats.instances += ur.stats.units;
   }
 
   _drawAmmo(cam, game) {

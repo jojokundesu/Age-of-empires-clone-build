@@ -44,6 +44,7 @@ const { Camera } = await import('../src/gfx/camera.js');
 const { Game } = await import('../src/sim/game.js');
 const { generateWorld } = await import('../src/sim/worldgen.js');
 const { FX } = await import('../src/gfx/fx.js');
+const { UNIT_MAX_ROWS } = await import('../src/gfx/rig/unitShaders.js');
 
 const fails = [];
 const check = (name, fn) => {
@@ -66,6 +67,18 @@ await renderer.init((label, f) => { progress = f; });
 console.log(`  (init ${Date.now() - t0} ms, progress ${progress})`);
 check('init completed', () => assert(renderer.ready && progress === 1, 'not ready'));
 check('every shader program built', () => assert(renderer.shaderCount === undefined || true, ''));
+check('rigged unit batches are built for every tier', () => {
+  /* Two rigs, three detail tiers each. If this is empty the skinned pass
+     silently draws nothing and the game falls back to no units at all. */
+  assert(renderer.unitRig, 'no UnitRenderer on the renderer');
+  assert(renderer.unitRig.batches.size >= 6,
+    `only ${renderer.unitRig.batches.size} rig batches built`);
+  for (const [k, b] of renderer.unitRig.batches) {
+    assert(b.triCount > 100, `${k} has only ${b.triCount} triangles`);
+    assert(b.mesh && b.mesh.skinned, `${k} is not a skinned mesh`);
+  }
+});
+
 check('geometry uploaded', () => {
   assert(renderer.buildingBatches.size >= 20, 'few building batches');
   assert(renderer.unitBatches.size >= 20, 'few unit batches');
@@ -294,6 +307,39 @@ check('a canopy between the lens and the target is veiled, not opaque', () => {
   camera.setEye ? null : null;
   return `${faded} veiled tree(s)`;
 });
+check('rigged units are posed and drawn in a live battle', () => {
+  /* The opening army is villagers and a scout, neither of which has a rig
+     yet, so put a Man-at-Arms where the camera is looking. This is the only
+     unit with a rig in Stage 1; the rest of the cast follows in Stage 3. */
+  const eye = game.camera.eye;
+  const basis = game.units[0];
+  const made = [];
+  for (let i = 0; i < 4; i++) {
+    const u = Object.create(Object.getPrototypeOf(basis));
+    Object.assign(u, basis);
+    u.id = 900000 + i;
+    u.type = 'man_at_arms';
+    u.x = eye[0] + (i - 1.5) * 2; u.z = eye[2] - 12; u.y = 0;
+    u.xPrev = u.x; u.yPrev = u.y; u.zPrev = u.z;
+    u.anim = { speed: 1, phase: i * 0.7, attack: 0, spin: 0 };
+    u.animSeed = i * 0.31;
+    u.moving = true; u.dead = false; u.garrisoned = false;
+    made.push(u);
+  }
+  game.units.push(...made);
+  let posed = 0, drawn = 0;
+  for (let i = 0; i < 20 && drawn === 0; i++) {
+    renderer.render(1 / 60, game);
+    posed += renderer.unitRig.stats.posed;
+    drawn = renderer.unitRig.stats.units;
+  }
+  game.units.length -= made.length;
+  assert(drawn > 0, 'no rigged unit was ever drawn in 20 frames');
+  assert(posed > 0, 'no rigged unit was ever posed');
+  assert(renderer.unitRig.palette.usedRows > 0, 'the palette stayed empty');
+  assert(renderer.unitRig.palette.usedRows <= UNIT_MAX_ROWS, 'palette overflowed');
+});
+
 check('500 frames of a live battle', () => {
   for (let i = 0; i < 500; i++) {
     game.update(1 / 60);

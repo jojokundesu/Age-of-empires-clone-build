@@ -13,19 +13,31 @@ import { parse } from '@shaderfrog/glsl-parser';
 const SRC = readFileSync(new URL('../src/gfx/shaders.js', import.meta.url), 'utf8');
 const RENDERER = readFileSync(new URL('../src/gfx/renderer.js', import.meta.url), 'utf8');
 
-// pull every `export const NAME = /* glsl */`...`` template literal out of the file
+/* Helper chunks are *composed into* shaders, not handed to the driver on
+   their own, so they are collected separately and never checked for a
+   #version line. These are the ones that get spliced with ${...}. */
+const CHUNK_NAMES = new Set([
+  'COMMON', 'LIGHT_UNIFORMS', 'NOISE_UNIFORM', 'TOWN_LIGHT_FN', 'SHADOW_FN',
+  'SKY_GLSL'
+]);
 const chunks = {};
+const shaders = {};
 {
-  // internal `const NAME = /* glsl */\`...\`` chunks (COMMON, LIGHT_UNIFORMS, ...)
   const re = /const ([A-Z_]+) = \/\* glsl \*\/`([\s\S]*?)\n`;/g;
   let m;
-  while ((m = re.exec(SRC))) chunks[m[1]] = m[2];
+  while ((m = re.exec(SRC))) {
+    (CHUNK_NAMES.has(m[1]) ? chunks : shaders)[m[1]] = m[2];
+  }
 }
-const shaders = {};
+
+/* The rigged unit shaders live in their own module so the overhaul does not
+   churn shaders.js. They are composed from the same chunks and are checked
+   by the same rules. */
+const RIG_SRC = readFileSync(new URL('../src/gfx/rig/unitShaders.js', import.meta.url), 'utf8');
 {
   const re = /export const ([A-Z_]+) = \/\* glsl \*\/`([\s\S]*?)\n`;/g;
   let m;
-  while ((m = re.exec(SRC))) shaders[m[1]] = m[2];
+  while ((m = re.exec(RIG_SRC))) shaders[m[1]] = m[2];
 }
 // expand ${CHUNK} interpolations the way the JS template literals do
 const expand = (src) => src.replace(/\$\{([A-Z_]+)\}/g, (all, name) => (name in chunks ? chunks[name] : all));
