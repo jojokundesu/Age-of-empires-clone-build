@@ -182,10 +182,8 @@ try {
   /* Count only the player's own buildings: the rival crown is a live town and
      finishes its own construction while the camera hunts for a legal aim
      point, which intermittently made the "one more than before" assertion
-     compare 17 with 16. */
-  const playerBuildings = () => page.evaluate(() =>
-    window.__imperial.game.buildings.filter((b) => !b.dead && b.team === 1).length);
-
+     compare 17 with 16. Both counts below are taken in the same evaluate that
+     acts, so nothing can be built in between. */
   const buildAim = await page.evaluate(() => {
     const a = window.__imperial, g = a.game, dc = g.directControl, fp = a.camera.firstPerson;
     for (let yaw = -Math.PI; yaw < Math.PI; yaw += Math.PI / 12) {
