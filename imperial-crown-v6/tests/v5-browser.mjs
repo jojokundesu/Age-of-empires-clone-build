@@ -179,13 +179,26 @@ try {
   await page.click('[data-cmd="first-person"]');
   await page.click('#fpBuild');
   await page.click('#fpBuildList [data-build="house"]');
+  /* Count only the player's own buildings: the rival crown is a live town and
+     finishes its own construction while the camera hunts for a legal aim
+     point, which intermittently made the "one more than before" assertion
+     compare 17 with 16. */
+  const playerBuildings = () => page.evaluate(() =>
+    window.__imperial.game.buildings.filter((b) => !b.dead && b.team === 1).length);
+
   const buildAim = await page.evaluate(() => {
     const a = window.__imperial, g = a.game, dc = g.directControl, fp = a.camera.firstPerson;
     for (let yaw = -Math.PI; yaw < Math.PI; yaw += Math.PI / 12) {
       for (const pitch of [-.22, -.3, -.4, -.5, -.6]) {
         fp.yaw = yaw; fp.pitch = pitch; a.camera.update(0);
         const [x,z] = dc.aimPoint({ id: 'construction', range: 10 });
-        if (g.canPlaceAt('house', 1, x, z).ok) return { x, z, count: g.buildings.length, equipment: document.getElementById('fpEquipment').dataset.kind };
+        if (g.canPlaceAt('house', 1, x, z).ok) {
+          return {
+            x, z,
+            count: g.buildings.filter((b) => !b.dead && b.team === 1).length,
+            equipment: document.getElementById('fpEquipment').dataset.kind
+          };
+        }
       }
     }
     return null;
@@ -194,12 +207,16 @@ try {
   await page.waitForFunction(() => window.__imperial.game.placing?.valid === true, { timeout: 10000 });
   const attackButton = await page.$eval('#fpAttack', (el) => { const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
   await page.touchscreen.tap(attackButton.x, attackButton.y);
-  const built = await page.evaluate(() => ({
-    count: window.__imperial.game.buildings.length,
-    building: window.__imperial.game.buildings.at(-1)?.type,
-    active: window.__imperial.game.directControl.active,
-    target: window.__imperial.game.directControl.unit.buildTarget?.type
-  }));
+  const built = await page.evaluate(() => {
+    const g = window.__imperial.game;
+    const mine = g.buildings.filter((b) => !b.dead && b.team === 1);
+    return {
+      count: mine.length,
+      building: mine.at(-1)?.type,
+      active: g.directControl.active,
+      target: g.directControl.unit.buildTarget?.type
+    };
+  });
   check('villager aims and places a real foundation without leaving first person', () => {
     assert.equal(buildAim.equipment, 'tool'); assert.equal(built.count, buildAim.count + 1);
     assert.equal(built.building, 'house'); assert.equal(built.target, 'house'); assert.equal(built.active, true);
