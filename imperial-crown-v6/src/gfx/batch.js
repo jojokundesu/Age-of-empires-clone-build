@@ -3,14 +3,19 @@
    One VAO + one vertex buffer per model, one streamed instance
    buffer per draw batch. 28 floats per instance (see gl.js).
    ============================================================ */
-import { createMesh, InstanceBuffer, INSTANCE_FLOATS } from '../core/gl.js';
+import { createMesh, createSkinnedMesh, InstanceBuffer, INSTANCE_FLOATS } from '../core/gl.js';
 
 export class InstanceBatch {
   constructor(gl, geo, maxInstances = 256) {
     this.gl = gl;
     this.max = maxInstances;
     this.count = 0;
-    this.mesh = createMesh(gl, geo.v || geo.vertices, geo.i || geo.indices);
+    /* A rigged unit arrives already packed (see gfx/rig/meshbuilder.js):
+       it needs its own VAO because locations 5 and 6 carry skin data
+       instead of PART/PIVOT, which createMesh hard-codes. */
+    this.mesh = geo.packed
+      ? createSkinnedMesh(gl, geo)
+      : createMesh(gl, geo.v || geo.vertices, geo.i || geo.indices);
     this.instances = new InstanceBuffer(gl, maxInstances);
     this.instances.attach(this.mesh);
     this.triCount = this.mesh.triCount;

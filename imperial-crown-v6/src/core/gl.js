@@ -267,6 +267,66 @@ export function createMesh(gl, verts, indices) {
   return mesh;
 }
 
+/**
+ * Build a VAO for rigged unit geometry.
+ *
+ * Rigged meshes reuse locations 5 and 6 as `aBoneIdx` / `aBoneWt`. Those
+ * slots are PART and PIVOT on the legacy path, and the engine already sits
+ * at the 16-location hardware limit, so no second VBO is needed: skinned
+ * units never use rigid-part animation, buildings never use skinning, and
+ * the two appear in different draw calls with different programs.
+ *
+ * The vertex stride is the same 32 bytes as every other mesh, so the
+ * builder's output needs no repacking here.
+ */
+export function createSkinnedMesh(gl, rig) {
+  const packed = rig.packed;
+  const vertexCount = packed.byteLength / VERTEX_BYTES;
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, packed, gl.STATIC_DRAW);
+
+  const indices = rig.indices;
+  const idx = indices instanceof Uint16Array || indices instanceof Uint32Array
+    ? indices : new Uint16Array(indices);
+
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+
+  const S = VERTEX_BYTES;
+  gl.enableVertexAttribArray(ATTR.POS);
+  gl.vertexAttribPointer(ATTR.POS, 3, gl.FLOAT, false, S, 0);
+  gl.enableVertexAttribArray(ATTR.NORMAL);
+  gl.vertexAttribPointer(ATTR.NORMAL, 3, gl.BYTE, true, S, 12);
+  gl.enableVertexAttribArray(ATTR.MAT);
+  gl.vertexAttribPointer(ATTR.MAT, 1, gl.UNSIGNED_BYTE, false, S, 15);
+  gl.enableVertexAttribArray(ATTR.UV);
+  gl.vertexAttribPointer(ATTR.UV, 2, gl.UNSIGNED_SHORT, true, S, 16);
+  gl.enableVertexAttribArray(ATTR.COLOR);
+  gl.vertexAttribPointer(ATTR.COLOR, 3, gl.UNSIGNED_BYTE, true, S, 20);
+  /* 5 and 6 carry skin data instead of PART / PIVOT here */
+  gl.enableVertexAttribArray(ATTR.PART);
+  gl.vertexAttribPointer(ATTR.PART, 4, gl.UNSIGNED_BYTE, false, S, 23);
+  gl.enableVertexAttribArray(ATTR.PIVOT);
+  gl.vertexAttribPointer(ATTR.PIVOT, 4, gl.UNSIGNED_BYTE, true, S, 27);
+
+  gl.bindVertexArray(null);
+  gl.bindBuffer(gl.ARRAY_BUFFER, null);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+  const mesh = new Mesh(gl, vao, vbo, ibo, idx.length,
+    idx instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT);
+  mesh.vertexCount = vertexCount;
+  mesh.triCount = idx.length / 3;
+  mesh.bytes = packed.byteLength + idx.byteLength;
+  mesh.skinned = true;
+  return mesh;
+}
+
 export class Mesh {
   constructor(gl, vao, vbo, ibo, count, type) {
     this.gl = gl; this.vao = vao; this.vbo = vbo; this.ibo = ibo;
