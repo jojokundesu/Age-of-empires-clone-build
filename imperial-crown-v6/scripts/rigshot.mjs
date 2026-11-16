@@ -139,7 +139,7 @@ function skinVertex(packed, u8, i8, vi, pal, out) {
 /* ---------------- render ---------------- */
 
 function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scale = 1,
-  width = 720, height = 900, cls = 'man_at_arms' }) {
+  width = 720, height = 900, cls = 'man_at_arms', yaw = null }) {
   const rig = buildRig(cls, tier, { age, skin: SKIN_TONES[0], hair: HAIR_COLORS[0] });
   const mounted = isMounted(cls);
   const rideInp = { mounted };
@@ -181,10 +181,16 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
   /* A mount is 2.1 m tall and 1.9 m long; framing it with the foot soldier's
      numbers crops the hooves off the bottom and the tail off the side. */
   const target = [0, aim * scale, mounted ? 0.12 : 0];
+  const baseEye = [(mounted ? 3.6 : 2.05), (mounted ? 2.05 : 1.42), (mounted ? 4.1 : 2.55)];
+  /* `yaw` orbits the camera around the figure, which is the only way to see
+     a horse side-on -- the default 3/4 view hides the neck junction behind
+     the rider's arm. */
+  const ry = yaw === null ? 0 : yaw;
+  const cr = Math.cos(ry), sr = Math.sin(ry);
   const eye = [
-    (mounted ? 3.6 : 2.05) * scale,
-    (mounted ? 2.05 : 1.42) * scale,
-    (mounted ? 4.1 : 2.55) * scale
+    (baseEye[0] * cr - baseEye[2] * sr) * scale,
+    baseEye[1] * scale,
+    (baseEye[0] * sr + baseEye[2] * cr) * scale
   ];
   const view = lookAt(eye, target, [0, 1, 0]);
   const proj = perspective(0.60, width / height, 0.1, 60);
@@ -303,6 +309,7 @@ const r = render({
   pose: opt('pose', 'idle'),
   tier,
   age: parseInt(opt('age', '3'), 10),
-  scale: parseFloat(opt('scale', '1'))
+  scale: parseFloat(opt('scale', '1')),
+  yaw: opt('yaw', null) === null ? null : parseFloat(opt('yaw', '0'))
 });
 console.log(`${r.out}  ${r.verts} verts, ${r.tris} tris, ${r.drawn} drawn`);

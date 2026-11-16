@@ -350,16 +350,23 @@ function applyRiding(pose, st, inp, gait, speed, phase) {
      the leathers rather than inside the horse. */
   pose.seat = RIDE_SEAT;
 
-  /* --- rider's legs: knees forward and out, feet down in the stirrup ---
-     A rider does not stand on the ground, so the walk gait's thigh swing
-     has to go: the legs are folded and hold still, and only the post at
-     a trot moves them. */
-  pose.set(B.THIGH_L, -1.02 + Math.sin(phase * 2) * 0.05 * speed, 0, 0.20);
-  pose.set(B.THIGH_R, -1.02 + Math.sin(phase * 2 + Math.PI) * 0.05 * speed, 0, -0.20);
-  pose.set(B.SHIN_L, 1.22, 0, 0);
-  pose.set(B.SHIN_R, 1.22, 0, 0);
-  pose.set(B.FOOT_L, 0.30, 0, 0);
-  pose.set(B.FOOT_R, 0.30, 0, 0);
+  /* --- rider's legs: knees forward and OUT, feet down in the stirrup ---
+     The abduction is the number that matters. The hip joints sit about
+     0.10 m either side of centre and the barrel is 0.27 m half-width, so a
+     thigh that only splays 0.20 rad keeps the whole leg inside the horse
+     and the rider appears to have none. 0.55 rad puts the knee outside the
+     flank where it belongs, and the shin then hangs down the side. */
+  /* Sign note: a +Z rotation swings a bone hanging below its joint toward
+     +X. THIGH_L sits at negative X, so the left leg needs a NEGATIVE Z to
+     abduct outward -- with the sign the other way both legs fold across the
+     barrel and the rider appears to have none. */
+  const post = Math.sin(phase * 2) * 0.06 * speed;
+  pose.set(B.THIGH_L, -1.16 + post, 0, -0.55);
+  pose.set(B.THIGH_R, -1.16 - post, 0, 0.55);
+  pose.set(B.SHIN_L, 1.30, 0, 0);
+  pose.set(B.SHIN_R, 1.30, 0, 0);
+  pose.set(B.FOOT_L, 0.34, 0, 0);
+  pose.set(B.FOOT_R, 0.34, 0, 0);
 
   /* --- rider's torso: forward over the withers, hands on the reins ---
      Sitting upright on a moving horse looks like a mannequin. */
@@ -389,9 +396,11 @@ function applyRiding(pose, st, inp, gait, speed, phase) {
   pose.set(B.HORSE_HEAD, 0.10 + Math.sin(phase * 2 + 1.4) * 0.04 * (0.4 + gallop), 0, 0);
 
   /* legs: hind pair half a phase ahead of the front pair, diagonals opposed */
-  /* A horse's stride is a swing of the whole leg about the hip; past about
-     0.5 rad the hoof punches through the ground plane on the downbeat. */
-  const legSwing = 0.16 + gallop * 0.30;
+  /* A horse's stride swings the whole leg about a hip that is deep inside
+     the barrel, so the visible arc is much wider than the angle suggests:
+     at 0.5 rad on a 0.7 m leg the hoof travels 0.34 m, which reads as a
+     spidery splay rather than a gait. Keep it small. */
+  const legSwing = 0.10 + gallop * 0.18;
   pose.set(B.HORSE_FL, Math.sin(phase) * legSwing * speed, 0, 0);
   pose.set(B.HORSE_FR, Math.sin(phase + Math.PI) * legSwing * speed, 0, 0);
   pose.set(B.HORSE_HL, Math.sin(phase + Math.PI * 0.85) * legSwing * speed, 0, 0);

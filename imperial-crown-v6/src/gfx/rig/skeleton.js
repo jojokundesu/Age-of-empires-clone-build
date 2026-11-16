@@ -167,19 +167,28 @@ export const REST = [
      that -- SHOULDER_L is negative X), so the two left legs are at
      negative X here too. */
   /*24 HORSE_BODY  */ [0, 1.20, 0],
-  /*25 HORSE_NECK  */ [0, 0.22, 0.40],
-  /*26 HORSE_HEAD  */ [0, 0.10, 0.34],
-  /*27 HORSE_TAIL  */ [0, 0.10, -0.55],
-  /* Leg origins sit at the KNEE, not the hip. The palette rotates a bone
-     about its own rest origin, and the haunch is a thick mass: pivoting it
-     at the hip swings its top edge out of the barrel and the horse comes
-     apart at a walk. So the haunch is built on HORSE_BODY and stays put,
-     and only the cannon and hoof -- a thin column -- swing on these bones.
-     That is also what a real leg does: the horse walks from the knee. */
-  /*28 HORSE_FL    */ [-0.205, -0.68, 0.42],
-  /*29 HORSE_FR    */ [0.205, -0.68, 0.42],
-  /*30 HORSE_HL    */ [-0.215, -0.66, -0.38],
-  /*31 HORSE_HR    */ [0.215, -0.66, -0.38]
+  /*25 HORSE_NECK  */ [0, 0.22, 0.46],
+  /* Head hangs off the neck. mount.js authors the skull from
+     (pollY - 0.06, pollZ - 0.02) = (1.76, 0.84) in world, which is
+     (0.56, 0.44) relative to HORSE_BODY at (1.20, 0). Offsetting from the
+     neck is what makes the head nod independently of the girth. */
+  /*26 HORSE_HEAD  */ [0, 0.34, 0.38],
+  /*27 HORSE_TAIL  */ [0, 0.14, -0.72],
+  /* Leg origins sit INSIDE the barrel, at the hip, and they must agree
+     EXACTLY with mount.js's LANDMARKS.hipY / hipFZ / hipHZ.
+
+     The palette rotates a bone about its own rest origin. If the geometry's
+     top cap is not on that origin the leg does not swing, it orbits: a thigh
+     authored 0.34 m above its pivot traces a 0.34 m circle instead of a
+     stride, and the horse walks like a spider. That is not a hypothetical --
+     it is what this file and mount.js disagreed about, and a unit test now
+     compares the two tables so they cannot drift apart again.
+
+     Values are HORSE_BODY (0, 1.20, 0) plus (hipX, hipY - 1.20, hipZ). */
+  /*28 HORSE_FL    */ [-0.205, 0.08, 0.40],
+  /*29 HORSE_FR    */ [0.205, 0.08, 0.40],
+  /*30 HORSE_HL    */ [-0.213, 0.06, -0.48],
+  /*31 HORSE_HR    */ [0.213, 0.06, -0.48]
 ];
 
 /* ---- tiny column-major 4x4 helpers (the palette is column-major) ---- */
