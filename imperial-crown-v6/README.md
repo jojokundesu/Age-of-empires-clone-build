@@ -281,7 +281,7 @@ See [docs-browser-tests.md](docs-browser-tests.md) for Chromium libraries on min
 
 ## Android builds and signing
 
-[Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.1.0-preview/imperial-crown-3d-v6.apk) — the same file CI builds and verifies on every push, published as the `v6.1.0-preview` release with a matching `apk-sha256.txt`. It is signed with the repository's **public demo key** for testing and has not been performance-tested on a physical Realme 9i.
+[Download the v6 Android preview APK](https://github.com/jojokundesu/Age-of-empires-clone-build/releases/download/v6.4.0-preview/imperial-crown-3d-v6.apk) — the same file CI builds and verifies on every push, published as the `v6.4.0-preview` release with a matching `apk-sha256.txt`. It is signed with the repository's **public demo key** for testing and has not been performance-tested on a physical Realme 9i.
 
 The v6 Android application ID is `ai.arena.imperialcrown.v6` (versionCode 60100), distinct from v5's `ai.arena.imperialcrown.v5` and v4's `ai.arena.imperialcrown`, so it installs **beside** v5 without replacing it and without inheriting its save slot. A local build needs JDK 17+, an Android SDK platform and build-tools, and produces `build/imperial-crown-6.1.0.apk`:
 
