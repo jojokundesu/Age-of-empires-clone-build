@@ -25,6 +25,7 @@ const SUITES = [
   ['ai fairness', 'tests/ai-fairness.test.mjs'],
   ['workers', 'tests/workers.test.mjs'],
   ['shaders', 'tests/shaders.test.mjs'],
+  ['unit rig', 'tests/unitrig.mjs'],
   ['sim', 'tests/sim.test.mjs'],
   ['survey', 'tests/survey.test.mjs'],
   ['combat', 'tests/combat.test.mjs'],

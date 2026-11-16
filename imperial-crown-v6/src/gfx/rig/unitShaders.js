@@ -140,11 +140,8 @@ out vec4 fragColor;
 #define MAT_LEATHER  6
 #define MAT_WOOD     7
 
-float hash12(vec2 p) {
-  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-  p3 += dot(p3, p3.yzx + 33.33);
-  return fract((p3.x + p3.y) * p3.z);
-}
+/* hash12 comes from COMMON — redeclaring it is a link error on a real
+   driver even though the two bodies are identical. */
 
 /* Crossed thread weave: two sine trains at 90 degrees, jittered by a hash
    so it never reads as a printed grid. */

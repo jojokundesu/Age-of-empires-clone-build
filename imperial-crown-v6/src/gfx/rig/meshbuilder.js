@@ -170,8 +170,10 @@ export class SkinnedBuilder {
     /* `cut` removes geometry, not just angle: a helmet dome that keeps its
        lower rings is paying for triangles behind the wearer's ears. */
     const r0 = Math.max(1, Math.round(rings * (1 - cut)));
-    for (let r = 0; r <= r0; r++) {
-      const v = r / r0;
+    /* `ri` not `r`: `r` is the radius triple, and shadowing it silently
+       turned every position into NaN. */
+    for (let ri = 0; ri <= r0; ri++) {
+      const v = ri / r0;
       const phi = v * Math.PI * (1 - cut);
       const sp = Math.sin(phi), cp = Math.cos(phi);
       for (let s = 0; s <= seg; s++) {
@@ -186,9 +188,9 @@ export class SkinnedBuilder {
         this._vert(px, py, pz, nx / nl, ny / nl, nz / nl, s / seg, v);
       }
     }
-    for (let r = 0; r < r0; r++) {
+    for (let ri = 0; ri < r0; ri++) {
       for (let s = 0; s < seg; s++) {
-        const i0 = base + r * (seg + 1) + s;
+        const i0 = base + ri * (seg + 1) + s;
         const i1 = i0 + 1;
         const i2 = i0 + seg + 1;
         const i3 = i2 + 1;

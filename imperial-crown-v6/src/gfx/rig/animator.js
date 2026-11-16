@@ -130,10 +130,15 @@ export class AnimState {
     this.cape = new Spring(45);    // slower, heavier
     this.hair = new Spring(110);   // light, quick
     this.plume = new Spring(85);
-    this.fidgetT = 0;              // time until the next idle fidget
+    this.fidgetCount = 0;          // how many idle gestures this unit has made
+    this.fidgetLeft = 0;           // seconds until the next one
     this.fidgetKind = 0;
     this.fidgetDur = 0;
-    this.fidgetLeft = 0;
+    this.fidgetActive = 0;
+    /* Stagger the first fidget across units, or a whole formation takes its
+       first breath on the same frame — the exact thing animSeed exists to
+       prevent. */
+    scheduleFidget(this, 0);
     /* Look-at, in radians, driven by whatever the unit is attending to. */
     this.lookYaw = 0;
     this.lookPitch = 0;
@@ -158,7 +163,7 @@ const FIDGET_PERIOD_MAX = 14;
 
 /** Deterministic 0..1 hash, so fidgets never use Math.random. */
 function hash01(n) {
-  let x = Math.sin(n * 127.1) * 43758.5453;
+  let x = Math.sin(n * 127.1 + 311.7) * 43758.5453123;
   return x - Math.floor(x);
 }
 
@@ -167,11 +172,13 @@ function hash01(n) {
  * Deterministic from the seed and the fidget counter, so replays match.
  */
 function scheduleFidget(st, counter) {
-  const r1 = hash01(st.seed * 13.7 + counter * 3.11);
-  const r2 = hash01(st.seed * 7.3 + counter * 5.77);
+  const base = st.seed * 97.31 + counter * 13.77;
+  const r1 = hash01(base + 0.5);
+  const r2 = hash01(base + 1.5);
+  const r3 = hash01(base + 2.5);
   st.fidgetLeft = FIDGET_PERIOD_MIN + r1 * (FIDGET_PERIOD_MAX - FIDGET_PERIOD_MIN);
   st.fidgetKind = Math.floor(r2 * 6);
-  st.fidgetDur = 0.9 + r2 * 0.7;
+  st.fidgetDur = 0.9 + r3 * 0.7;
 }
 
 /* ------------------------------------------------------------
@@ -261,8 +268,8 @@ export function evaluate(pose, st, inp) {
   if (speed < 0.15 && attack < 0.02) {
     st.fidgetLeft -= dt;
     if (st.fidgetLeft <= 0) {
-      st.fidgetT++;
-      scheduleFidget(st, st.fidgetT);
+      st.fidgetCount++;
+      scheduleFidget(st, st.fidgetCount);
       st.fidgetActive = st.fidgetDur;
     }
     if (st.fidgetActive > 0) {
