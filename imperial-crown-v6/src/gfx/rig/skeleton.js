@@ -167,13 +167,13 @@ export const REST = [
      that -- SHOULDER_L is negative X), so the two left legs are at
      negative X here too. */
   /*24 HORSE_BODY  */ [0, 1.20, 0],
-  /*25 HORSE_NECK  */ [0, 0.22, 0.46],
+  /*25 HORSE_NECK  */ [0, 0.22, 0.52],
   /* Head hangs off the neck. mount.js authors the skull from
      (pollY - 0.06, pollZ - 0.02) = (1.76, 0.84) in world, which is
      (0.56, 0.44) relative to HORSE_BODY at (1.20, 0). Offsetting from the
      neck is what makes the head nod independently of the girth. */
-  /*26 HORSE_HEAD  */ [0, 0.34, 0.38],
-  /*27 HORSE_TAIL  */ [0, 0.14, -0.72],
+  /*26 HORSE_HEAD  */ [0, 0.34, 0.40],
+  /*27 HORSE_TAIL  */ [0, 0.14, -0.84],
   /* Leg origins sit INSIDE the barrel, at the hip, and they must agree
      EXACTLY with mount.js's LANDMARKS.hipY / hipFZ / hipHZ.
 
@@ -185,10 +185,10 @@ export const REST = [
      compares the two tables so they cannot drift apart again.
 
      Values are HORSE_BODY (0, 1.20, 0) plus (hipX, hipY - 1.20, hipZ). */
-  /*28 HORSE_FL    */ [-0.205, 0.08, 0.40],
-  /*29 HORSE_FR    */ [0.205, 0.08, 0.40],
-  /*30 HORSE_HL    */ [-0.213, 0.06, -0.48],
-  /*31 HORSE_HR    */ [0.213, 0.06, -0.48]
+  /*28 HORSE_FL    */ [-0.205, 0.08, 0.46],
+  /*29 HORSE_FR    */ [0.205, 0.08, 0.46],
+  /*30 HORSE_HL    */ [-0.213, 0.06, -0.56],
+  /*31 HORSE_HR    */ [0.213, 0.06, -0.56]
 ];
 
 /* ---- tiny column-major 4x4 helpers (the palette is column-major) ---- */

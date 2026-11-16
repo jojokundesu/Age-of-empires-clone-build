@@ -132,15 +132,21 @@ check('per-class triangle budget holds', () => {
        matters is the 300-unit army check below, and a real army fields a
        handful of cavalry, not a wall of it. */
     /* A mounted class is two models, and the measurements are:
-         rider alone      ~1200 near / ~740 mid
-         armoured horse    ~754 near / ~648 mid
-       so ~1960 / ~1384 is the honest floor for a cataphract, and anything
-       tighter is a demand that the horse be made of paper. The cap sits 5%
+         rider alone      ~1370 near / ~740 mid
+         armoured horse    ~694 near / ~648 mid
+       so ~2064 / ~1386 is the honest floor for a cataphract, and anything
+       tighter is a demand that the horse be made of paper. The cap sits 3%
        above measure. This is NOT an escape from the frame budget -- the
        300-unit army check below includes a cavalry wing and is the check
-       that actually protects the frame. */
+       that actually protects the frame.
+
+       The horse's segment counts now follow the detail tier instead of
+       being fixed at 6. They were fixed, which is why the barrel was a
+       hexagon even on the Armory pedestal at near range. Making them
+       tier-driven costs ~100 triangles at near on the cataphract and takes
+       ~450 off at far, which is the right direction for both. */
     const mounted = isMounted(key);
-    const nearCap = mounted ? 2050 : 1450;
+    const nearCap = mounted ? 2120 : 1450;
     const midCap = mounted ? 1450 : 940;
     const farCap = mounted ? 950 : 480;
     assert(near <= nearCap, `${key}: near ${near} over ${nearCap}`);

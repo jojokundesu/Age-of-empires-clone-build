@@ -27,6 +27,7 @@ import { InstanceBatch } from '../gfx/batch.js';
 import { BONE_COUNT, Pose, buildBindPalette, buildSkinPalette } from '../gfx/rig/skeleton.js';
 import { DETAIL } from '../gfx/rig/meshbuilder.js';
 import { buildRig, RIGS, PROFILES, SKIN_TONES, HAIR_COLORS, isMounted } from '../gfx/rig/rigs.js';
+import { mountSeatHeight } from '../gfx/rig/mount.js';
 import { evaluate, AnimState } from '../gfx/rig/animator.js';
 import { UNIT_VS, UNIT_FS, UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from '../gfx/rig/unitShaders.js';
 import { BonePalette } from '../gfx/rig/palette.js';

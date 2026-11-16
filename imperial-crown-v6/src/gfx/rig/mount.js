@@ -47,24 +47,24 @@ export const LANDMARKS = {
      roughly 0.6 m deep and the legs are roughly 0.9 m -- near half and half.
      An earlier pass put the belly at 1.02, which left a 0.48 m barrel on
      1.02 m legs and the horse stood there on stilts. */
-  belly: 0.88,
+  belly: 0.80,
   back: 1.46,           // top of the barrel at the loin
   withers: 1.58,
   hipY: 1.28,           // hip pivots: INSIDE the barrel, see rule 2
-  chestZ: 0.54,
-  rumpZ: -0.70,
-  hipFZ: 0.40,
-  hipHZ: -0.48,
+  chestZ: 0.62,
+  rumpZ: -0.82,
+  hipFZ: 0.46,
+  hipHZ: -0.56,
   hipX: 0.205,
   girthR: 0.270,        // barrel radius at the girth (~0.54 m across)
   neckBaseY: 1.42,
-  neckBaseZ: 0.46,
+  neckBaseZ: 0.52,
   pollY: 1.82,          // top of the head
-  pollZ: 0.86,
+  pollZ: 0.94,
   muzzleY: 1.52,
-  muzzleZ: 1.16,
+  muzzleZ: 1.24,
   tailY: 1.34,
-  tailZ: -0.72
+  tailZ: -0.84
 };
 
 /* Where the saddle sits, for a given mount profile. The rider's pelvis rest
@@ -134,13 +134,13 @@ export function buildMount(g, coat, opts = {}) {
 
   /* chest -> girth */
   g.tube(body, [0, L.withers - 0.12, L.chestZ], [0, (L.back + L.belly) / 2 + 0.04, 0.04],
-    R * 0.74, R, { seg: 6, rings: 2, squash: [1.0, 0.90] });
+    R * 0.74, R, { seg: g.seg(0), rings: 2, squash: [1.0, 0.90] });
   /* girth -> loin */
   g.tube(body, [0, (L.back + L.belly) / 2 + 0.04, 0.04], [0, L.back - 0.16, L.rumpZ + 0.22],
-    R, R * 0.82, { seg: 6, rings: 2, squash: [1.0, 0.92] });
+    R, R * 0.82, { seg: g.seg(0), rings: 2, squash: [1.0, 0.92] });
   /* croup: the rump, rounded and a touch higher than the loin */
   g.ellipsoid(body, [0, L.back - 0.14, L.rumpZ + 0.08], [R * 0.80, R * 0.78, 0.20],
-    { sph: [7, 5] });
+    { sph: g.sph() });
   /* breast: gives the front of the animal a chest instead of a cut tube.
      Gated at far tier -- the barrel's own front cap covers it there. */
   if (g.detail !== 2) {
@@ -149,7 +149,7 @@ export function buildMount(g, coat, opts = {}) {
   }
   /* withers: the ridge the saddle sits behind */
   g.tube(body, [0, L.withers - 0.10, L.chestZ - 0.18], [0, L.withers, 0.06],
-    R * 0.62, R * 0.70, { seg: 6, rings: 1, squash: [1.25, 0.62] });
+    R * 0.62, R * 0.70, { seg: g.seg(-2), rings: 1, squash: [1.25, 0.62] });
 
   /* ---------------- neck ----------------
      Long, and it must LEAVE the withers at a steep angle then flatten
@@ -162,10 +162,10 @@ export function buildMount(g, coat, opts = {}) {
   const nMidZ = (L.neckBaseZ + L.pollZ) / 2 - 0.08;
   /* lower neck: thick at the shoulder */
   g.tube(neck, [0, L.withers - 0.26, L.neckBaseZ - 0.10], [0, nMidY, nMidZ],
-    R * 0.66, R * 0.46, { seg: 5, rings: 2, squash: [0.80, 1.30] });
+    R * 0.66, R * 0.46, { seg: g.seg(-1), rings: 2, squash: [0.80, 1.30] });
   /* upper neck into the poll */
   g.tube(neck, [0, nMidY - 0.04, nMidZ - 0.02], [0, L.pollY - 0.06, L.pollZ],
-    R * 0.50, R * 0.34, { seg: 6, rings: 1, squash: [0.78, 1.20] });
+    R * 0.50, R * 0.34, { seg: g.seg(-1), rings: 1, squash: [0.78, 1.20] });
 
   /* ---------------- head ----------------
      A long wedge with a jaw. The muzzle stays blunt: a rounded tip at this
@@ -196,7 +196,7 @@ export function buildMount(g, coat, opts = {}) {
      One bone. Leaves the rump high and hangs behind. */
   g.material(MAT.HAIR).color(mane[0], mane[1], mane[2]);
   g.tube(tail, [0, L.tailY, L.tailZ], [0, L.tailY - 0.52, L.tailZ - 0.20],
-    0.062, 0.024, { seg: 5, rings: 1 });
+    0.062, 0.024, { seg: g.seg(-2), rings: 1 });
 
   /* ---------------- legs ----------------
      Rule 1 and rule 2 together: each leg is ONE continuous tapered form
@@ -208,10 +208,13 @@ export function buildMount(g, coat, opts = {}) {
      as a table. */
   const legs = [
     /* bone,       x,           hipY,       hipZ,      kneeY,     footZ,     topR,        kneeR */
-    [B.HORSE_FL, -L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.66, R * 0.30],
-    [B.HORSE_FR, L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.66, R * 0.30],
-    [B.HORSE_HL, -L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.52, R * 0.78, R * 0.34],
-    [B.HORSE_HR, L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.52, R * 0.78, R * 0.34]
+    /* topR/kneeR were 0.66/0.30 of the barrel radius, which is a 89 mm
+       forearm on a 540 mm barrel -- deer's legs under a cow's body. A
+       destrier's forearm is nearer 0.9 and the cannon 0.45. */
+    [B.HORSE_FL, -L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.90, R * 0.44],
+    [B.HORSE_FR, L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.90, R * 0.44],
+    [B.HORSE_HL, -L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.56, R * 1.02, R * 0.50],
+    [B.HORSE_HR, L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.56, R * 1.02, R * 0.50]
   ];
   /* The haunch is BODY, not leg. On a horse the mass above the knee is
      shoulder and rump: it does not swing, it is part of the barrel. Building
@@ -238,14 +241,16 @@ export function buildMount(g, coat, opts = {}) {
       { seg: 6, rings: 1, squash: [1.0, 0.92] });
     /* knee / hock knob */
     g.tube(bone, [x, kneeY + 0.06, kneeZ + 0.01], [x, kneeY - 0.06, kneeZ],
-      kneeR * 1.24, kneeR * 1.10, { seg: 6, rings: 1 });
+      kneeR * 1.24, kneeR * 1.10, { seg: g.seg(-1), rings: 1 });
     /* cannon: overlaps the joint, near-constant width */
     g.tube(bone, [x, kneeY + 0.01, kneeZ + 0.01], [x, L.hoof + 0.11, footZ],
-      kneeR * 1.12, kneeR * 0.86, { seg: 6, rings: 1 });
+      kneeR * 1.12, kneeR * 0.86, { seg: g.seg(-1), rings: 1 });
     /* hoof */
     g.material(MAT.LEATHER).color(hoofCol[0], hoofCol[1], hoofCol[2]);
-    g.tube(bone, [x, L.hoof + 0.13, footZ], [x, L.hoof, footZ + 0.02],
-      kneeR * 0.92, kneeR * 0.86, { seg: 5, rings: 1 });
+    /* The hoof has to be visibly wider and darker than the cannon or the
+       leg just ends. At 0.92 of the cannon radius it did not read at all. */
+    g.tube(bone, [x, L.hoof + 0.15, footZ], [x, L.hoof, footZ + 0.03],
+      kneeR * 1.16, kneeR * 1.10, { seg: g.seg(-2), rings: 1 });
   }
 
   /* ---------------- saddle ----------------
@@ -276,7 +281,7 @@ export function buildMount(g, coat, opts = {}) {
 
     /* chamfron: the head wedge, inflated */
     g.tube(head, [0, L.pollY - 0.06, L.pollZ - 0.02], [0, L.muzzleY + 0.18, L.muzzleZ - 0.12],
-      R * 0.40, R * 0.27, { seg: 5, rings: 1, squash: [0.86, 1.05] });
+      R * 0.40, R * 0.27, { seg: 4, rings: 1, squash: [0.86, 1.05] });
 
     /* crinet: three overlapping bands down the neck.
        These had the same defect as the peytral -- radius 0.17 against a neck
@@ -295,7 +300,7 @@ export function buildMount(g, coat, opts = {}) {
       const ra = R * (0.66 - 0.32 * t0) + 0.022;
       const rb = R * (0.66 - 0.32 * t1) + 0.022;
       g.tube(neck, [0, y0, z0], [0, y1, z1], ra, rb,
-        { seg: 5, rings: 1, squash: [0.86, 1.34] });
+        { seg: 4, rings: 1, squash: [0.86, 1.34] });
     }
 
     /* peytral: the breast, inflated.
@@ -309,14 +314,14 @@ export function buildMount(g, coat, opts = {}) {
        this whole barding block exists to obey. */
     g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02],
       [R * 0.70 + 0.022, R * 0.86 + 0.022, 0.18 + 0.022],
-      { sph: [6, 4] });
+      { sph: [5, 4] });
     /* A drop below the breastbone, so the plate reads as hanging armour
        rather than as paint on the chest. Same discipline as the shell: it is
        an ellipsoid twice the barrel's depth, not a narrow tube -- a tube of
        radius 0.157 against a 0.27 barrel is another plate sitting inside the
        animal with only its ends showing. */
     g.ellipsoid(body, [0, L.withers - 0.46, L.chestZ - 0.14],
-      [R * 0.60, 0.15, 0.20], { sph: [5, 3] });
+      [R * 0.60, 0.15, 0.20], { sph: [4, 3] });
   }
 
   return { body, neck, head };
