@@ -292,12 +292,26 @@ export function buildTool(g, hand, pos, kind) {
 }
 
 /** A staff for a monk: a plain shaft with a knob. */
+/**
+ * A staff held in a hand.
+ *
+ * `pos` is [x, y, z, bottom]. The bone argument is `pos[4] ?? hand`: a staff
+ * bound to HAND pivots about the palm, so the idle hand swing throws a 1.3 m
+ * lever out sideways and the pole leans away from the figure. Anything the
+ * hand can grip and the ground has to hold belongs to the body instead, and
+ * the hand is inside a sleeve anyway.
+ */
 export function buildStaff(g, hand, pos) {
+  const bone = pos[4] ?? hand;
   g.material(MAT.WOOD).color(0.45, 0.33, 0.21);
-  g.tube(hand, [pos[0], pos[1] + 0.55, pos[2]], [pos[0], pos[1] - 0.75, pos[2]],
+  /* `bottom` is optional and exists for the robed classes: a staff held at
+     hand height reached the ground and then kept going, so the monk's pole
+     hung in space below the hem of his own habit. */
+  const bottom = pos[3] ?? (pos[1] - 0.75);
+  g.tube(bone, [pos[0], pos[1] + 0.55, pos[2]], [pos[0], bottom, pos[2]],
     0.019, 0.019, { seg: 5, rings: 2 });
   if (g.detail <= DETAIL.MID) {
-    g.ellipsoid(hand, [pos[0], pos[1] + 0.58, pos[2]], [0.038, 0.042, 0.038], { sph: [5, 3] });
+    g.ellipsoid(bone, [pos[0], pos[1] + 0.58, pos[2]], [0.038, 0.042, 0.038], { sph: [5, 3] });
   }
 }
 

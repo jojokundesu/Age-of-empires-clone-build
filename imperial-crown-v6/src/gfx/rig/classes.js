@@ -186,17 +186,83 @@ export const CLASSES = {
     build(g, m, o) {
       buildFaceDetail(g, m, { hair: o.hair, beard: true });
       /* The robe: a long lathe from the shoulders to the ankles. This is
-         the monk's whole silhouette, so it gets a real profile. */
-      g.material(MAT.LINEN).color(0.42, 0.33, 0.26);
+         the monk's whole silhouette, so it gets a real profile.
+
+         The brown is lifted off the floor of the palette on purpose. At
+         0.42/0.33/0.26 a robe this big has no gradient left across its
+         front third and reads as a hole in the figure rather than as
+         cloth -- the same trap the cape above fell into. */
+      g.material(MAT.LINEN).color(0.52, 0.42, 0.33);
       g.lathe(B.SKIRT, [
-        [m.x(0.190), m.y(1.46)],
-        [m.x(0.215), m.y(1.20)],
-        [m.x(0.235), m.y(0.90)],
-        [m.x(0.265), m.y(0.50)],
-        [m.x(0.280), m.y(0.14)]
+        /* The robe has to close over the shoulders, not stop below them.
+           The bare tunic reaches 0.225 at y(1.45) and the neck is only 0.058
+           across, so any hemline between the two leaves a ring of pale tunic
+           visible around the collarbones. Carry the collar up to the jaw,
+           which is also what a hooded habit actually looks like. */
+        [m.x(0.118), m.y(1.582)],
+        [m.x(0.196), m.y(1.548)],
+        [m.x(0.240), m.y(1.500)],
+        [m.x(0.232), m.y(1.260)],
+        [m.x(0.246), m.y(0.92)],
+        [m.x(0.278), m.y(0.52)],
+        [m.x(0.294), m.y(0.13)]
       ], { seg: g.seg(0), squash: [1.0, m.cd / m.sw * 1.02] });
+
+      /* SLEEVES. The arms hang at armX = 0.268, which is outside a robe that
+         is 0.24 across at the shoulder, so the bare arm and its skin tone can
+         only ever sit proud of the cloth. Cover it.
+
+         One lathe, not a tube plus a cap: a `tube` is an open cylinder, so a
+         sleeve wide enough to swallow the deltoid has a mouth at the top that
+         faces the sky and reads as a hole in the shoulder. Two patched
+         attempts at capping it -- a flat disc, then a dome -- both showed
+         through as a rim, because the tube and the cap were separate
+         surfaces at slightly different radii. A lathe profile starting at
+         radius zero closes the crown as a pole, so there is nothing to cap,
+         and the same profile can flare the cuff. */
+      const sl = m.lw;
+      for (const side of [-1, 1]) {
+        const SHO = side < 0 ? B.SHOULDER_L : B.SHOULDER_R;
+        const UP = side < 0 ? B.UPPER_ARM_L : B.UPPER_ARM_R;
+        const sx = side * m.x(m.armX);
+        g.material(MAT.LINEN).color(0.48, 0.39, 0.31);
+        g.lathe(UP, [
+          [0.000, m.y(1.566)],
+          [0.070, m.y(1.546)],
+          [0.107, m.y(1.508)],
+          [0.120, m.y(1.452)],
+          [0.104, m.y(1.355)],
+          [0.092, m.y(1.060)],
+          [0.124, m.y(0.920)]
+        ], { seg: g.seg(0), x: sx, blend: SHO });
+        /* the cuff is still an open cylinder -- cap it, the wrist goes in */
+        g.cap(UP, [sx * 0.955, m.y(0.920), 0], 0.124 * sl, [0, -1, 0],
+          { seg: g.seg(0) });
+        /* The robe collar closes to 0.118 at the jaw and the sleeve crown
+           starts 0.268 out, so the bare deltoid shows between them as a pale
+           notch. Bridge the yoke -- but only where the seam can be seen; half
+           a sphere each side is not worth 60 triangles at mid range. */
+        if (g.detail === DETAIL.NEAR) {
+          g.ellipsoid(SHO, [side * m.x(0.200), m.y(1.474), 0],
+            [0.096 * sl, 0.086 * sl, 0.114 * sl], { sph: [5, 3] });
+        }
+      }
+
+      /* Two fold ridges down the front of the robe. A lathe can only shade
+         by its own slope, and a near-vertical profile has almost none, so
+         without something breaking the face the front is one flat tone.
+         Off-centre and unequal: a symmetric pair reads as armour. */
+      for (const [fx, fz, r] of [[-0.085, 0.255, 0.028], [0.115, 0.235, 0.019]]) {
+        g.tube(B.SKIRT, [m.x(fx), m.y(1.16), fz * m.cd / m.sw],
+          [m.x(fx * 1.30), m.y(0.24), fz * m.cd / m.sw * 1.25], r, r * 0.85,
+          { seg: 4, rings: 1 });
+      }
+
       buildBelt(g, m);
-      buildStaff(g, B.HAND_R, [m.x(0.255), m.y(0.85), 0.04]);
+      /* planted on the ground beside the hem, not hanging past it */
+      /* Outside the robe's 0.25 radius at hip height, and inside the cuff's
+         0.124 mouth, so the sleeve reads as gripping it. */
+      buildStaff(g, B.HAND_R, [m.x(0.320), m.y(0.85), 0.0, m.y(0.03), B.SKIRT]);
     }
   },
 

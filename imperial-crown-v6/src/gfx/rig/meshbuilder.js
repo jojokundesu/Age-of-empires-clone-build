@@ -153,6 +153,45 @@ export class SkinnedBuilder {
   }
 
   /**
+   * A disc closing one end of a `tube`. `tube` is an open cylinder by
+   * design, which is correct for a limb -- its ends live inside the torso
+   * and inside the next segment. It is wrong for anything the eye can see
+   * into: a flared sleeve cuff, a helmet neck, a boot top. Those read as a
+   * tube with a bright interior until they are capped.
+   *
+   * `end` is the end point and `radius` the radius of the ring there;
+   * `axis` points OUT of the tube so the disc faces the viewer.
+   */
+  cap(bone, end, radius, axis, opts = {}) {
+    const seg = Math.max(3, opts.seg ?? this.seg());
+    let ax = axis[0], ay = axis[1], az = axis[2];
+    const al = Math.hypot(ax, ay, az) || 1;
+    ax /= al; ay /= al; az /= al;
+    let hx = 0, hy = 1, hz = 0;
+    if (Math.abs(ay) > 0.9) { hx = 1; hy = 0; hz = 0; }
+    let ux = hy * az - hz * ay, uy = hz * ax - hx * az, uz = hx * ay - hy * ax;
+    const ul = Math.hypot(ux, uy, uz) || 1; ux /= ul; uy /= ul; uz /= ul;
+    const vx = ay * uz - az * uy, vy = az * ux - ax * uz, vz = ax * uy - ay * ux;
+    const base = this.count;
+    this._skin(bone);
+    const squash = opts.squash || [1, 1];
+    /* winding depends on which way the axis points, so flip the normal
+       rather than asking every caller to get the sign right */
+    this._vert(end[0], end[1], end[2], ax, ay, az, 0.5, 0.5);
+    for (let s = 0; s <= seg; s++) {
+      const ang = (s / seg) * Math.PI * 2;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      this._vert(
+        end[0] + (ux * ca * squash[0] + vx * sa * squash[0]) * radius,
+        end[1] + (uy * ca * squash[1] + vy * sa * squash[1]) * radius,
+        end[2] + (uz * ca * squash[0] + vz * sa * squash[0]) * radius,
+        ax, ay, az, s / seg, 1);
+    }
+    for (let s = 0; s < seg; s++) this._tri(base, base + 2 + s, base + 1 + s);
+    return this;
+  }
+
+  /**
    * Ellipsoid with true ellipsoid normals — cranium, deltoid, knee,
    * pauldron cap. `cut` trims the bottom off (helmets, domes).
    */
