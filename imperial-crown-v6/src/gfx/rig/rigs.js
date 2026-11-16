@@ -80,7 +80,11 @@ export function buildManAtArms(g, prop, opts = {}) {
      the waist, flares at the hips, and the `squash` makes it deeper than
      it is wide — a barrel chest, not a tube. */
   const torsoProfile = [
-    [x(0.155), y(0.98)],
+    /* Start below the hip joint, not at it. Without a surcoat to cover the
+       join (ages I-II) a profile starting at 0.98 leaves a visible gap
+       between the tunic hem and the thighs. */
+    [x(0.150), y(0.90)],
+    [x(0.168), y(0.96)],
     [x(0.175), y(1.12)],
     [x(0.165), y(1.24)],
     [x(0.205), y(1.36)],
