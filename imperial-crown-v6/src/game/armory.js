@@ -31,6 +31,7 @@ import { evaluate, AnimState } from '../gfx/rig/animator.js';
 import { UNIT_VS, UNIT_FS, UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from '../gfx/rig/unitShaders.js';
 import { BonePalette } from '../gfx/rig/palette.js';
 import { COMMON } from '../gfx/shaders.js';
+import { TEAM_COLORS } from '../sim/data.js';
 
 /* The classes worth showing. The A/B variant is included deliberately: it
    exists to be compared, and this is where you compare it. */
@@ -96,6 +97,29 @@ void main() {
   fragColor = vec4(c, 1.0);
 }`;
 
+/**
+ * A 1x1 depth texture in compare mode.
+ *
+ * uShadowMap is a sampler2DShadow. WebGL2 rejects any draw that has a
+ * non-depth texture bound to a shadow sampler's unit, so a program carrying
+ * the shared lighting block cannot be drawn unless something depth-shaped is
+ * bound -- even when shadow strength is zero and the fetch never happens.
+ * One texel is enough to satisfy the rule.
+ */
+function createDummyDepth(gl) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, 1, 1, 0,
+    gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+  return tex;
+}
+
 export class Armory {
   constructor() {
     this.canvas = null;
@@ -137,6 +161,7 @@ export class Armory {
     this.pUnit = new Shader(gl, 'armory-unit', UNIT_VS, UNIT_FS);
     this.pBackdrop = new Shader(gl, 'armory-bg', ARMORY_VS, ARMORY_FS);
     this.palette = new BonePalette(gl, 4, UNIT_TEX_WIDTH);
+    this._dummyDepth = createDummyDepth(gl);
 
     /* One full-screen triangle pair for the backdrop. */
     const vao = gl.createVertexArray();
@@ -151,6 +176,10 @@ export class Armory {
     this._bgVao = vao;
 
     this.ok = true;
+    /* Exposed for the browser harness: it needs to read the yaw and the
+       draw counters to prove the pedestal is really rendering, which a
+       screenshot alone cannot do when the backdrop also draws. */
+    if (typeof window !== 'undefined') window.__imperialArmory = this;
     return true;
   }
 
@@ -281,7 +310,7 @@ export class Armory {
     for (const b of this._batches.values()) b.dispose();
     this._batches.clear();
     this.palette?.dispose();
-    this._batches.clear();
+    if (this._dummyDepth) { this.gl?.deleteTexture(this._dummyDepth); this._dummyDepth = null; }
     this.gl = null;
     this.ok = false;
   }
@@ -313,12 +342,27 @@ export class Armory {
   _draw() {
     const gl = this.gl;
     if (!gl) return;
+    this.frames = (this.frames || 0) + 1;
     const w = this.canvas.width, h = this.canvas.height;
     gl.viewport(0, 0, w, h);
+    /* Clear BOTH buffers. The backdrop paints every pixel of colour, so
+       skipping the colour clear is invisible — but skipping the depth clear
+       is not: with the depth test enabled the unit is then compared against
+       whatever garbage the buffer held, and every fragment is rejected. That
+       is a blank pedestal with no GL error to show for it. */
+    gl.clearColor(0.07, 0.08, 0.10, 1);
+    gl.clearDepth(1);
+    gl.depthMask(true);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.disable(gl.DEPTH_TEST);
     gl.disable(gl.CULL_FACE);
 
-    /* backdrop */
+    /* backdrop. Depth writes OFF: this is a full-screen triangle sitting at
+       depth 0.5, so if it is allowed to write depth it stamps 0.5 over the
+       whole canvas and the unit behind it then fails the depth test and is
+       rejected outright -- a completely blank pedestal with no GL error.
+       The clear above still resets depth to 1. */
+    gl.depthMask(false);
     const bg = this.pBackdrop.use();
     bg.v3('uTop', 0.15, 0.17, 0.21);
     bg.v3('uBottom', 0.07, 0.08, 0.10);
@@ -326,6 +370,7 @@ export class Armory {
     gl.bindVertexArray(this._bgVao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
+    gl.depthMask(true);
 
     /* the unit */
     const key = this.classKey;
@@ -344,7 +389,13 @@ export class Armory {
 
     const cam = this._camera();
     batch.begin();
-    batch.push(identity(), 1, 1, 1, 1, 0, 1, 0, row, this.age << 12, 0, 0);
+    /* The tint is the team colour, and the shader replaces the hue of every
+       linen and gambeson surface with it. Passing white here -- which is the
+       neutral default in push() -- turns every tunic and cape into a bright
+       white sheet, which is what the first pass of this inspector looked
+       like. Show the player's own blue, the same colour they see in play. */
+    const tc = TEAM_COLORS[1].unit;
+    batch.push(identity(), tc[0], tc[1], tc[2], 1, 0, 1, 0, row, this.age << 12, 0, 0);
     batch.flush();
 
     gl.enable(gl.DEPTH_TEST);
@@ -352,11 +403,18 @@ export class Armory {
     s.m4('uViewProj', cam);
     s.f('uSwayAmount', 0);
     /* A neutral studio light: the game's sun is warm and low, which hides
-       half the geometry the inspector exists to show. */
+       half the geometry the inspector exists to show.
+
+       The values matter more than they look. This shader multiplies the sun
+       term by 1.25 and then adds an ambient term of roughly its own weight,
+       so a sun colour near 1.0 lands at ~1.7x albedo and the tonemap clips
+       it: every tunic, mail shirt and cape saturates to white and the
+       inspector shows a blank silhouette. Keep the sun under 0.8 and the
+       ambient low so the materials read at their real albedo. */
     s.v3('uSunDir', -0.35, 0.86, 0.38);
-    s.v3('uSunColor', 1.15, 1.10, 1.02);
-    s.v3('uSkyColor', 0.30, 0.34, 0.40);
-    s.v3('uGroundColor', 0.16, 0.15, 0.14);
+    s.v3('uSunColor', 0.74, 0.72, 0.68);
+    s.v3('uSkyColor', 0.17, 0.20, 0.26);
+    s.v3('uGroundColor', 0.09, 0.085, 0.08);
     s.v3('uFogColor', 0.0, 0.0, 0.0);
     s.f('uFogDensity', 0);
     s.v3('uCameraPos', 0, 1.1, 3.2);
@@ -373,7 +431,27 @@ export class Armory {
     s.v3('uTownLightColor', 0, 0, 0);
     s.f('uBoneRows', this.palette.maxRows);
     s.f('uTexWidth', this.palette.width);
+    /* The unit shader declares the game's whole lighting block, so these
+       four samplers are ACTIVE uniforms even though the inspector samples
+       none of them.
+
+       Two things go wrong if they are left alone, and both produce a blank
+       pedestal with no compile or link error to explain it:
+
+         - every sampler defaults to texture unit 0, so all four collide
+           with uBoneTex;
+         - uShadowMap is a sampler2DShadow, and a draw is INVALID_OPERATION
+           unless a DEPTH_COMPONENT texture with COMPARE_REF_TO_TEXTURE is
+           bound to its unit. Handing it the palette texture rejects the
+           whole draw.
+
+       The game never hits this because _bindLight fills all four for real.
+       Here there is no shadow map, so bind a 1x1 dummy depth texture to the
+       shadow unit and point the rest at the palette. Nothing reads them. */
     s.tex('uBoneTex', this.palette.texture, gl.TEXTURE_2D);
+    s.tex('uShadowMap', this._dummyDepth, gl.TEXTURE_2D);
+    s.tex('uClouds', this.palette.texture, gl.TEXTURE_2D);
+    s.tex('uFogTex', this.palette.texture, gl.TEXTURE_2D);
     batch.draw();
     gl.disable(gl.DEPTH_TEST);
   }

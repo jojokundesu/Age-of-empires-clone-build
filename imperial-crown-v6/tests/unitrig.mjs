@@ -11,6 +11,7 @@
    caught the first time it ran.
 */
 import { parse } from '@shaderfrog/glsl-parser';
+import { readFileSync } from 'node:fs';
 
 import { B, BONE_COUNT, PARENT, REST, Pose, buildPalette } from '../src/gfx/rig/skeleton.js';
 import { DETAIL, SkinnedBuilder } from '../src/gfx/rig/meshbuilder.js';
@@ -369,6 +370,28 @@ check('the armory builds, draws, and can be disposed', () => {
   assert(/data-age=/.test(html) && /data-pose=/.test(html), 'missing age or pose controls');
   a.dispose();
   assert(a.gl === null, 'dispose did not release the context');
+});
+
+check('the armory binds every sampler the unit shader declares', () => {
+  /* A mock GL cannot catch this one: it is not an error you can throw, it is
+     a draw the driver silently rejects. The unit shader is built from the
+     shared lighting block, so it still declares uShadowMap, uClouds and
+     uFogTex even though the inspector samples none of them. Every sampler
+     defaults to unit 0, and uShadowMap is a sampler2DShadow -- so if any of
+     them is left unbound the draw becomes INVALID_OPERATION and the pedestal
+     comes up completely blank with no compile error to explain it.
+
+     Assert the source binds all four, so a future edit to the shader's
+     lighting block cannot quietly blank the inspector again. */
+  const src = readFileSync(new URL('../src/game/armory.js', import.meta.url), 'utf8');
+  for (const sampler of ['uBoneTex', 'uShadowMap', 'uClouds', 'uFogTex']) {
+    assert(new RegExp(`s\\.tex\\(\\s*'${sampler}'`).test(src),
+      `the armory never binds ${sampler}, so the unit draw is rejected`);
+  }
+  /* and the shadow sampler in particular needs a real depth texture */
+  assert(/_dummyDepth/.test(src), 'no depth texture for the shadow sampler');
+  assert(/DEPTH_COMPONENT24/.test(src), 'the dummy shadow texture is not depth-shaped');
+  assert(/COMPARE_REF_TO_TEXTURE/.test(src), 'the dummy shadow texture has no compare mode');
 });
 
 check('every class the armory offers can actually be built', () => {
