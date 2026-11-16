@@ -96,6 +96,7 @@ export class Menu {
       btnSettings: document.getElementById('btnSettings'),
       btnHelp: document.getElementById('btnHelp'),
       btnCodex: document.getElementById('btnCodex'),
+      btnArmory: document.getElementById('btnArmory'),
       menuPerf: document.getElementById('menuPerf'),
       rotate: document.getElementById('rotateHint'),
       modal: document.getElementById('modalScreen'),
@@ -187,6 +188,7 @@ export class Menu {
     el.btnMods?.addEventListener('click', () => this.openMods());
     el.btnHelp?.addEventListener('click', () => this.openHelp());
     el.btnCodex?.addEventListener('click', () => this.openCodex());
+    el.btnArmory?.addEventListener('click', () => this.openArmory());
     el.btnLoad?.addEventListener('click', () => {
       const save = Menu.readSave();
       if (!save) { this.openModal('SAVED CAMPAIGN', 'Nothing to load', '<p class="dim">No saved campaign was found on this device. Start a new one and use Menu → Save Game.</p>'); return; }
@@ -460,6 +462,10 @@ export class Menu {
       this._overlay = false;
       this._overlayKind = null;
     }
+    /* A sheet may own a GPU resource (the Armory owns a WebGL context and a
+       render loop). Replacing the sheet's body without releasing that would
+       leak the context, so the previous owner is torn down first. */
+    this._runModalTeardown();
     if (el.modalKicker) el.modalKicker.textContent = kicker;
     if (el.modalTitle) el.modalTitle.textContent = title;
     if (el.modalBody) { el.modalBody.onclick = null; el.modalBody.innerHTML = html; }
@@ -476,6 +482,7 @@ export class Menu {
    * calls closeModal() with no arguments, which resumes. */
   closeModal(opts = {}) {
     if (opts === true) opts = { silent: true };   // tolerate the old boolean call
+    this._runModalTeardown();
     const wasOpen = this.isModalOpen();
     const wasOverlay = this._overlay;
     this.el.modal?.classList.add('hidden');
@@ -483,6 +490,13 @@ export class Menu {
     this._overlayKind = null;
     if (this.el.modal) this.el.modal.dataset.overlay = '0';
     if (wasOpen && !opts.silent) this.onClose(wasOverlay ? 'overlay' : 'menu');
+  }
+  /** Register cleanup for the currently open sheet. Returns the setter. */
+  onModalTeardown(fn) { this._modalTeardown = typeof fn === 'function' ? fn : null; }
+  _runModalTeardown() {
+    const fn = this._modalTeardown;
+    this._modalTeardown = null;
+    if (fn) { try { fn(); } catch (e) { /* a failed teardown must not block */ } }
   }
   isModalOpen() {
     const visible = !!this.el.modal && !this.el.modal.classList.contains('hidden');
@@ -719,6 +733,36 @@ export class Menu {
         el.modalBody.querySelectorAll('.codexPane').forEach((p) => { p.hidden = p.dataset.pane !== id; });
         this.audio?.play('click');
       });
+    });
+  }
+
+  /**
+   * The Armory: one unit on a rotating pedestal, in its own WebGL canvas.
+   *
+   * This is the review tool for the unit overhaul. A class reads
+   * differently at 4 m than at 12 m, and differently mid-stride than
+   * standing still, so it can be orbited, zoomed, aged and posed without
+   * starting a match.
+   */
+  async openArmory() {
+    let armory = null;
+    let teardown = null;
+    try {
+      const mod = await import('./armory.js');
+      armory = new mod.Armory();
+    } catch (e) {
+      this.openModal('ARMORY', 'Armoury unavailable',
+        '<p class="dim">The armoury could not be built on this device. The game is unaffected.</p>');
+      return;
+    }
+    this.openModal('ARMORY', 'The unit on the pedestal', armory.html());
+    const root = this.el.modalBody;
+    if (root) teardown = armory.attach(root);
+    /* Releasing the GL context matters on a phone: the preview canvas is
+       full-size and a leaked one costs memory the match then needs. */
+    this.onModalTeardown(() => {
+      try { teardown?.(); } catch (e) { /* nothing to do */ }
+      try { armory?.dispose(); } catch (e) { /* nothing to do */ }
     });
   }
 

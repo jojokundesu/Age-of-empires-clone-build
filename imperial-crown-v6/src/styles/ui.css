@@ -1207,3 +1207,25 @@ body[data-fpButtons="compact"] .fpUtility { min-width:58px; height:40px; }
   .codexRow > span { grid-column: 1 / -1; }
   .codexRow > em { grid-column: 1 / -1; text-align: left; }
 }
+
+/* ---------------- Armory (main menu → ARMORY) ----------------
+   A pedestal in a dark room with one soldier on it. The stage is the point,
+   so it takes every pixel the panel can spare and the controls sit below
+   it as fingertip-sized pills. Landscape phone first: the stage is taller
+   than it is wide by design, because a standing figure is. */
+.armoryWrap { display: flex; flex-direction: column; gap: 8px; }
+.armoryStage { position: relative; border: 1px solid #ffffff12; border-radius: 8px; background: #0b0c0f; overflow: hidden; }
+.armoryCanvas { display: block; width: 100%; height: min(52vh, 460px); touch-action: none; }
+.armoryHint { position: absolute; left: 10px; bottom: 8px; font: 700 8px var(--sans); letter-spacing: 0.9px; text-transform: uppercase; color: #ffffff44; pointer-events: none; }
+.armoryControls { display: flex; flex-direction: column; gap: 6px; }
+.armRow { display: flex; align-items: flex-start; gap: 8px; }
+.armLabel { flex: 0 0 44px; padding-top: 9px; font: 800 8px var(--sans); letter-spacing: 1px; text-transform: uppercase; color: #b6a17a; }
+.armChips { display: flex; gap: 5px; flex-wrap: wrap; flex: 1 1 auto; }
+.armChip { min-height: 32px; padding: 0 11px; border: 1px solid #a9905c55; border-radius: 6px; background: #201d24; color: #cdbb96; font: 800 9px var(--sans); letter-spacing: 0.7px; text-transform: uppercase; cursor: pointer; }
+.armChip.active { background: #3a2e1c; border-color: #d8b66d; color: #f7e6c4; }
+.armChip:active { transform: translateY(1px); }
+.armChipsWrap { max-height: 104px; overflow-y: auto; }
+@media (max-height: 480px) {
+  .armoryCanvas { height: 42vh; }
+  .armChipsWrap { max-height: 62px; }
+}

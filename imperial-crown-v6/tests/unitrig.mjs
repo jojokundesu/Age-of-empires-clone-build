@@ -20,6 +20,9 @@ import { evaluate, AnimState, strikeCurve, STRIKE, GAITS } from '../src/gfx/rig/
 import * as paletteMod from '../src/gfx/rig/palette.js';
 import * as unitRendererMod from '../src/gfx/unitRenderer.js';
 import * as batchMod from '../src/gfx/batch.js';
+import { createMockGL } from './mockgl.mjs';
+
+const sharedMockGL = createMockGL(0);
 
 const fails = [];
 const check = (name, fn) => {
@@ -338,13 +341,53 @@ check('the vertex shader writes every varying the fragment shader reads', () => 
   for (const i of ins) assert(outs.includes(i), `fragment reads ${i} but the vertex shader never writes it`);
 });
 
+/* ---------- the Armory inspector ---------- */
+
+const armoryMod = await import('../src/game/armory.js');
+
+check('the armory builds, draws, and can be disposed', () => {
+  const gl = sharedMockGL;
+  const canvas = {
+    width: 720, height: 900, getContext: () => gl,
+    addEventListener() {}, removeEventListener() {}, setPointerCapture() {},
+    getBoundingClientRect: () => ({ width: 360, height: 450 }), style: {}
+  };
+  const a = new armoryMod.Armory();
+  assert(a.init(canvas), 'the armory could not create a context');
+  a._advance(1 / 60);
+  a._draw();
+  assert(a._batches.size >= 1, 'no geometry was built');
+  a.setClass('villager');
+  a.setAge(1);
+  a.setPose('walk');
+  assert(a.classKey === 'villager' && a.age === 1 && a.pose === 'walk', 'state did not change');
+  a._advance(1 / 60);
+  a._draw();
+  const html = a.html();
+  assert(/armoryCanvas/.test(html), 'the panel has no canvas');
+  assert((html.match(/data-cls=/g) || []).length >= 15, 'the class picker is too short');
+  assert(/data-age=/.test(html) && /data-pose=/.test(html), 'missing age or pose controls');
+  a.dispose();
+  assert(a.gl === null, 'dispose did not release the context');
+});
+
+check('every class the armory offers can actually be built', () => {
+  for (const [key] of armoryMod.__PICKER_FOR_TESTS) {
+    assert(RIGS[key], `the armory offers ${key} but there is no rig for it`);
+    for (const age of [1, 4]) {
+      const r = buildRig(key, DETAIL.MID, { age });
+      assert(r.tris > 100, `${key} at age ${age} has ${r.tris} tris`);
+    }
+  }
+});
+
 /* ---------- palette + draw path (integration) ---------- */
 
-const mockGL = (await import('./mockgl.mjs')).createMockGL(0);
+const mockGL = sharedMockGL;
 
 check('the palette never leaks a row when a unit re-poses', () => {
   const { BonePalette } = paletteMod;
-  const gl = mockGL;
+  const gl = sharedMockGL;
   const p = new BonePalette(gl, 64, 128);
   const a = p.allocRow(7);
   const b = p.allocRow(7);
@@ -359,7 +402,7 @@ check('the palette never leaks a row when a unit re-poses', () => {
 
 check('the draw path culls before posing and never leaks rows', () => {
   const { UnitRenderer } = unitRendererMod;
-  const gl = mockGL;
+  const gl = sharedMockGL;
   const ur = new UnitRenderer(gl, {});
   /* build geometry synchronously so the test does not need to await */
   for (const key of Object.keys(RIGS)) {
@@ -396,7 +439,7 @@ check('the draw path culls before posing and never leaks rows', () => {
 
 check('animation LOD runs far units at a lower rate', () => {
   const { UnitRenderer } = unitRendererMod;
-  const gl = mockGL;
+  const gl = sharedMockGL;
   const ur = new UnitRenderer(gl, {});
   for (const key of Object.keys(RIGS)) {
     for (const tier of [DETAIL.NEAR, DETAIL.MID, DETAIL.FAR]) {
