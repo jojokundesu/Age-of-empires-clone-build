@@ -35,6 +35,9 @@ export const CLASSES = {
      III, plate pauldrons, surcoat, heater shield and arming sword. */
   man_at_arms: {
     profile: 'manAtArms',
+    /* Mail to the skin: the body IS the hauberk, and the surcoat goes over
+       it. Without this flag he is a padded jacket with a tabard. */
+    mailedBody: true,
     helm: (age) => (age <= 2 ? 'kettle' : age === 3 ? 'barbute' : 'great'),
     hair: 'short',
     beard: false,
@@ -53,8 +56,12 @@ export const CLASSES = {
       /* A heater shield is carried on the forearm, tilted, hanging just
          below the elbow. */
       g.material(MAT.WOOD).color(0.55, 0.46, 0.34);
-      g.heater(B.HAND_L, [-m.x(0.285), m.y(1.12), 0.13], [0.34, 0.48, 0.030],
-        { rot: 0.22, dome: 0.30 });
+      /* The shield hangs on the forearm just outside the flank. `rot` swings
+         a 0.34 m plate about its own centre, so 0.22 rad alone threw it to
+         x = -0.51 and laid it across the near arm; 0.10 keeps it on the
+         armature and the centre is set to clear the elbow. */
+      g.heater(B.HAND_L, [-m.x(0.300), m.y(1.10), 0.15], [0.32, 0.46, 0.030],
+        { rot: 0.10, dome: 0.30 });
     }
   },
 
@@ -128,7 +135,7 @@ export const CLASSES = {
           [m.x(0.16) + t, m.y(0.96), -0.20], 0.011, 0.009, { seg: 3, rings: 1 });
       }
       g.material(MAT.WOOD).color(0.52, 0.43, 0.32);
-      g.heater(B.HAND_L, [-m.x(0.275), m.y(1.10), 0.12], [0.28, 0.34, 0.026],
+      g.heater(B.HAND_L, [-m.x(0.295), m.y(1.10), 0.14], [0.28, 0.34, 0.026],
         { rot: 0.20, dome: 0.24 });
     }
   },
@@ -147,8 +154,8 @@ export const CLASSES = {
       buildBelt(g, m);
       buildSword(g, B.HAND_R, [m.x(0.252), m.y(0.80), 0.03], m.y(0.36));
       g.material(MAT.WOOD).color(0.50, 0.42, 0.32);
-      g.heater(B.HAND_L, [-m.x(0.280), m.y(1.14), 0.13], [0.30, 0.44, 0.028],
-        { rot: 0.20, dome: 0.26 });
+      g.heater(B.HAND_L, [-m.x(0.298), m.y(1.12), 0.15], [0.30, 0.44, 0.028],
+        { rot: 0.10, dome: 0.26 });
     }
   },
 
@@ -157,6 +164,7 @@ export const CLASSES = {
      top age. The rider is built here; the horse is a separate rig. */
   knight: {
     profile: 'knight',
+    mailedBody: true,
     helm: (age) => (age <= 2 ? 'nasal' : age === 3 ? 'great' : 'great'),
     hair: 'short',
     beard: false,
@@ -170,8 +178,8 @@ export const CLASSES = {
       const rh = [m.x(0.250), m.y(0.80), 0.03];
       buildSword(g, B.HAND_R, rh, m.y(0.38));
       g.material(MAT.WOOD).color(0.44, 0.36, 0.26);
-      g.heater(B.HAND_L, [-m.x(0.280), m.y(1.16), 0.14], [0.32, 0.46, 0.030],
-        { rot: 0.22, dome: 0.30 });
+      g.heater(B.HAND_L, [-m.x(0.300), m.y(1.14), 0.15], [0.32, 0.46, 0.030],
+        { rot: 0.10, dome: 0.30 });
     }
   },
 
@@ -228,13 +236,12 @@ export const CLASSES = {
         g.material(MAT.LINEN).color(0.48, 0.39, 0.31);
         g.lathe(UP, [
           [0.000, m.y(1.566)],
-          [0.070, m.y(1.546)],
-          [0.107, m.y(1.508)],
-          [0.120, m.y(1.452)],
-          [0.104, m.y(1.355)],
-          [0.092, m.y(1.060)],
-          [0.124, m.y(0.920)]
-        ], { seg: g.seg(0), x: sx, blend: SHO });
+          [0.096, m.y(1.520)],
+          [0.120, m.y(1.440)],
+          [0.100, m.y(1.300)],
+          [0.098, m.y(1.040)],
+          [0.126, m.y(0.920)]
+        ], { seg: g.seg(-1), x: sx, blend: SHO });
         /* the cuff is still an open cylinder -- cap it, the wrist goes in */
         g.cap(UP, [sx * 0.955, m.y(0.920), 0], 0.124 * sl, [0, -1, 0],
           { seg: g.seg(0) });
@@ -244,7 +251,7 @@ export const CLASSES = {
            a sphere each side is not worth 60 triangles at mid range. */
         if (g.detail === DETAIL.NEAR) {
           g.ellipsoid(SHO, [side * m.x(0.200), m.y(1.474), 0],
-            [0.096 * sl, 0.086 * sl, 0.114 * sl], { sph: [5, 3] });
+            [0.096 * sl, 0.086 * sl, 0.114 * sl], { sph: [4, 2] });
         }
       }
 
@@ -292,6 +299,7 @@ export const CLASSES = {
      Norse heavy infantry: round shield, axe, mail, no horse. */
   huskarl: {
     profile: 'manAtArms',
+    mailedBody: true,
     helm: (age) => (age <= 2 ? 'kettle' : 'nasal'),
     hair: 'braid',
     beard: true,
@@ -444,6 +452,7 @@ export const CLASSES = {
      conical helm, a kite shield. Heavier than a knight and less ornamented. */
   cataphract: {
     profile: 'knightMounted',
+    mailedBody: true,
     helm: (age) => (age <= 2 ? 'nasal' : 'cone'),
     hair: 'short',
     beard: false,
@@ -463,8 +472,8 @@ export const CLASSES = {
       buildPauldrons(g, m);
       buildBelt(g, m);
       g.material(MAT.WOOD).color(0.46, 0.38, 0.30);
-      g.heater(B.HAND_L, [-m.x(0.285), m.y(1.14), 0.14], [0.30, 0.46, 0.030],
-        { rot: 0.22, dome: 0.28 });
+      g.heater(B.HAND_L, [-m.x(0.300), m.y(1.14), 0.15], [0.30, 0.46, 0.030],
+        { rot: 0.10, dome: 0.28 });
       buildSword(g, B.HAND_R, [m.x(0.250), m.y(0.80), 0.03], m.y(0.36));
     }
   },
@@ -488,8 +497,8 @@ export const CLASSES = {
       buildBelt(g, m);
       buildSword(g, B.HAND_R, [m.x(0.250), m.y(0.80), 0.03], m.y(0.38));
       g.material(MAT.WOOD).color(0.50, 0.42, 0.28);
-      g.heater(B.HAND_L, [-m.x(0.280), m.y(1.16), 0.14], [0.32, 0.48, 0.030],
-        { rot: 0.22, dome: 0.30 });
+      g.heater(B.HAND_L, [-m.x(0.300), m.y(1.14), 0.15], [0.32, 0.48, 0.030],
+        { rot: 0.10, dome: 0.30 });
     }
   },
 
@@ -515,8 +524,8 @@ export const CLASSES = {
       g.blade(B.HAND_R, [m.x(0.250), m.y(0.80), 0.03],
         [m.x(0.235), m.y(0.42), 0.08], 0.032, { thick: 0.011, guard: 0.13 });
       g.material(MAT.WOOD).color(0.48, 0.38, 0.26);
-      g.heater(B.HAND_L, [-m.x(0.280), m.y(1.16), 0.14], [0.33, 0.47, 0.032],
-        { rot: 0.22, dome: 0.32 });
+      g.heater(B.HAND_L, [-m.x(0.300), m.y(1.14), 0.15], [0.33, 0.47, 0.032],
+        { rot: 0.10, dome: 0.32 });
     }
   },
 

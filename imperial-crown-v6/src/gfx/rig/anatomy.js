@@ -55,7 +55,24 @@ export function buildBody(g, prop, opts = {}) {
     [x(0.205), y(1.36)],
     [x(0.225), y(1.45)],
     [x(0.205), y(1.52)],
-    [x(0.130), y(1.56)]
+    /* Close the collar onto the neck.
+       The lathe used to stop at x(0.130), y(1.56) and leave a flat open
+       annulus of radius 0.13 around a 0.058 neck -- a visible hole you could
+       see down into from any elevated angle. It now tapers to the neck's own
+       radius and tucks below the jaw. */
+    /* CLOSE THE TORSO OVER THE NECK.
+       A lathe's top rim is an open ring, and an open ring seen from above
+       is a hole -- you could look down the collar into the chest cavity,
+       and no amount of patching with a separate neck tube or a trapezius
+       dome fixed it, because two surfaces crossing always leave a seam
+       somewhere. So the torso profile now runs right up the neck and closes
+       on it. One surface, no rim, no hole, no seam.
+       Everything above 1.52 sits inside the head, which is weighted to the
+       same bone chain, so it can never be seen. */
+    [x(0.128), y(1.520)],
+    [x(0.096), y(1.560)],
+    [x(0.076), y(1.610)],
+    [x(0.072), y(1.660)]
   ];
   g.material(fabric);
   if (opts.bodyCol) g.color(opts.bodyCol[0], opts.bodyCol[1], opts.bodyCol[2]);
@@ -66,34 +83,62 @@ export function buildBody(g, prop, opts = {}) {
 
   /* ---------- NECK ---------- */
   g.material(4).color(skin);
-  g.tube(B.NECK, [0, y(1.53), 0], [0, y(1.60), 0], 0.058 * lw, 0.055 * lw,
-    { seg: 5, rings: 2, blend: B.CHEST });
+  /* The neck has to be wide enough to fill the hole in the top of the
+     torso lathe, which closes to x(0.130) at y(1.56). At 0.058 the neck
+     was a pencil through a collar two sizes too big and you could see
+     straight down into the chest. */
+  /* No separate neck tube: the torso profile above carries the neck now.
+     A tube pushed through a hole and a dome patched over the rim were both
+     attempts to hide a seam that this removes. */
 
   /* ---------- HEAD ----------
-     Cranium plus a jaw. A single sphere reads as a ball; the jaw taper is
-     most of what makes a head a head at 4 m. */
+     ONE surface of revolution, from the point of the chin to the crown.
+
+     Two overlapping ellipsoids still produced a jagged lens where the jaw
+     and the cranium crossed, because at six segments a sphere is a
+     polyhedron and two polyhedra intersecting give a zigzag. There is no
+     tessellation that fixes that, and a face built out of stacked closed
+     volumes can only ever be a heap of shards at close range.
+
+     A lathe has no interior to intersect with. This profile is the skull:
+     chin, jaw, cheek, temple, crown -- and because the radius is a function
+     of height, the silhouette is smooth from every angle. Squashed on X so
+     the head is narrower than it is deep, which is what a head is.
+
+     What it cannot do is a nose, which projects rather than revolves; that
+     stays a separate small ellipsoid and only appears at NEAR. */
   const headY = y(1.68);
   const hr = 0.098 * prop.headR;
   g.material(4).color(skin);
-  g.ellipsoid(B.HEAD, [0, headY, 0], [hr, hr * 1.16, hr * 1.06], { sph: [7, 4] });
-  g.ellipsoid(B.HEAD, [0, headY - hr * 0.62, hr * 0.16], [hr * 0.82, hr * 0.55, hr * 0.80],
-    { sph: [5, 3] });
-
-  /* Brow and nose carry the face at close range; a soldier four pixels tall
-     does not have a brow, so they appear only where they can be seen. */
-  if (g.detail <= DETAIL.MID) {
-    g.ellipsoid(B.HEAD, [0, headY + hr * 0.22, hr * 0.72], [hr * 0.74, hr * 0.20, hr * 0.30],
-      { sph: [5, 3] });
-  }
+  const chinY = headY - hr * 1.06;
+  const crownY = headY + hr * 1.14;
+  const headH = crownY - chinY;
+  /* radius fractions of hr at even steps from chin to crown */
+  const skull = [
+    [0.00, 0.00],   /* chin point */
+    [0.30, 0.44],   /* jaw */
+    [0.52, 0.72],   /* cheekbone */
+    [0.74, 0.94],   /* widest, at the temples */
+    [0.90, 0.86],   /* upper skull turning over */
+    [1.00, 0.00]    /* crown */
+  ];
+  g.lathe(B.HEAD, skull.map(([t, r]) => [r * hr * 0.94, chinY + headH * t]), {
+    seg: g.seg(0), squash: [1.0, 1.10], blend: B.NECK
+  });
   if (g.detail === DETAIL.NEAR) {
-    g.ellipsoid(B.HEAD, [0, headY - hr * 0.06, hr * 1.0], [hr * 0.17, hr * 0.26, hr * 0.22],
-      { sph: [5, 3] });
+    /* nose: projects from the face, so it is the one feature the lathe
+       cannot carry */
+    g.ellipsoid(B.HEAD, [0, headY - hr * 0.14, hr * 0.86],
+      [hr * 0.16, hr * 0.26, hr * 0.26], { sph: [4, 3] });
   }
 
   /* ---------- LEGS ----------
      Thigh, shin, boot. The knee blend is what stops the joint pinching. */
-  g.material(legMat).color(0.62, 0.58, 0.50);
   for (const side of [-1, 1]) {
+    /* Same trap as the arms: the boot at the end of the iteration switches
+       the builder to LEATHER, so the second leg was being built in boot
+       leather. One trouser leg brown, one grey. */
+    g.material(legMat).color(0.62, 0.58, 0.50);
     const HIP = side < 0 ? B.HIP_L : B.HIP_R;
     const THIGH = side < 0 ? B.THIGH_L : B.THIGH_R;
     const SHIN = side < 0 ? B.SHIN_L : B.SHIN_R;
@@ -114,10 +159,16 @@ export function buildBody(g, prop, opts = {}) {
   /* ---------- ARMS ----------
      Deltoid, upper arm, forearm, hand. The shoulder ellipsoid is what makes
      armour sit on a body instead of hovering over it. */
-  if (opts.bodyCol) g.material(fabric).color(opts.bodyCol[0], opts.bodyCol[1], opts.bodyCol[2]);
-  else g.material(fabric).color(0.66, 0.62, 0.55);
   const armX = 0.268;
   for (const side of [-1, 1]) {
+    /* The sleeve material is set INSIDE the loop. It used to be set once
+       before it, and the hand block at the end of the iteration switched the
+       builder to SKIN -- so the second arm was built entirely in skin and
+       every soldier in the game had a bare right arm under a sleeved tunic.
+       A material is builder state, not geometry state: anything the loop
+       sets, the loop has to restore. */
+    if (opts.bodyCol) g.material(fabric).color(opts.bodyCol[0], opts.bodyCol[1], opts.bodyCol[2]);
+    else g.material(fabric).color(0.66, 0.62, 0.55);
     const SHO = side < 0 ? B.SHOULDER_L : B.SHOULDER_R;
     const UP = side < 0 ? B.UPPER_ARM_L : B.UPPER_ARM_R;
     const FORE = side < 0 ? B.FOREARM_L : B.FOREARM_R;
@@ -161,10 +212,15 @@ export function buildHair(g, m, prop, opts = {}) {
 
   if (style === 'bald') return;
 
-  /* Sits proud of the skull, not inside it: the cranium is hr*1.16 tall in
-     Y, so a cap at hr*0.86 was entirely swallowed. */
-  g.ellipsoid(B.HAIR, [0, headY + hr * 0.10, -hr * 0.22],
-    [hr * 1.12, hr * 1.06, hr * 1.10], { cut: 0.18, sph: [6, 4] });
+  /* The cap is a FULL ellipsoid, not a cut one.
+     `cut` keeps the top and throws the bottom rings away, which leaves an
+     open shell: from the front you look through the hair's underside and
+     see the back of the skull's interior, and at close range the head was a
+     pale dome with brown shards inside it. A full shell encloses the
+     cranium and cannot be seen through from any angle. Its lower half is
+     inside the skull, which costs nothing and needs no cap. */
+  g.ellipsoid(B.HAIR, [0, headY + hr * 0.13, -hr * 0.24],
+    [hr * 1.10, hr * 1.05, hr * 1.08], { sph: [6, 4] });
 
   if (style === 'long') {
     /* A tail behind the head, hanging to the shoulder blades. */

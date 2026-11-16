@@ -87,32 +87,38 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
   if (kind === 'turban') {
     g.ellipsoid(B.HEAD, [0, headY + hr * 0.18, 0],
       [hr * 1.18, hr * 0.86, hr * 1.18], { cut: 0.42, sph: [6, 4] });
+    /* the brow band sits ABOVE the eyes and stops at the temples */
     g.lathe(B.HEAD, [
-      [hr * 1.16, headY - hr * 0.10],
-      [hr * 1.20, headY + hr * 0.18]
+      [hr * 1.16, headY + hr * 0.14],
+      [hr * 1.20, headY + hr * 0.40]
     ], { seg: g.seg(1) });
     return;
   }
 
-  /* barbute and great helm: a dome plus the flare that makes it read. */
-  g.ellipsoid(B.HEAD, [0, headY + hr * 0.26, 0],
-    [hr * 1.10, hr * 0.98, hr * 1.10], { cut: 0.35, sph: [6, 4] });
-  if (g.detail <= DETAIL.MID) {
-    g.lathe(B.HEAD, [
-      [hr * 1.06, headY - hr * 0.55],
-      [hr * 1.12, headY - hr * 0.10],
-      [hr * 1.10, headY + hr * 0.30]
-    ], { seg: g.seg(1) });
-  }
+  /* Model faces +Z (theta = PI/2). Centre the arc on the BACK and leave the
+     front third open: that opening is the face. */
+  const FLARE_ARC = Math.PI * 1.34;
+  const FLARE_START = Math.PI * 0.5 + Math.PI * 0.33;
+  /* barbute and great helm: ONE lathe from the neck flare to the crown.
+     It used to be a cut ellipsoid dome plus a separate arc for the flare,
+     and the two did not meet -- the dome's rim sat 0.13 hr inside the
+     flare's, so there was a gap all the way round the helmet at brow
+     height and you saw the face through it.
+
+     A lathe cannot open a gap, and the profile is exactly what a barbute
+     is: a neck flare, a cheek line, a temple, a crown. The face opening is
+     cut out of the front by sweeping an arc that stops at the temples. */
+  g.lathe(B.HEAD, [
+    [hr * 1.10, headY - hr * 0.52],
+    [hr * 1.15, headY - hr * 0.14],
+    [hr * 1.12, headY + hr * 0.16],
+    [hr * 1.10, headY + hr * 0.66],
+    [hr * 0.62, headY + hr * 1.16],
+    [0.0, headY + hr * 1.30]
+  ], { seg: g.seg(1), arc: FLARE_ARC, arcStart: FLARE_START });
   if (kind === 'great' && g.detail <= DETAIL.MID) {
-    /* A visor: the horizontal slot is the whole point of the shape. At
-       strategic zoom the dome is the whole silhouette, so neither the
-       slot nor the lower flare earns its triangles. */
-    g.slab(B.HEAD, [0, headY + hr * 0.10, hr * 1.06], [hr * 0.95, hr * 0.34, hr * 0.16]);
-    g.lathe(B.HEAD, [
-      [hr * 1.12, headY - hr * 0.62],
-      [hr * 1.16, headY - hr * 0.20]
-    ], { seg: g.seg(1) });
+    /* A visor: the horizontal slot is the whole point of the shape. */
+    g.slab(B.HEAD, [0, headY + hr * 0.10, hr * 1.02], [hr * 0.92, hr * 0.30, hr * 0.16]);
   }
 }
 
@@ -136,7 +142,10 @@ export function buildCrest(g, m, colour, count = 4) {
 export function buildSurcoat(g, m, opts = {}) {
   const { x, y, cd, sw } = m;
   const flares = opts.flares !== false;
-  g.material(MAT.LINEN).color(0.72, 0.70, 0.74);
+  /* Mid grey, not near-white: the team tint replaces the hue and keeps
+     this garment's luminance, so a white surcoat has no value left to
+     keep and flattens into a saturated slab. */
+  g.material(MAT.LINEN).color(0.58, 0.56, 0.60);
   const profile = flares
     ? [
       [x(0.170), y(1.02)],
@@ -171,12 +180,22 @@ export function buildPauldrons(g, m) {
 export function buildBelt(g, m) {
   if (g.detail > DETAIL.MID) return;
   const { x, y, cd, sw } = m;
-  g.material(MAT.LEATHER).color(0.30, 0.22, 0.15);
+  /* Lifted off pure black, and given a real profile.
+     The leather was 0.30/0.22/0.15, which against a mid-grey tunic reads as
+     a black gap rather than as a strap, and the three-point lathe had no
+     thickness -- a ribbon standing off the waist with visible nothing
+     behind it at the top and bottom edges. */
+  g.material(MAT.LEATHER).color(0.42, 0.31, 0.20);
   g.lathe(B.SKIRT, [
-    [x(0.180), y(1.04)],
-    [x(0.186), y(1.00)],
-    [x(0.180), y(0.96)]
+    [x(0.176), y(1.055)],
+    [x(0.190), y(1.035)],
+    [x(0.192), y(0.975)],
+    [x(0.176), y(0.955)]
   ], { seg: g.seg(2), squash: [1.0, cd / sw] });
+  /* buckle: a small plate on the front, which is what stops the band
+     reading as a painted stripe */
+  g.material(MAT.PLATE).color(0.62, 0.62, 0.64);
+  g.slab(B.SKIRT, [0, y(1.005), x(0.196) * cd / sw], [0.052, 0.048, 0.012]);
 }
 
 /** A cloak hanging from the shoulders, weighted to the skirt bone. */

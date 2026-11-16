@@ -102,8 +102,19 @@ export function buildHumanoid(g, prop, def, opts = {}) {
      class (the berserk) gets skin instead of cloth. */
   const bodyOpts = {
     skin,
-    bodyMat: def.bareChest ? 4 : (age >= 3 ? 1 : 3),
-    legMat: age >= 3 ? 1 : 3,
+    /* The body is what the class's own garments COVER, so it is always the
+       same cheap fabric material. It used to become MAT_MAIL at Age III,
+       which turned the torso, both arms and both legs into mail while the
+       class's tabard, surcoat and sleeves were only ever laid over the
+       front of it -- so an Age III spearman was a brown-tinted mail cylinder
+       wearing a linen bib. That is the tan wedge across his chest and it has
+       been there since the age ladder landed.
+
+       Classes that are armoured to the skin (the knight, the huskarl) say so
+       with bareChest: they get MAT_MAIL on the body itself; everyone else
+       gets cloth and lets the wardrobe decide what armour they wear. */
+    bodyMat: def.bareChest ? 4 : (def.mailedBody ? 1 : 3),
+    legMat: (def.bareChest || def.mailedBody) ? (def.bareChest ? 4 : 1) : 3,
     /* A bare chest has to be skin-coloured as well as skin-material: using
        the gambeson's fabric colour on MAT_SKIN renders a topless warrior in
        a grey smock. */

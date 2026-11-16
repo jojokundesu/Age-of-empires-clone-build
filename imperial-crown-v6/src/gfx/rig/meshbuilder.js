@@ -361,8 +361,14 @@ export class SkinnedBuilder {
       outline.push([uw, v]);
     }
 
+    /* `u` runs -1..+1 across the shield, so `u * hw` alone puts the LEFT
+       edge at 2 * hw from the centre -- the caller's `c` was being treated
+       as the left edge, not the centre, and every heater shield in the game
+       was hung half its own width further out than it was placed. `u` is
+       normalised to -0.5..+0.5 first so `c` is the centre the call sites
+       have always assumed it was. */
     const place = (u, v, zoff) => {
-      const px = u * hw, pz = zoff;
+      const px = u * w * 0.5, pz = zoff;
       const rx = px * cs - pz * sn;
       const rz = px * sn + pz * cs;
       return [c[0] + rx, c[1] - v * h, c[2] + rz];

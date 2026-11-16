@@ -140,7 +140,7 @@ function skinVertex(packed, u8, i8, vi, pal, out) {
 /* ---------------- render ---------------- */
 
 function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scale = 1,
-  width = 720, height = 900, cls = 'man_at_arms', yaw = null }) {
+  width = 720, height = 900, cls = 'man_at_arms', yaw = null, headroom = 0 }) {
   const rig = buildRig(cls, tier, { age, skin: SKIN_TONES[0], hair: HAIR_COLORS[0] });
   const mounted = isMounted(cls);
   const profileName = (RIGS[cls] || { profile: 'spearman' }).profile;
@@ -184,7 +184,13 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
   const back = mounted ? 1.55 : 1.0;
   /* A mount is 2.1 m tall and 1.9 m long; framing it with the foot soldier's
      numbers crops the hooves off the bottom and the tail off the side. */
-  const target = [0, aim * scale, mounted ? 0.12 : 0];
+  /* `headroom` lifts or lowers the aiming point. Zooming in used to always
+     aim at the hips, so asking for a close-up of a head gave a close-up of
+     a belt, and there was no way to inspect a face with this tool. */
+  /* `headroom` is an ABSOLUTE aim height in metres, not an offset. The
+     default aim already scales with the figure, so an offset would fight it;
+     what you want when inspecting a head is 'look at 1.68 m'. */
+  const target = [0, headroom > 0 ? headroom : aim * scale, mounted ? 0.12 : 0];
   const baseEye = [(mounted ? 3.6 : 2.05), (mounted ? 2.05 : 1.42), (mounted ? 4.1 : 2.55)];
   /* `yaw` is an ABSOLUTE azimuth about the figure, measured from +Z, which is
      the way the model faces. `yaw 0` is dead in front, PI/2 is the +X flank,
@@ -318,6 +324,7 @@ const r = render({
   tier,
   age: parseInt(opt('age', '3'), 10),
   scale: parseFloat(opt('scale', '1')),
-  yaw: opt('yaw', null) === null ? null : parseFloat(opt('yaw', '0'))
+  yaw: opt('yaw', null) === null ? null : parseFloat(opt('yaw', '0')),
+  headroom: parseFloat(opt('headroom', '0'))
 });
 console.log(`${r.out}  ${r.verts} verts, ${r.tris} tris, ${r.drawn} drawn`);

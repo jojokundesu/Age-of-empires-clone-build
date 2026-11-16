@@ -186,13 +186,34 @@ float mailRing(vec2 uv, float freq) {
   return 1.0 - smoothstep(0.055, 0.115, best);
 }
 
+/* TRIPLANAR UV.
+   Every material pattern below used to be sampled at vWorld.xz -- a single
+   horizontal plane. That is correct for a flat roof and wrong for
+   everything else: on a vertical surface the pattern is extruded straight
+   up, so mail rings became vertical streaks and plate brushing became wood
+   grain. It is the reason a mail hauberk read as bark.
+
+   Projecting the pattern on whichever world axis the surface actually
+   faces, and blending between them by the normal, is the standard fix and
+   costs two more pattern evaluations blended by weight rather than any
+   extra geometry. */
+vec2 triUV(vec3 w, vec3 n) {
+  vec3 a = abs(n);
+  a = a * a * a;               // sharpen so one axis dominates
+  a /= (a.x + a.y + a.z + 1e-5);
+  vec2 xy = w.xy, zy = w.zy, xz = w.xz;
+  return xy * a.z + zy * a.x + xz * a.y;
+}
+
 void main() {
   int mat = vMat;
   vec3 albedo = vColor;
   float metalness = 0.0;
   float roughness = 0.85;
   float ao = 1.0;
-  vec2 wp = vWorld.xz;
+  /* wp is the pattern plane. It must follow the surface, not the ground. */
+  vec3 nrm = normalize(vNormal);
+  vec2 wp = triUV(vWorld, nrm);
   float y = vWorld.y;
 
   if (mat == MAT_LINEN) {
@@ -266,8 +287,14 @@ void main() {
      dyed tunic still reads as folded cloth. */
   if (mat == MAT_LINEN || mat == MAT_GAMBESON) {
     float shade = dot(albedo, vec3(0.299, 0.587, 0.114));
-    vec3 teamAlb = vTint.rgb * (0.55 + shade * 1.2);
-    color = mix(color, teamAlb * (uSunColor * ndl * sh * cl * 1.25 + ambient), 0.55);
+    /* The multiplier is centred on 1.0 at mid grey. It used to be
+       0.55 + shade * 1.2, which for a garment authored at 0.7 luminance is
+       1.39 -- so the tint did not merely recolour the cloth, it brightened
+       it, and a knight's surcoat rendered as a lit slab of plastic blue.
+       A team colour should replace the hue and leave the value alone. */
+    float k = 0.30 + shade * 0.95;
+    vec3 teamAlb = vTint.rgb * k;
+    color = mix(color, teamAlb * (uSunColor * ndl * sh * cl * 1.25 + ambient), 0.62);
   }
 
   float dmg = vState.x;
