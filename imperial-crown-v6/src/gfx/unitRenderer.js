@@ -27,7 +27,7 @@
 
 import { B, BONE_COUNT, Pose, buildBindPalette, buildSkinPalette } from './rig/skeleton.js';
 import { DETAIL } from './rig/meshbuilder.js';
-import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS, hasRig } from './rig/rigs.js';
+import { buildRig, PROFILES, SKIN_TONES, HAIR_COLORS, RIGS, hasRig, isMounted } from './rig/rigs.js';
 import { evaluate, AnimState } from './rig/animator.js';
 import { UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from './rig/unitShaders.js';
 import { InstanceBatch } from './batch.js';
@@ -181,7 +181,11 @@ export class UnitRenderer {
           hitFlash: u.hitFlash || 0,
           classKey: key,
           lookYaw: u.lookYaw || 0,
-          lookPitch: u.lookPitch || 0
+          lookPitch: u.lookPitch || 0,
+          /* Without this a rider stands on the ground with a horse through
+             its middle: the mount is a separate bone block and nothing else
+             tells the pose to seat the rider. */
+          mounted: isMounted(key)
         });
         /* write the skinning palette into this unit's texture row */
         const row = this.palette.allocRow(u.id);

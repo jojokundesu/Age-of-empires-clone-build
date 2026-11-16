@@ -21,6 +21,7 @@ import { B } from './skeleton.js';
 import { DETAIL, SkinnedBuilder } from './meshbuilder.js';
 import { buildBody } from './anatomy.js';
 import { CLASSES, FALLBACK_CLASS } from './classes.js';
+import { buildMount, MOUNT_STANDARD, MOUNT_PONY } from './mount.js';
 
 /* Material ids shared with unitShaders.js */
 export const MAT = {
@@ -67,6 +68,12 @@ export const PROFILES = {
     headR: 1.0, stance: 1.0
   }
 };
+
+/* Profiles for the riders, which are just the knight's frame seated. Kept
+   separate from `knight` because a mounted profile also carries a `mount`
+   block, and buildRig checks for it. */
+PROFILES.knightMounted = { ...PROFILES.knight, mount: MOUNT_STANDARD };
+PROFILES.scoutMounted = { ...PROFILES.archer, height: 0.99, mount: MOUNT_PONY };
 
 /* Skin tones and hair colours, picked per unit from its animSeed. */
 export const SKIN_TONES = [
@@ -132,7 +139,22 @@ export function buildRig(key, detail = DETAIL.MID, opts = {}) {
   if (!prop) throw new Error('no profile for ' + key + ': ' + profileName);
   const g = new SkinnedBuilder(detail);
   buildHumanoid(g, prop, def, opts);
+  /* The mount is built after the rider so the rider's kit is already
+     committed; the two do not share bones, so order only matters for
+     reading the file. */
+  if (prop.mount) {
+    const mountOpts = def.mount ? def.mount(opts) : {};
+    buildMount(g, mountOpts.coat || [0.34, 0.25, 0.18], mountOpts);
+  }
   return g.finish();
+}
+
+/** True when this unit type rides. */
+export function isMounted(key) {
+  const rig = RIGS[key];
+  if (!rig) return false;
+  const prop = PROFILES[rig.profile];
+  return !!(prop && prop.mount);
 }
 
 /** Which unit types have a rig. Everything else stays on legacy geometry. */

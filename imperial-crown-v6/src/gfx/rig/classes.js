@@ -335,10 +335,18 @@ export const CLASSES = {
   /* ---------- MANGUDai / STEPPE ARCHER ----------
      Horse archer: a cone helm, a long coat, a compact bow, a quiver. */
   mangudai: {
-    profile: 'archer',
+    profile: 'knightMounted',
     helm: () => 'cone',
     hair: 'braid',
     beard: true,
+    /* A steppe pony: small, dun, unarmoured. The mangudai's whole trick is
+       to shoot and run, so the horse is a light animal under a light rider. */
+    mount: () => ({
+      coat: [0.46, 0.38, 0.26],
+      mane: [0.15, 0.12, 0.09],
+      caparison: null,
+      barding: false
+    }),
     build(g, m, o) {
       buildHelm(g, m, 'cone', o.age);
       buildFaceDetail(g, m, { hair: o.hair, beard: true });
@@ -369,11 +377,20 @@ export const CLASSES = {
      Byzantine heavy cavalry: scale or mail over the whole body, a tall
      conical helm, a kite shield. Heavier than a knight and less ornamented. */
   cataphract: {
-    profile: 'knight',
+    profile: 'knightMounted',
     helm: (age) => (age <= 2 ? 'nasal' : 'cone'),
     hair: 'short',
     beard: false,
     crest: (age) => (age >= 4 ? [0.30, 0.34, 0.52] : null),
+    /* The cataphract is the only class whose horse is armoured, and that is
+       its identity: a wall of plate that arrives at a walk and does not
+       stop. Barding appears at Age III with the rider's mail. */
+    mount: (o) => ({
+      coat: [0.28, 0.22, 0.17],
+      mane: [0.12, 0.10, 0.08],
+      caparison: o.age >= 3 ? [0.30, 0.32, 0.42] : [0.36, 0.30, 0.24],
+      barding: o.age >= 3
+    }),
     build(g, m, o) {
       buildHelm(g, m, this.helm(o.age), o.age);
       if (this.crest(o.age)) buildCrest(g, m, this.crest(o.age), 3);
@@ -441,10 +458,19 @@ export const CLASSES = {
      The rider is a light horseman: a hood or cap, a small bow or a
      javelin, no armour. */
   scout_cavalry: {
-    profile: 'knight',
+    profile: 'scoutMounted',
     helm: () => 'hood',
     hair: 'short',
     beard: false,
+    /* A scout rides a light pony with a plain saddle blanket and no barding:
+       the whole point of the unit is that it is cheap and fast, and plate on
+       the horse would say otherwise from across the map. */
+    mount: () => ({
+      coat: [0.42, 0.31, 0.21],
+      mane: [0.17, 0.13, 0.10],
+      caparison: [0.34, 0.30, 0.26],
+      barding: false
+    }),
     build(g, m, o) {
       buildHelm(g, m, 'hood', o.age);
       buildBelt(g, m);

@@ -326,8 +326,85 @@ export function evaluate(pose, st, inp) {
   pose.set(B.HAIR, st.hair.step(hairTarget, dt) * 0.5 - st.lookPitch * 0.15, 0,
     st.hair.step(hairTarget * 0.6, dt) * 0.35);
 
+  /* --- riding ----------------------------------------------
+     A mounted unit reuses the whole humanoid pose and then overrides
+     the parts a saddle changes. Doing it here rather than in a second
+     pose function keeps one clock, one set of springs and one strike
+     curve for the entire cast. */
+  if (inp.mounted) applyRiding(pose, st, inp, gait, speed, phase);
+
   return pose;
 }
+
+/**
+ * Seating and the mount's own animation.
+ *
+ * The rider is lifted onto the saddle by Pose.seat, which buildPalette
+ * applies to the pelvis only -- so the entire humanoid block moves and
+ * the horse does not. Then the legs are folded around the barrel and
+ * the horse gets its own gait.
+ */
+function applyRiding(pose, st, inp, gait, speed, phase) {
+  /* Hips to the saddle. The saddle sits at y = 1.45 on the barrel and the
+     rider's pelvis rest is y = 0.95, so 0.50 of lift puts the seat bones on
+     the leathers rather than inside the horse. */
+  pose.seat = RIDE_SEAT;
+
+  /* --- rider's legs: knees forward and out, feet down in the stirrup ---
+     A rider does not stand on the ground, so the walk gait's thigh swing
+     has to go: the legs are folded and hold still, and only the post at
+     a trot moves them. */
+  pose.set(B.THIGH_L, -1.02 + Math.sin(phase * 2) * 0.05 * speed, 0, 0.20);
+  pose.set(B.THIGH_R, -1.02 + Math.sin(phase * 2 + Math.PI) * 0.05 * speed, 0, -0.20);
+  pose.set(B.SHIN_L, 1.22, 0, 0);
+  pose.set(B.SHIN_R, 1.22, 0, 0);
+  pose.set(B.FOOT_L, 0.30, 0, 0);
+  pose.set(B.FOOT_R, 0.30, 0, 0);
+
+  /* --- rider's torso: forward over the withers, hands on the reins ---
+     Sitting upright on a moving horse looks like a mannequin. */
+  pose.add(B.SPINE, 0.10 + speed * 0.10, 0, 0);
+  pose.add(B.CHEST, 0.05 + speed * 0.05, 0, 0);
+  /* the near arm holds the reins low, the far arm keeps the weapon free */
+  pose.set(B.UPPER_ARM_L, -0.55, 0, 0.24);
+  pose.set(B.FOREARM_L, -0.95, 0, 0);
+  pose.set(B.UPPER_ARM_R, -0.30 + Math.sin(phase * 2) * 0.06 * speed, 0, -0.20);
+  pose.set(B.FOREARM_R, -0.70, 0, 0);
+
+  /* --- the horse -------------------------------------------
+     A walk is a four-beat gait; a gallop is a two-beat one with the
+     hind pair driving. Both come from the same phase so the legs and
+     the body stay in sync, which is the difference between a horse
+     and a rocking chair. */
+  const gallop = clamp01(inp.speed || 0);
+  const bob = Math.sin(phase * 2) * (0.020 + gallop * 0.055);
+  pose.off[B.HORSE_BODY * 3 + 1] = bob;
+  /* the barrel pitches with the stride */
+  pose.set(B.HORSE_BODY, Math.sin(phase * 2 + 0.6) * (0.02 + gallop * 0.05), 0, 0);
+
+  /* neck counter-nods against the barrel: the head stays level while the
+     body rocks, and that counter-motion is what reads as a live animal */
+  pose.set(B.HORSE_NECK, -Math.sin(phase * 2 + 0.6) * (0.05 + gallop * 0.10)
+    + Math.sin(st.t * 0.9) * 0.02, 0, 0);
+  pose.set(B.HORSE_HEAD, 0.10 + Math.sin(phase * 2 + 1.4) * 0.04 * (0.4 + gallop), 0, 0);
+
+  /* legs: hind pair half a phase ahead of the front pair, diagonals opposed */
+  /* A horse's stride is a swing of the whole leg about the hip; past about
+     0.5 rad the hoof punches through the ground plane on the downbeat. */
+  const legSwing = 0.16 + gallop * 0.30;
+  pose.set(B.HORSE_FL, Math.sin(phase) * legSwing * speed, 0, 0);
+  pose.set(B.HORSE_FR, Math.sin(phase + Math.PI) * legSwing * speed, 0, 0);
+  pose.set(B.HORSE_HL, Math.sin(phase + Math.PI * 0.85) * legSwing * speed, 0, 0);
+  pose.set(B.HORSE_HR, Math.sin(phase + Math.PI * 1.85) * legSwing * speed, 0, 0);
+
+  /* tail: a lazy pendulum at rest, streaming out at speed */
+  const tailBase = -0.22 - gallop * 0.55;
+  pose.set(B.HORSE_TAIL, tailBase + Math.sin(st.t * 2.1) * 0.10 * (1 - gallop * 0.6),
+    0, Math.sin(st.t * 1.3) * 0.12);
+}
+
+/** Metres the whole rider is lifted to sit in the saddle. */
+export const RIDE_SEAT = 0.50;
 
 /** Clamp an angle to +/- limit, but ease rather than clip. */
 function clampAngle(v, limit) {

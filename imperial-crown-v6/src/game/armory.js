@@ -26,7 +26,7 @@ import { Shader } from '../core/gl.js';
 import { InstanceBatch } from '../gfx/batch.js';
 import { BONE_COUNT, Pose, buildBindPalette, buildSkinPalette } from '../gfx/rig/skeleton.js';
 import { DETAIL } from '../gfx/rig/meshbuilder.js';
-import { buildRig, RIGS, PROFILES, SKIN_TONES, HAIR_COLORS } from '../gfx/rig/rigs.js';
+import { buildRig, RIGS, PROFILES, SKIN_TONES, HAIR_COLORS, isMounted } from '../gfx/rig/rigs.js';
 import { evaluate, AnimState } from '../gfx/rig/animator.js';
 import { UNIT_VS, UNIT_FS, UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from '../gfx/rig/unitShaders.js';
 import { BonePalette } from '../gfx/rig/palette.js';
@@ -319,22 +319,25 @@ export class Armory {
   _advance(dt) {
     const key = this.classKey;
     const st = this._state;
+    /* A mounted class has to be told, or the inspector shows a rider
+       standing on the ground with a horse through its middle. */
+    const ride = { classKey: key, mounted: isMounted(key) };
     if (this.pose === 'walk') {
       evaluate(this._pose, st, {
-        dt, speed: 1, phase: st.t * 5.4, attack: 0, moving: true, classKey: key
+        ...ride, dt, speed: 1, phase: st.t * 5.4, attack: 0, moving: true
       });
     } else if (this.pose === 'attack') {
       /* loop the four-phase strike so the whole curve is visible */
       const period = 1.4;
       const u = (st.t % period) / period;
       evaluate(this._pose, st, {
-        dt, speed: 0, phase: 0, attack: 1 - u, classKey: key
+        ...ride, dt, speed: 0, phase: 0, attack: 1 - u
       });
     } else if (this.pose === 'fidget') {
       /* run the idle state fast-forward until a fidget is mid-gesture */
-      evaluate(this._pose, st, { dt: dt * 3, speed: 0, phase: 0, attack: 0, classKey: key });
+      evaluate(this._pose, st, { ...ride, dt: dt * 3, speed: 0, phase: 0, attack: 0 });
     } else {
-      evaluate(this._pose, st, { dt, speed: 0, phase: 0, attack: 0, classKey: key });
+      evaluate(this._pose, st, { ...ride, dt, speed: 0, phase: 0, attack: 0 });
     }
     this._needsPose = true;
   }
@@ -374,6 +377,11 @@ export class Armory {
 
     /* the unit */
     const key = this.classKey;
+    /* LOD comes from the raw orbit distance, NOT from the mount-scaled one.
+       The multiplier exists only to keep a long animal inside the frame; if
+       it also drove the LOD then every cavalry class would be inspected at
+       far detail and the whole point of the panel -- looking closely at the
+       geometry -- would be lost. */
     const tier = this.dist < 2.8 ? DETAIL.NEAR : this.dist < 4.6 ? DETAIL.MID : DETAIL.FAR;
     const batch = this._batchFor(key, tier);
     if (!batch) return;
@@ -461,8 +469,13 @@ export class Armory {
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
     const d = this.dist;
-    const eye = [sy * cp * d, 1.05 + sp * d, cy * cp * d];
-    const target = [0, 1.02, 0];
+    /* A mounted unit is 2.1 m tall and 1.9 m nose to tail. Aiming at a foot
+       soldier's chest crops the horse's head and hooves off, so the aim point
+       and the eye height both move up when there is a mount on the pedestal. */
+    const mt = isMounted(this.classKey) ? 1 : 0;
+    const de = d * (mt ? 1.5 : 1);
+    const eye = [sy * cp * de, 1.05 + mt * 0.55 + sp * de, cy * cp * de];
+    const target = [0, 1.02 + mt * 0.42, mt * 0.10];
     const up = [0, 1, 0];
     /* look-at */
     const zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];

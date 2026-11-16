@@ -32,10 +32,41 @@ export const B = {
   /** Secondary-motion nodes: garments and hair. No skin weights lean on these
       hard, but a braid that can swing on its own is most of the "alive" look. */
   SKIRT: 22,
-  HAIR: 23
+  HAIR: 23,
+
+  /* ---- the mount ------------------------------------------------
+     Eight bones, appended after the humanoid block so no index above
+     moves: those are baked into every existing mesh.
+
+     The palette gives 32 bone slots per row (128 texels / 4) and the
+     humanoid block already uses 24, so the mount gets exactly eight
+     and that is enough for the shape:
+
+       body    the barrel; the rider's pelvis is parented to this
+       neck    |
+       head    | so the head can nod independently of the girth
+       tail    one segment, swinging against the gallop
+       four legs, hips only -- at the distance a mounted unit is ever
+       read, a fetlock is two pixels and the knee is the whole read.
+
+     Front and hind legs are separate bones because a gallop is not a
+     walk: the hind pair drives a half-phase ahead of the front pair,
+     and aliasing them would make the horse look like a table. */
+  HORSE_BODY: 24,
+  HORSE_NECK: 25,
+  HORSE_HEAD: 26,
+  HORSE_TAIL: 27,
+  HORSE_FL: 28,
+  HORSE_FR: 29,
+  HORSE_HL: 30,
+  HORSE_HR: 31
 };
 
-export const BONE_COUNT = 24;
+export const BONE_COUNT = 32;
+/* Where the humanoid block ends and the mount begins. Everything below this
+   index exists on every rig; everything above it only on a mounted one, and
+   a foot rig leaves those matrices at identity. */
+export const HUMANOID_BONES = 24;
 
 /** parent[i] is the parent bone of i. ROOT has no parent (-1). */
 export const PARENT = new Int8Array([
@@ -62,7 +93,21 @@ export const PARENT = new Int8Array([
   B.SHIN_R === undefined ? 0 : B.THIGH_R, // SHIN_R
   B.SHIN_R,  // FOOT_R
   B.PELVIS,  // SKIRT
-  B.HEAD     // HAIR
+  B.HEAD,    // HAIR
+
+  /* ---- the mount ------------------------------------------------
+     The horse hangs off ROOT, never off PELVIS. The rider sits on
+     HORSE_BODY, so if the mount were parented to the rider's pelvis
+     the two would drive each other in a circle. ROOT is the one
+     joint both sides share. */
+  B.ROOT,         // HORSE_BODY
+  B.HORSE_BODY,   // HORSE_NECK
+  B.HORSE_NECK,   // HORSE_HEAD
+  B.HORSE_BODY,   // HORSE_TAIL
+  B.HORSE_BODY,   // HORSE_FL
+  B.HORSE_BODY,   // HORSE_FR
+  B.HORSE_BODY,   // HORSE_HL
+  B.HORSE_BODY    // HORSE_HR
 ]);
 
 /** Human-readable names, for the inspector and for test failure messages. */
@@ -72,7 +117,9 @@ export const BONE_NAMES = [
   'shoulderR', 'upperArmR', 'forearmR', 'handR',
   'hipL', 'thighL', 'shinL', 'footL',
   'hipR', 'thighR', 'shinR', 'footR',
-  'skirt', 'hair'
+  'skirt', 'hair',
+  'horseBody', 'horseNeck', 'horseHead', 'horseTail',
+  'horseFL', 'horseFR', 'horseHL', 'horseHR'
 ];
 
 /**
@@ -105,7 +152,34 @@ export const REST = [
   /*20 SHIN_R      */ [0, -0.44, 0],
   /*21 FOOT_R      */ [0, -0.42, 0],
   /*22 SKIRT       */ [0, -0.04, 0],
-  /*23 HAIR        */ [0, 0.12, 0]
+  /*23 HAIR        */ [0, 0.12, 0],
+
+  /* ---- the mount ------------------------------------------------
+     Feet-at-zero, facing +Z, same convention as the rider. The barrel
+     is 1.42 m at the withers, which is a destrier; a scout's pony
+     scales down through the profile, not through these numbers.
+
+     These are absolute-ish offsets from ROOT, unlike the humanoid
+     bones which chain down the body, because the barrel is the one
+     thing the whole mount is measured from.
+
+     Sign note: +X is the model's LEFT (the humanoid block mirrors
+     that -- SHOULDER_L is negative X), so the two left legs are at
+     negative X here too. */
+  /*24 HORSE_BODY  */ [0, 1.20, 0],
+  /*25 HORSE_NECK  */ [0, 0.22, 0.40],
+  /*26 HORSE_HEAD  */ [0, 0.10, 0.34],
+  /*27 HORSE_TAIL  */ [0, 0.10, -0.55],
+  /* Leg origins sit at the KNEE, not the hip. The palette rotates a bone
+     about its own rest origin, and the haunch is a thick mass: pivoting it
+     at the hip swings its top edge out of the barrel and the horse comes
+     apart at a walk. So the haunch is built on HORSE_BODY and stays put,
+     and only the cannon and hoof -- a thin column -- swing on these bones.
+     That is also what a real leg does: the horse walks from the knee. */
+  /*28 HORSE_FL    */ [-0.205, -0.68, 0.42],
+  /*29 HORSE_FR    */ [0.205, -0.68, 0.42],
+  /*30 HORSE_HL    */ [-0.215, -0.66, -0.38],
+  /*31 HORSE_HR    */ [0.215, -0.66, -0.38]
 ];
 
 /* ---- tiny column-major 4x4 helpers (the palette is column-major) ---- */
@@ -172,11 +246,15 @@ export class Pose {
     this.rot = new Float32Array(BONE_COUNT * 3);
     this.off = new Float32Array(BONE_COUNT * 3);
     this.scl = new Float32Array(BONE_COUNT * 3).fill(1);
+    /* Metres to lift the whole rider by, so its hips land in the saddle.
+       Zero on foot; set per frame by the animator on a mounted rig. */
+    this.seat = 0;
     this._local = new Float32Array(16);
     this._localS = new Float32Array(16);
   }
   clear() {
     this.rot.fill(0); this.off.fill(0); this.scl.fill(1);
+    this.seat = 0;
     return this;
   }
   set(bone, rx, ry, rz) {
@@ -200,13 +278,33 @@ export class Pose {
  */
 export function buildPalette(out, pose, prop) {
   const local = pose._local;
+  /* A mount is not a proportion of its rider. A small rider on a big horse
+     must not shrink the horse, so the mount block is scaled by the profile's
+     own mount numbers and left alone when there are none. */
+  const mount = prop.mount || null;
+  /* Where the rider's pelvis sits. On foot this is 0 and the skeleton is
+     authored feet-at-zero; mounted, the whole humanoid block is lifted by
+     this so the rider's hips land in the saddle. It is applied to PELVIS's
+     rest offset only -- every other humanoid bone chains off it, so one
+     shift moves the entire rider and nothing else. */
+  const seat = pose.seat || 0;
   for (let b = 0; b < BONE_COUNT; b++) {
     const r = b * 3, o = b * 16;
     const rest = REST[b];
-    /* rest offset, scaled by the unit's proportions, plus any pose offset */
-    const tx = rest[0] * prop.limbW + pose.off[r];
-    const ty = rest[1] * prop.height + pose.off[r + 1];
-    const tz = rest[2] * prop.chestD + pose.off[r + 2];
+    let tx, ty, tz;
+    if (b >= HUMANOID_BONES) {
+      /* mount block: absolute offsets from ROOT, scaled by the mount profile */
+      tx = mount ? rest[0] * mount.limbW : rest[0];
+      ty = mount ? rest[1] * mount.height : rest[1];
+      tz = mount ? rest[2] * mount.length : rest[2];
+      tx += pose.off[r]; ty += pose.off[r + 1]; tz += pose.off[r + 2];
+    } else {
+      /* rest offset, scaled by the unit's proportions, plus any pose offset */
+      tx = rest[0] * prop.limbW + pose.off[r];
+      ty = rest[1] * prop.height + pose.off[r + 1];
+      tz = rest[2] * prop.chestD + pose.off[r + 2];
+      if (seat && b === B.PELVIS) ty += seat;
+    }
     m4local(local, tx, ty, tz, pose.rot[r], pose.rot[r + 1], pose.rot[r + 2]);
     if (pose.scl[r] !== 1 || pose.scl[r + 1] !== 1 || pose.scl[r + 2] !== 1) {
       m4scaleUniform(out, local, pose.scl[r], pose.scl[r + 1], pose.scl[r + 2], o);
