@@ -16,7 +16,7 @@
    ============================================================ */
 
 /* ---------------- shared chunks ---------------- */
-const COMMON = /* glsl */`
+export const COMMON = /* glsl */`
 precision highp float;
 precision highp sampler2D;
 precision highp sampler2DArray;
@@ -60,7 +60,7 @@ float p256(float x){ float y = p128(x); return y*y; }
 float pow340(float x){ return p256(x) * p64(x) * p16(x) * p4(x); }
 `;
 
-const LIGHT_UNIFORMS = /* glsl */`
+export const LIGHT_UNIFORMS = /* glsl */`
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform vec3 uSkyColor;
@@ -85,14 +85,14 @@ uniform float uTownLightI;    // 0 by day, 1 at night
 uniform vec3 uTownLightColor;
 `;
 
-const NOISE_UNIFORM = /* glsl */`
+export const NOISE_UNIFORM = /* glsl */`
 uniform sampler2D uNoise;
 `;
 
 /* Warm pools of firelight around the town. Four cheap point lights cost a few
    ALU ops and are the difference between "a dark shader" and a hearth-lit
    village at night. The whole block is skipped by a uniform branch by day. */
-const TOWN_LIGHT_FN = /* glsl */`
+export const TOWN_LIGHT_FN = /* glsl */`
 vec3 townLights(vec3 p, vec3 N){
   if (uTownLightI < 0.01) return vec3(0.0);
   vec3 sum = vec3(0.0);
@@ -127,7 +127,7 @@ vec3 townGlow(vec3 p){
    ones give eight comparisons for half the cost and a softer edge. Outside
    the map the fragment is lit and the border is faded, which kills the hard
    dark band a shadow frustum edge used to paint across the shoreline. */
-const SHADOW_FN = /* glsl */`
+export const SHADOW_FN = /* glsl */`
 float shadowFactor(vec3 worldPos, float ndl){
   if (uShadowStrength <= 0.001) return 1.0;
   vec4 sp = uShadowMatrix * vec4(worldPos, 1.0);
