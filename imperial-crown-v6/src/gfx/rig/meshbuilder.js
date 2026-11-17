@@ -250,29 +250,80 @@ export class SkinnedBuilder {
     if (n < 2) return this;
     const m = sections[0].pts.length;
     const base = this.count;
-    const push = (pts) => {
-      /* outward normal from the section's own winding: the section runs
-         left-to-right across the shell, so the outward side is on its right
-         when travelling in +x, which for a horse's back means +y at the top
-         and -x on the far flank. */
-      const out = [];
+
+    /* SWEEP ABOUT Z, WITH THE NORMAL TAKEN FROM THE SURFACE ITSELF.
+
+       A horse's barrel runs along Z, so (x, y) sections at successive Z are
+       true cross-sections of the animal, and the quad between two of them is
+       a patch of its surface. `lathe` revolves about Y and cannot cover a
+       body lying along Z at all, which is why a caparison could never be a
+       lathe.
+
+       The normal is NOT the section's 2D normal. That version broke on the
+       mirrored flank: reflecting a section in X flips its handedness, so the
+       2D normal came out pointing inward on one side only, and no amount of
+       flipping the winding could fix both sides at once -- each attempt
+       fixed one flank and blanked the other, four times.
+
+       Here the normal is the true surface normal, cross(dP/dk, dP/dr),
+       measured from the actual neighbouring vertices. That is correct under
+       any mirroring, because it is derived from the geometry rather than
+       from a convention about how the points were written down.
+
+       It is then pointed OUTWARD explicitly, away from the body's axis --
+       `opts.axis` is the point the drape hangs over -- so a garment is never
+       drawn inside-out however its sections happen to be ordered. */
+    const axis = opts.axis || [0, 0];
+    const ring = [];
+    for (let r = 0; r < n; r++) {
+      const { z, pts } = sections[r];
+      const prev = sections[Math.max(0, r - 1)];
+      const next = sections[Math.min(n - 1, r + 1)];
+      const row = [];
       for (let k = 0; k < m; k++) {
         const a = pts[Math.max(0, k - 1)];
         const b = pts[Math.min(m - 1, k + 1)];
-        let dx = b[0] - a[0], dy = b[1] - a[1];
-        const l = Math.hypot(dx, dy) || 1;
-        out.push([dy / l, -dx / l]);
+        const ap = prev.pts[k], bp = next.pts[k];
+        /* dP/dk and dP/dr */
+        const ux = b[0] - a[0], uy = b[1] - a[1], uz = 0;
+        const vx = bp[0] - ap[0], vy = bp[1] - ap[1], vz = next.z - prev.z;
+        let nx = uy * vz - uz * vy;
+        let ny = uz * vx - ux * vz;
+        let nz = ux * vy - uy * vx;
+        const nl = Math.hypot(nx, ny, nz) || 1;
+        nx /= nl; ny /= nl; nz /= nl;
+        /* outward: away from the axis the cloth hangs over */
+        const ox = pts[k][0] - axis[0];
+        const oy = pts[k][1] - axis[1];
+        if (nx * ox + ny * oy < 0) { nx = -nx; ny = -ny; nz = -nz; }
+        row.push([nx, ny, nz]);
       }
-      return out;
-    };
+      ring.push(row);
+    }
     for (let r = 0; r < n; r++) {
-      const { z, pts } = sections[r];
-      const nor = push(pts);
-      const v = r / (n - 1);
+      const v = n > 1 ? r / (n - 1) : 0;
       for (let k = 0; k < m; k++) {
-        const u = m > 1 ? k / (m - 1) : 0;
-        this._vert(pts[k][0], pts[k][1], z, nor[k][0], nor[k][1], 0, u, v);
+        const [nx, ny, nz] = ring[r][k];
+        this._vert(sections[r].pts[k][0], sections[r].pts[k][1], sections[r].z,
+          nx, ny, nz, m > 1 ? k / (m - 1) : 0, v);
       }
+    }
+    /* WINDING made consistent with those normals: take one quad, cross two
+       edges, and compare with the normal authored for its first corner. */
+    let flipAll = false;
+    if (m > 1) {
+      const P = this.v, S = 20;
+      const i0 = base, i1 = base + 1, i2 = base + m;
+      const ax = P[i1 * S] - P[i0 * S];
+      const ay = P[i1 * S + 1] - P[i0 * S + 1];
+      const az = P[i1 * S + 2] - P[i0 * S + 2];
+      const bx = P[i2 * S] - P[i0 * S];
+      const by = P[i2 * S + 1] - P[i0 * S + 1];
+      const bz = P[i2 * S + 2] - P[i0 * S + 2];
+      const gx = ay * bz - az * by;
+      const gy = az * bx - ax * bz;
+      const gz = ax * by - ay * bx;
+      flipAll = (gx * P[i0 * S + 3] + gy * P[i0 * S + 4] + gz * P[i0 * S + 5]) < 0;
     }
     for (let r = 0; r + 1 < n; r++) {
       for (let k = 0; k + 1 < m; k++) {
@@ -280,8 +331,13 @@ export class SkinnedBuilder {
         const i1 = i0 + 1;
         const i2 = i0 + m;
         const i3 = i2 + 1;
-        this._tri(i0, i1, i2);
-        this._tri(i1, i3, i2);
+        if (flipAll) {
+          this._tri(i0, i2, i1);
+          this._tri(i1, i2, i3);
+        } else {
+          this._tri(i0, i1, i2);
+          this._tri(i1, i3, i2);
+        }
       }
     }
     this._skin(bone);

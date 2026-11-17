@@ -317,83 +317,95 @@ export function buildMount(g, coat, opts = {}) {
   if (caparison) {
     /* A DRAPED TRAPPER.
 
-       This is the one shape in the file that is genuinely not a surface of
-       revolution, and it has now been attempted every wrong way: a tube
-       across the saddle (a pad), a Y-lathe (a cone standing beside the
-       horse), a per-flank elliptical sweep (a diaper that turned back in
-       under the belly), and a loft whose sections stopped at the flank (a
-       flag hanging in the air with the barrel visible behind it).
+       The one shape in this file that is not a surface of revolution, and it
+       has now been attempted every wrong way: a tube across the saddle (a
+       pad), a Y-lathe (a cone standing beside the horse), a per-flank
+       elliptical sweep (a diaper that turned back in under the belly), and a
+       loft whose sections ran spine-out-and-down in an X-Y plane that was
+       then swept along Z as a flat card -- which is a flag hanging in the
+       air with the barrel visible behind it.
 
-       What works is `skirt`: sections authored from the SPINE, out over the
-       top of the barrel, down the flank, and then STRAIGHT DOWN to the hem.
-       The section has to start at x = 0 and end well below the barrel's
-       widest point, or the cloth is a sheet of paper rather than a curtain,
-       and it has to CLOSE against the barrel's own radius at every height
-       on the way out or the rider's leg shows through the gap. */
+       `loft` takes (x, y) sections at successive Z: true cross-sections of
+       the horse. The section below starts at the spine, rolls over the top
+       of the barrel, follows the ribs down the flank, and then falls
+       STRAIGHT to the hem. It also CLOSES against the barrel radius at every
+       height on the way out, so the rider's leg cannot show through. */
     const midY = (L.back + L.belly) / 2;
-    const hemY = L.kneeF + 0.02;               /* knee height */
+    const hemY = L.kneeF + 0.02;               /* knee height, as specified */
     const topY = L.back - 0.05;                /* just under the saddle pad */
-    const sect = (widthK) => {
-      /*  // one section, spine -> hem. `widthK` tucks the front and rear
-          // rings in under the saddle and the cantle. */
-      const wx = R * 1.10 * widthK;
+    /* one section: spine -> shoulder of the barrel -> flank -> hem */
+    const sect = (k) => {
+      const wx = R * 1.12 * k;
       return [
         [0, topY],
-        [wx * 0.42, topY - 0.05],
-        [wx * 0.86, midY + 0.16],
-        [wx, midY - 0.05],
-        [wx * 1.02, (midY + hemY) * 0.5],
-        [wx * 1.01, hemY]
+        [wx * 0.46, topY - 0.045],
+        [wx * 0.88, midY + 0.17],
+        [wx, midY - 0.06],
+        [wx * 1.03, (midY + hemY) * 0.52],
+        [wx * 1.02, hemY]
       ];
     };
-    /* Four rings. The two middle rings at k = 1.00 are the same radius and
-       describe the same section; the panel only bends at the ends. */
     const rings = [
-      { z: 0.42, k: 0.60 },
-      { z: 0.20, k: 0.94 },
+      { z: 0.44, k: 0.58 },
+      { z: 0.22, k: 0.94 },
       { z: -0.30, k: 1.00 },
-      { z: -0.56, k: 0.94 }
+      { z: -0.56, k: 0.95 }
     ];
-    for (const side of [1, -1]) {
-      const flip = (pts) => pts.map(([x, y]) => [x * side, y]);
-      g.material(MAT.LINEN).color(caparison[0], caparison[1], caparison[2]);
-      g.loft(body, rings.map((r) => {
-        const p = flip(sect(r.k));
-        if (g.detail === 0) {
-          const t = (r.z + 0.56) / 0.98;
-          p[3][0] *= 1 + 0.016 * Math.cos(t * 11);
-          p[4][0] *= 1 + 0.020 * Math.cos(t * 11);
-          p[5][0] *= 1 + 0.024 * Math.cos(t * 11);
-        }
-        return { z: r.z, pts: p };
-      }), {});
-    }
-    /* THE HERALDIC BORDER, running ALONG the hem.
-       It is the bottom two points of the panel's own section, grown 12 mm
-       outward in X only, lofted from the front hem ring to the rear one.
-       Building it as its own hand-written strip is what went wrong before:
-       the mirrored side's winding came out reversed and the band was culled.
-       Re-using the section guarantees the winding matches the panel. */
-    if (g.detail === 0) {
-      g.material(MAT.TRIM).color(0.93, 0.91, 0.84);
-      for (const side of [1, -1]) {
-        /* A NARROW strip along the hem -- 95 mm tall, not the whole lower
-           half of the panel. Slicing the section's last two points gave a
-           band from mid-flank to the hem, which is a cream slab across the
-           horse's ribs rather than a border. */
-        const band = (k) => {
-          const wx = R * 1.10 * k;
-          return [
-            [(wx * 1.035) * side, hemY + 0.095],
-            [(wx * 1.030) * side, hemY]
+    g.material(MAT.LINEN).color(caparison[0], caparison[1], caparison[2]);
+    const build = (side, band) => {
+      /* The mirrored side needs its points in REVERSED order.
+         Reflecting a section in X reverses its rotational sense; reversing
+         the array reverses it back, so one builder serves both flanks with
+         no flip flag and no second set of winding rules. Getting this wrong
+         is invisible on a closed form and fatal on a single-sided panel --
+         the caparison simply vanished on one side. */
+      const pts = (k) => sect(k).map(([x, y]) => [x * side, y]);
+      if (band) {
+        /* THE HERALDIC BORDER: a narrow strip along the hem, 95 mm tall and
+           14 mm proud, from the front hem ring to the rear one. */
+        /* Written HEM FIRST, then up. `loft` derives its normal from the
+           section's own winding -- travelling in +x it puts the outward side
+           on the right -- so a two-point section written top-down gets an
+           inward normal and the whole band is culled. Same trap as every
+           face-opening band in the helmets. */
+        /* A CHEVRON SECTION, not a vertical strip.
+           A two-point vertical section is a plane whose normal is +X, so
+           from the side it is edge-on and invisible -- which is why the
+           border kept vanishing after the winding and clearance were both
+           fixed. Capping the panel's outer face with a slight outward lean
+           gives the strip a top face that catches light from above, which is
+           what a proud hem band actually looks like. */
+        /* HEM FIRST, then up the OUTSIDE. `loft` takes its outward normal
+           from the cross product of the section tangent and +Z, so for a
+           strip on the +X flank the section must run from the hem UP to the
+           top edge. Written top-down the band was culled on both flanks and
+           the caparison had no border -- which reads identically to "the
+           band was never built", and cost an hour. */
+        const b = (k) => {
+          const wx = R * 1.12 * 1.02 * k;
+          const p = side > 0 ? [
+            [wx * 1.034, hemY],
+            [wx * 1.016, hemY + 0.098]
+          ] : [
+            [-wx * 1.016, hemY + 0.098],
+            [-wx * 1.034, hemY]
           ];
+          return p;
         };
         g.loft(body, [
-          { z: 0.20, pts: band(0.94) },
-          { z: -0.30, pts: band(1.00) },
-          { z: -0.52, pts: band(0.94) }
-        ], {});
+          { z: 0.20, pts: b(0.94) },
+          { z: -0.30, pts: b(1.00) },
+          { z: -0.54, pts: b(0.95) }
+        ], { axis: [0, hemY + 0.05] });
+      } else {
+        g.loft(body, rings.map((r) => ({ z: r.z, pts: pts(r.k) })),
+          { axis: [0, midY] });
       }
+    };
+    for (const side of [1, -1]) build(side, false);
+    if (g.detail === 0) {
+      g.material(MAT.TRIM).color(0.93, 0.91, 0.84);
+      for (const side of [1, -1]) build(side, true);
     }
   }
 
