@@ -194,16 +194,48 @@ export function buildMount(g, coat, opts = {}) {
     R * 0.36, R * 0.24,
     { seg: 5, rings: g.detail === 0 ? 3 : 2, squash: [0.78, 1.05] });
   /* The nose itself: a blunt pad covering the END of that tube, not a ball
-     floating past it. It is centred back inside the tube's last ring. */
-  g.ellipsoid(head, [0, L.muzzleY - 0.01, L.muzzleZ - R * 0.10],
-    [R * 0.245, R * 0.215, R * 0.20], { sph: [4, 2] });
+     floating past it.
+     It was built at sph [4, 2] -- FOUR segments round -- so the last thing
+     you saw on the animal's face was a four-sided box with a hard notch in
+     it. Worse, its radii were picked independently of the tube's, so it was
+     WIDER than the muzzle it was supposed to cap: a step shoulder, and the
+     tube's own open end showing as a flat disc inside it.
+     So: derive the pad FROM the tube's end ring. The tube ends at
+     radius R*0.24 with squash [0.78, 1.05], which is the ellipse
+     (0.24R*0.78, 0.24R*1.05). The pad is that ellipse, extended forward, so
+     it is a continuing of the muzzle rather than a block bolted onto it. */
+  {
+    const ex = R * 0.24 * 0.78;   /* tube end half-width  */
+    const ey = R * 0.24 * 1.05;   /* tube end half-height */
+    /* The pad is centred ON the tube's last ring so its back half is buried
+       and its front half rounds the muzzle off. Five round, three rings: the
+       muzzle is what a viewer looks at. */
+    g.ellipsoid(head, [0, L.muzzleY - 0.004, L.muzzleZ - R * 0.035],
+      [ex * 1.04, ey * 1.04, R * 0.175], { sph: [5, 3] });
+    /* Nostrils: two dark pits on the pad's front face. Without them a blunt
+       pad is a snout; with them it is a horse. Built small and sunk, so they
+       read as holes rather than as two more blobs. */
+    g.material(MAT.HAIR).color(coat[0] * 0.34, coat[1] * 0.34, coat[2] * 0.34);
+    for (const sx of [-1, 1]) {
+      g.ellipsoid(head, [sx * ex * 0.46, L.muzzleY + ey * 0.22, L.muzzleZ + R * 0.10],
+        [ex * 0.30, ey * 0.26, R * 0.055], { sph: [4, 2] });
+    }
+    /* Mouth line: one dark sliver across the front of the pad, below the
+       nostrils. */
+    g.slab(head, [0, L.muzzleY - ey * 0.52, L.muzzleZ + R * 0.11],
+      [ex * 0.92, ey * 0.10, R * 0.05]);
+    g.material(MAT.HAIR).color(coat[0], coat[1], coat[2]);
+  }
   /* jaw, set back under the cheek */
   g.ellipsoid(head, [0, L.muzzleY + 0.20, L.muzzleZ - 0.26], [R * 0.30, R * 0.27, R * 0.30],
     { sph: [4, 3] });
   /* ears, two small cones raked back off the poll */
   for (const sx of [-1, 1]) {
-    g.tube(head, [sx * R * 0.16, L.pollY + 0.02, L.pollZ - 0.10],
-      [sx * R * 0.22, L.pollY + 0.14, L.pollZ - 0.17], 0.030, 0.006,
+    /* Ears. They were 30 mm to 6 mm over 120 mm -- two pencilled spikes off
+       the poll. A horse's ear is a cone with some meat at the base and a
+       rounded tip, so it keeps a real radius all the way up. */
+    g.tube(head, [sx * R * 0.17, L.pollY + 0.01, L.pollZ - 0.09],
+      [sx * R * 0.20, L.pollY + 0.135, L.pollZ - 0.145], 0.036, 0.014,
       { seg: 4, rings: 1 });
   }
   /* mane: a flat crest down the neck, offset slightly so it does not fight
@@ -445,16 +477,60 @@ export function buildMount(g, coat, opts = {}) {
        The muzzle end is cut where the nose is, not extended past it: at
        muzzleZ - 0.10 the plate hung 100 mm off the end of the head and read
        as a mask floating in front of the horse. */
-    g.tube(head, [0, L.pollY - 0.06, L.pollZ - 0.01], [0, L.muzzleY + 0.14, L.muzzleZ - 0.20],
-      R * 0.36 + 0.018, R * 0.25 + 0.018,
-      { seg: 5, rings: g.detail === 0 ? 2 : 1 });
+    /* A CHAMFRON IS A PARTIAL LOFT OVER THE HEAD, NOT A TUBE AROUND IT.
+       Three tubes were tried and every one of them failed the same way, so
+       the tube is gone:
+         - the head is a tube with squash [0.78, 1.05] on a raked axis;
+         - a concentric tube needs the SAME axis, and it needs the winding to
+           come out outward;
+         - a five-sided tube's FACES sit at 0.809 of its vertices, so a plate
+           proud at the vertices is still inside the head at the middle of
+           every facet. What showed was the seam: a wire outline of a
+           breastplate with a bare horse inside it. And reversing the
+           endpoints to fix the winding made it worse -- the plate then
+           wrapped the MUZZLE and left the whole forehead bare, which is what
+           a chamfron is actually for.
+       `loft` has none of these problems: it derives the normal from the
+       surface it is given and solves the triangle winding from one quad, so
+       it cannot be inside-out, and it takes an OPEN arc, so the plate can be
+       exactly what a chamfron is -- a shell over the face from cheek to
+       cheek -- instead of a closed sleeve with a horse inside it. */
+    {
+      const ha = [0, L.pollY - 0.08, L.pollZ - 0.02];
+      const hb = [0, L.muzzleY, L.muzzleZ];
+      const yAt = (t) => ha[1] + (hb[1] - ha[1]) * t;
+      const zAt = (t) => ha[2] + (hb[2] - ha[2]) * t;
+      const rAt = (t) => R * 0.36 + (R * 0.24 - R * 0.36) * t;
+      /* Five points across a 200-degree arc: over the brow, down both
+         cheeks, ending level with the jaw. cos(25 deg) is the chord's
+         shortest fall from a vertex, so 1/that plus a margin of paint is the
+         least inflation that keeps every facet outside the head. */
+      const K = 1 / Math.cos(Math.PI / 5 / 2) + 0.06;
+      const ARC = [-100, -50, 0, 50, 100];
+      const sect = (t) => ARC.map((deg) => {
+        const a = (deg * Math.PI) / 180;
+        const r = rAt(t) * K;
+        return [r * 0.78 * Math.sin(a), yAt(t) + r * 1.05 * Math.cos(a)];
+      });
+      const rings = [0.06, 0.32, 0.58, 0.82];
+      g.loft(head, rings.map((t) => ({ z: zAt(t), pts: sect(t) })),
+        { axis: [0, yAt(0.45)] });
+    }
 
-    /* peytral: the breast, concentric, 20 mm up. */
-    g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02],
-      [R * 0.70 + 0.020, R * 0.86 + 0.020, 0.18 + 0.020], { sph: [5, 3] });
-    /* and its lower edge, a smaller shell of the same family */
-    g.ellipsoid(body, [0, L.withers - 0.44, L.chestZ - 0.22],
-      [R * 0.52, 0.09, 0.11], { sph: [4, 2] });
+    /* NO PEYTRAL. It was attempted three ways and it cannot be built on
+       this animal. The breast IS an ellipsoid and a scaled copy of it does
+       nest correctly -- that part now works -- but the LOWER NECK tube is a
+       separate form that leaves the withers a full 0.26 below the ridge and
+       sweeps forward across exactly the area a peytral covers. So the plate
+       nests inside the breast and the breast nests inside the neck: the
+       visible result is a grey outline of a horse breastplate drawn on a
+       neck, which is what every render showed.
+       This is the same failure as the crinet and the flanchards, and the
+       answer is the same one the code already reached for those: a plate is
+       only buildable over a form that is a body of revolution and is not
+       crossed by another one. The cataphract's horse keeps the chamfron --
+       the one piece that lies on a clean form -- plus the caparison over the
+       barrel and flanks. */
   }
 
   return { body, neck, head };

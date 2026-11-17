@@ -146,8 +146,18 @@ check('per-class triangle budget holds', () => {
        tier-driven costs ~100 triangles at near on the cataphract and takes
        ~450 off at far, which is the right direction for both. */
     const mounted = isMounted(key);
-    const nearCap = mounted ? 2120 : 1450;
-    const midCap = mounted ? 1450 : 940;
+    /* Re-baselined from 2120 after the horse's head was rebuilt: a 5-segment
+       muzzle with a three-ring nose pad, two nostril pits and ears that keep
+       a real radius to the tip. The previous muzzle was a FOUR-segment box
+       with a hard notch in it -- exactly the kind of saving the cap was
+       meant to catch, not to protect. Keeping this cap at 2120 would have
+       meant deleting the animal's face to satisfy a number, so the cap moves
+       to 3% above the new measure instead, which is what the note above
+       says the cap is for. */
+    const nearCap = mounted ? 2230 : 1450;
+    /* Same reasoning as nearCap: the horse's head is the same head at every
+       tier, so its cost lands on mid as well. */
+    const midCap = mounted ? 1520 : 940;
     const farCap = mounted ? 950 : 480;
     assert(near <= nearCap, `${key}: near ${near} over ${nearCap}`);
     assert(mid <= midCap, `${key}: mid ${mid} over ${midCap}`);
