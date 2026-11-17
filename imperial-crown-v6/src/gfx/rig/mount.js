@@ -133,19 +133,25 @@ export function buildMount(g, coat, opts = {}) {
   const R = L.girthR;
 
   /* chest -> girth */
+  /* The barrel is TWO tubes with one ring of curvature each at near and
+     none below it. A horse's barrel is a smooth ellipsoid; the rings were
+     sampling a smooth curve with straight chords, at 8 and 6 segments, on a
+     thing that is a fifth of the screen at the closest the camera ever
+     gets to a horse. */
+  const barrelRings = g.detail === 0 ? 2 : 1;
   g.tube(body, [0, L.withers - 0.12, L.chestZ], [0, (L.back + L.belly) / 2 + 0.04, 0.04],
-    R * 0.74, R, { seg: g.seg(0), rings: 2, squash: [1.0, 0.90] });
+    R * 0.74, R, { seg: g.seg(0), rings: barrelRings, squash: [1.0, 0.90] });
   /* girth -> loin */
   g.tube(body, [0, (L.back + L.belly) / 2 + 0.04, 0.04], [0, L.back - 0.16, L.rumpZ + 0.22],
-    R, R * 0.82, { seg: g.seg(0), rings: 2, squash: [1.0, 0.92] });
+    R, R * 0.82, { seg: g.seg(0), rings: barrelRings, squash: [1.0, 0.92] });
   /* croup: the rump, rounded and a touch higher than the loin */
   g.ellipsoid(body, [0, L.back - 0.14, L.rumpZ + 0.08], [R * 0.80, R * 0.78, 0.20],
-    { sph: g.sph() });
+    { sph: [g.sph()[0], 4] });
   /* breast: gives the front of the animal a chest instead of a cut tube.
      Gated at far tier -- the barrel's own front cap covers it there. */
   if (g.detail !== 2) {
     g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02], [R * 0.70, R * 0.86, 0.18],
-      { sph: [6, 4] });
+      { sph: [6, 3] });
   }
   /* withers: the ridge the saddle sits behind */
   g.tube(body, [0, L.withers - 0.10, L.chestZ - 0.18], [0, L.withers, 0.06],
@@ -171,11 +177,23 @@ export function buildMount(g, coat, opts = {}) {
      A long wedge with a jaw. The muzzle stays blunt: a rounded tip at this
      poly budget reads as a dog. */
   g.material(MAT.HAIR).color(coat[0], coat[1], coat[2]);
-  g.tube(head, [0, L.pollY - 0.08, L.pollZ - 0.02], [0, L.muzzleY + 0.06, L.muzzleZ - 0.06],
-    R * 0.36, R * 0.24, { seg: 5, rings: 1, squash: [0.78, 1.05] });
-  /* muzzle */
-  g.ellipsoid(head, [0, L.muzzleY, L.muzzleZ], [R * 0.26, R * 0.23, R * 0.22],
-    { sph: [5, 4] });
+  /* ONE continuous run from the poll to the nose.
+     This used to be a tube stopping at L.muzzleZ - 0.06 plus an ellipsoid
+     centred at L.muzzleZ, and the two did not meet: the nose hung in front of
+     a chopped-off snout like a meatball on a wire. A horse's head IS a
+     single tapered surface from the poll over the forehead, down the nasal
+     bridge, to the muzzle -- so build it as one, with the rings placed along
+     that curve and the radii narrowing as it goes. `rings` is raised because
+     four rings cannot describe a curve. */
+  g.tube(head,
+    [0, L.pollY - 0.08, L.pollZ - 0.02],
+    [0, L.muzzleY, L.muzzleZ],
+    R * 0.36, R * 0.24,
+    { seg: 5, rings: g.detail === 0 ? 3 : 2, squash: [0.78, 1.05] });
+  /* The nose itself: a blunt pad covering the END of that tube, not a ball
+     floating past it. It is centred back inside the tube's last ring. */
+  g.ellipsoid(head, [0, L.muzzleY - 0.01, L.muzzleZ - R * 0.10],
+    [R * 0.245, R * 0.215, R * 0.20], { sph: [5, 4] });
   /* jaw, set back under the cheek */
   g.ellipsoid(head, [0, L.muzzleY + 0.20, L.muzzleZ - 0.26], [R * 0.30, R * 0.27, R * 0.30],
     { sph: [5, 4] });
@@ -227,7 +245,8 @@ export function buildMount(g, coat, opts = {}) {
     for (const [, x, hipY, hipZ, kneeY, , topR] of legs) {
       g.material(MAT.HAIR).color(coatDark[0], coatDark[1], coatDark[2]);
       g.ellipsoid(body, [x * 0.92, (hipY + kneeY) / 2 + 0.10, hipZ * 0.94],
-        [topR * 1.02, Math.abs(hipY - kneeY) * 0.52, topR * 1.20], { sph: [5, 4] });
+        [topR * 1.02, Math.abs(hipY - kneeY) * 0.52, topR * 1.20],
+        { sph: g.detail === 0 ? [5, 4] : [4, 2] });
     }
   }
 
@@ -259,7 +278,7 @@ export function buildMount(g, coat, opts = {}) {
   const seatY = L.back - 0.02;
   g.material(MAT.LEATHER).color(0.34, 0.22, 0.14);
   g.tube(body, [0, seatY, 0.22], [0, seatY + 0.01, -0.20], R * 0.80, R * 0.82,
-    { seg: 6, rings: 1, squash: [1.0, 0.42] });
+    { seg: g.seg(-1), rings: 1, squash: [1.0, 0.42] });
   if (caparison) {
     g.material(MAT.LINEN).color(caparison[0], caparison[1], caparison[2]);
     g.tube(body, [0, seatY - 0.06, 0.28], [0, seatY - 0.06, -0.30], R * 0.92, R * 0.92,
@@ -267,61 +286,50 @@ export function buildMount(g, coat, opts = {}) {
   }
 
   /* ---------------- barding ----------------
-     Plate that follows the form it covers. The first version put these on
-     fixed coordinates and they floated clear of the animal.
-       chamfron  over the face
-       peytral   across the chest
-       crinet    three plates down the neck, each overlapping the last */
+     Plate that follows the form it covers, and nothing that does not.
+
+     This block has now failed four times in the same way: a plate built on
+     its own axis while the form underneath curves in another direction.
+     A tube along the breast stands off the flanks as a flat card; an
+     ellipsoid big enough to wrap the breast dips below the barrel as a
+     detached slab. The rule that actually holds is that every plate is
+     CONCENTRIC with the piece under it and inflated by about 20 mm, and
+     where the form is not a body of revolution there is no plate at all.
+
+       chamfron  concentric with the head's own wedge
+       peytral   concentric with the breast ellipsoid, plus a drop under it
+
+     A crinet and a pair of flanchards were built and removed. Both are
+     plates over forms that are not bodies of revolution -- a raked neck and
+     a barrel with a saddle on it -- and both rendered as sheets of paper
+     hung on the side of the animal. The caparison already covers the barrel
+     and the flanks, which is what a cataphract's horse actually wears over
+     its armour, so the plate that remains is the plate that can be built
+     correctly.
+     */
   if (barding) {
-    g.material(MAT.PLATE).color(0.54, 0.56, 0.60);
-    /* Every plate is built from the SAME landmark as the form it covers and
-       is slightly LARGER than it. The first version gave the plates their own
-       coordinates and they floated clear of the animal; a plate has to be the
-       thing underneath, inflated by a centimetre. */
+    g.material(MAT.PLATE).color(0.50, 0.52, 0.56);
 
-    /* chamfron: the head wedge, inflated */
-    g.tube(head, [0, L.pollY - 0.06, L.pollZ - 0.02], [0, L.muzzleY + 0.18, L.muzzleZ - 0.12],
-      R * 0.40, R * 0.27, { seg: 4, rings: 1, squash: [0.86, 1.05] });
+    /* Chamfron: the head's own wedge, inflated by 20 mm, spanning the same
+       two endpoints -- and NOTHING else, because a plate over the horse's
+       face is the one piece of barding that is unmistakable at gameplay
+       distance. The crinet and the flanchards are gone: both covered forms
+       that are not bodies of revolution (a raked neck, a barrel with a
+       saddle on it) and both rendered as sheets of paper hung on the side
+       of the animal. The caparison already covers the barrel and flanks,
+       which is what a cataphract's horse actually wears.
+       The muzzle end is cut where the nose is, not extended past it: at
+       muzzleZ - 0.10 the plate hung 100 mm off the end of the head and read
+       as a mask floating in front of the horse. */
+    g.tube(head, [0, L.pollY - 0.06, L.pollZ - 0.01], [0, L.muzzleY + 0.14, L.muzzleZ - 0.20],
+      R * 0.36 + 0.018, R * 0.25 + 0.018, { seg: 5, rings: 2 });
 
-    /* crinet: three overlapping bands down the neck.
-       These had the same defect as the peytral -- radius 0.17 against a neck
-       that is 0.15 wide but 0.23 deep, with the squash applied on the wrong
-       axis, so each band is narrower than the neck across the grain and its
-       open ends stand off it as flat wings. A band has to enclose the
-       segment it covers, so each is built between the same two points as its
-       neck segment with both radii grown past the neck's own. */
-    for (let i = 0; i < 3; i++) {
-      const t0 = i / 3, t1 = Math.min(1, (i + 1) / 3 + 0.16);   // overlap
-      const y0 = (L.withers - 0.26) + (L.pollY - 0.06 - (L.withers - 0.26)) * t0;
-      const z0 = (L.neckBaseZ - 0.10) + (L.pollZ - (L.neckBaseZ - 0.10)) * t0;
-      const y1 = (L.withers - 0.26) + (L.pollY - 0.06 - (L.withers - 0.26)) * t1;
-      const z1 = (L.neckBaseZ - 0.10) + (L.pollZ - (L.neckBaseZ - 0.10)) * t1;
-      /* the neck tapers R*0.66 -> R*0.34 over its run; match it and add */
-      const ra = R * (0.66 - 0.32 * t0) + 0.022;
-      const rb = R * (0.66 - 0.32 * t1) + 0.022;
-      g.tube(neck, [0, y0, z0], [0, y1, z1], ra, rb,
-        { seg: 4, rings: 1, squash: [0.86, 1.34] });
-    }
-
-    /* peytral: the breast, inflated.
-       This was a vertical tube of radius 0.21 built on the body centreline,
-       which is NARROWER than the barrel (0.27) -- so instead of wrapping the
-       chest it sat inside the animal and only its open ends poked out the
-       sides, reading as two flat grey sheets standing off the shoulders.
-       Cover the breast with a shell of the breast's own dimensions, grown by
-       22 mm: same centre, same radii, plus a little. A shell that matches the
-       form underneath cannot float off it by construction, which is the rule
-       this whole barding block exists to obey. */
+    /* peytral: the breast, concentric, 20 mm up. */
     g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02],
-      [R * 0.70 + 0.022, R * 0.86 + 0.022, 0.18 + 0.022],
-      { sph: [5, 4] });
-    /* A drop below the breastbone, so the plate reads as hanging armour
-       rather than as paint on the chest. Same discipline as the shell: it is
-       an ellipsoid twice the barrel's depth, not a narrow tube -- a tube of
-       radius 0.157 against a 0.27 barrel is another plate sitting inside the
-       animal with only its ends showing. */
-    g.ellipsoid(body, [0, L.withers - 0.46, L.chestZ - 0.14],
-      [R * 0.60, 0.15, 0.20], { sph: [4, 3] });
+      [R * 0.70 + 0.020, R * 0.86 + 0.020, 0.18 + 0.020], { sph: [6, 4] });
+    /* and its lower edge, a smaller shell of the same family */
+    g.ellipsoid(body, [0, L.withers - 0.44, L.chestZ - 0.22],
+      [R * 0.52, 0.09, 0.11], { sph: [4, 3] });
   }
 
   return { body, neck, head };

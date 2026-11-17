@@ -113,14 +113,23 @@ export function buildHumanoid(g, prop, def, opts = {}) {
        Classes that are armoured to the skin (the knight, the huskarl) say so
        with bareChest: they get MAT_MAIL on the body itself; everyone else
        gets cloth and lets the wardrobe decide what armour they wear. */
-    bodyMat: def.bareChest ? 4 : (def.mailedBody ? 1 : 3),
-    legMat: (def.bareChest || def.mailedBody) ? (def.bareChest ? 4 : 1) : 3,
+    bodyMat: def.bodyMat !== undefined ? def.bodyMat : (def.bareChest ? 4 : (def.mailedBody ? 1 : 3)),
+    legMat: def.legMat !== undefined ? def.legMat : ((def.bareChest || def.mailedBody) ? (def.bareChest ? 4 : 1) : 3),
     /* A bare chest has to be skin-coloured as well as skin-material: using
        the gambeson's fabric colour on MAT_SKIN renders a topless warrior in
        a grey smock. */
-    bodyCol: def.bareChest ? skin : [0.78, 0.76, 0.70]
+    /* A mailed body has to be MAIL-COLOURED as well as mail-material. The
+       colour was the tunic's 0.78/0.76/0.70 for everyone, so a class that
+       asked for MAT_MAIL got a pale linen-tinted mail that reads as cloth
+       at any distance -- the cataphract's chest was indistinguishable from
+       the man-at-arms' padded jacket. */
+    bodyCol: def.bodyCol || (def.bareChest ? skin : (def.mailedBody ? [0.62, 0.61, 0.57] : [0.78, 0.76, 0.70]))
   };
   const m = buildBody(g, prop, bodyOpts);
+  /* The class's wardrobe needs to know whether it is dressing a man on foot
+     or a man in a saddle: a shield hangs differently in each, and this is
+     the only place that knows. */
+  m.mounted = !!prop.mount;
 
   /* Then the class dresses it. */
   def.build(g, m, { ...opts, age, skin, hair });

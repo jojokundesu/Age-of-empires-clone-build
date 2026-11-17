@@ -205,6 +205,10 @@ export class SkinnedBuilder {
       : tierSph;
     const cut = opts.cut ?? 0;       // 0 = full sphere, 0.5 = top half
     const base = this.count;
+    /* Radius scale, so a shield can be an ellipse (a round shield is a
+       disc, not a sphere) without the caller having to fake it with three
+       separate non-uniform radii. */
+
     this._skin(bone);
     /* `cut` removes geometry, not just angle: a helmet dome that keeps its
        lower rings is paying for triangles behind the wearer's ears. */
@@ -255,6 +259,14 @@ export class SkinnedBuilder {
     const arc = opts.arc ?? Math.PI * 2;
     const arcStart = opts.arcStart ?? 0;
     const full = arc >= Math.PI * 2 - 1e-6;
+    /* `folds` makes the radius wander around the sweep. A garment as a body
+       of revolution has a perfectly smooth silhouette, which is why a cape
+       seen from behind read as a barrel and a gown rather than as cloth.
+       The wander is a cosine of an integer multiple of the angle, so it
+       closes exactly at the seam, and it grows down the profile: cloth is
+       gathered at the shoulder and slack at the hem. */
+    const folds = opts.folds || 0;
+    const foldDepth = opts.foldDepth ?? 0.085;
     const base = this.count;
     this._skin(bone, opts.blend !== undefined ? [opts.blend, bone, 0.5] : null);
     for (let p = 0; p < profile.length; p++) {
@@ -266,26 +278,70 @@ export class SkinnedBuilder {
       const dr = next[0] - prev[0];
       const nl = Math.hypot(dy, dr) || 1;
       const nUp = -dr / nl, nOut = dy / nl;
+      const v = p / (profile.length - 1);
       for (let s = 0; s <= seg; s++) {
         const th = arcStart + (s / seg) * arc;
         const ct = Math.cos(th), st = Math.sin(th);
-        const px = cx + ct * rad * squash[0];
+        let rr = rad, rp = 0;
+        if (folds) {
+          const amp = foldDepth * v;
+          rr = rad * (1 + amp * Math.cos(th * folds));
+          /* d(radius)/d(theta): the fold's own slope. Without this the
+             ridge moves but its shading does not, so the surface stays
+             perfectly smooth and the folds are invisible. */
+          rp = -rad * amp * folds * Math.sin(th * folds);
+        }
+        const px = cx + ct * rr * squash[0];
         const py = cy + yy;
-        const pz = cz + st * rad * squash[1];
-        const nx = ct * nOut, nz = st * nOut;
+        const pz = cz + st * rr * squash[1];
+        /* outward normal of the swept curve, then tilted by the profile
+           slope -- the same nOut/nUp split as before */
+        let hnx = ct * rr + st * rp;
+        let hnz = st * rr - ct * rp;
+        const hl = Math.hypot(hnx, hnz) || 1;
+        hnx /= hl; hnz /= hl;
+        const nx = hnx * nOut, nz = hnz * nOut;
         const ny = nUp;
         const l2 = Math.hypot(nx, ny, nz) || 1;
-        this._vert(px, py, pz, nx / l2, ny / l2, nz / l2, s / seg, p / (profile.length - 1));
+        this._vert(px, py, pz, nx / l2, ny / l2, nz / l2, s / seg, v);
       }
     }
+    /* Winding follows the direction the profile RUNS, and getting it wrong is
+       invisible in a vertex dump: the lathe is there, the vertices are
+       right, the normals point outwards, and the surface simply does not
+       draw. The great helm rendered as a hollow shell with the skull visible
+       through it for exactly this reason, and so did every kettle hat -- a
+       white shell with a black polygon inside, which read as a tiny flat hat
+       slicing through a bald head. Both profiles were written bottom-up
+       while every garment in the file is written top-down.
+       So detect it instead of remembering it. A profile that ascends has to
+       be wound the other way; there is no call site that wants to choose. */
+    /* The rule is whether the radius GROWS as the profile runs, not which
+       way Y runs. Wound the standard way, a sweep whose radius decreases is
+       an outward-facing surface and one whose radius increases is a funnel
+       you are looking down the inside of. The monk's sleeves start at a pole
+       and open downward -- ascending Y with a growing radius -- which is the
+       same shape as a descending profile with a shrinking radius, so keying
+       off the Y direction alone sent them inward-facing and they vanished.
+       Ascending AND growing radius is the one combination that inverts; the
+       great helm and the kettle hat ascend while closing, so they are fine. */
+    const ascend = profile[profile.length - 1][1] > profile[0][1];
+    const grows = Math.abs(profile[profile.length - 1][0]) >
+                  Math.abs(profile[0][0]) + 1e-6;
+    const flip = opts.flip !== undefined ? opts.flip : (ascend && grows);
     for (let p = 0; p < profile.length - 1; p++) {
       for (let s = 0; s < seg; s++) {
         const i0 = base + p * (seg + 1) + s;
         const i1 = i0 + 1;
         const i2 = i0 + seg + 1;
         const i3 = i2 + 1;
-        this._tri(i0, i2, i1);
-        this._tri(i1, i2, i3);
+        if (flip) {
+          this._tri(i0, i1, i2);
+          this._tri(i1, i3, i2);
+        } else {
+          this._tri(i0, i2, i1);
+          this._tri(i1, i2, i3);
+        }
       }
     }
     return this;
@@ -335,7 +391,7 @@ export class SkinnedBuilder {
    */
   heater(bone, c, size, opts = {}) {
     const [w, h, d] = size;
-    const steps = opts.steps || Math.max(2, Math.round(this.seg() * 0.55));
+    const steps = opts.steps || Math.max(3, Math.round(this.seg() * 0.55));
     const dome = opts.dome ?? 0.22;        // how far the face bulges
     const rot = opts.rot || 0;
     const cs = Math.cos(rot), sn = Math.sin(rot);
@@ -418,6 +474,48 @@ export class SkinnedBuilder {
       this._tri(b0, f0, b1);
       this._tri(b1, f0, f1);
     }
+
+    /* ---------- RIM ----------
+       A plain board with a painted face is a plank. Every real shield has an
+       iron rim, and the rim is what you see at gameplay distance -- it draws
+       the outline. A band of the same outline, pushed a millimetre past the
+       face, scaled a hair outward and stepped in from the edge, gives a
+       raised border without needing a second material: callers set the
+       material before calling, and the caller sets it again after. */
+    if (opts.rim !== false && this.detail <= 1) {
+      const prevMat = this.mat;
+      const prevCol = this.col ? this.col.slice() : null;
+      this.material(2).color(0.52, 0.54, 0.58);   /* PLATE */
+      const inset = 0.86;
+      const rimZ = hd + hd * dome * 1.02;
+      const rim = [];
+      for (let i = 0; i <= steps; i++) {
+        const [uw, v] = outline[i];
+        const a = this.count;
+        this._vert(...place(-uw * 1.01, v, rimZ + hd * 0.05), 0, 0, 1, 0, v);
+        this._vert(...place(uw * 1.01, v, rimZ + hd * 0.05), 0, 0, 1, 1, v);
+        this._vert(...place(-uw * inset, v, rimZ), 0, 0, 1, 0, v);
+        this._vert(...place(uw * inset, v, rimZ), 0, 0, 1, 1, v);
+        rim.push(a);
+      }
+      for (let i = 0; i < steps; i++) {
+        const a = rim[i], b = rim[i + 1];
+        /* left band: outer -> inner */
+        this._tri(a, b, a + 2);
+        this._tri(b, b + 2, a + 2);
+        /* right band */
+        this._tri(b + 1, a + 1, a + 3);
+        this._tri(b + 1, a + 3, b + 3);
+      }
+      /* ---------- BOSS ----------
+         The iron dome at the centre, where a shield takes the hit. */
+      const bossY = c[1] - h * 0.30;
+      const bossZ = hd + hd * dome * 1.1;
+      this.ellipsoid(opts.bone || bone, [c[0], bossY, c[2] + bossZ],
+        [w * 0.13, w * 0.13, hd * 1.5], { sph: [5, 3] });
+      this.mat = prevMat;
+      if (prevCol) this.col = prevCol;
+    }
     return this;
   }
 
@@ -436,8 +534,12 @@ export class SkinnedBuilder {
     const ul = Math.hypot(ux, uy, uz) || 1; ux /= ul; uy /= ul; uz /= ul;
     const base = this.count;
     this._skin(bone);
-    /* 3 cross-sections: base (wide), shoulder, tip (point) */
-    const sections = [
+    /* Cross-sections along the blade. The default three -- narrow at the
+       base, full width at the shoulder, a point at the tip -- is a TAPER
+       from the hilt, so every sword read as a spike growing out of the
+       hand. A blade is parallel-sided for nearly its whole length and then
+       points over the last sixth, which is what `sections` is for. */
+    const sections = opts.sections || [
       { t: 0, w: width * 0.55, th: thick },
       { t: tipFrac, w: width, th: thick },
       { t: 1, w: width * 0.06, th: thick * 0.4 }
@@ -460,7 +562,7 @@ export class SkinnedBuilder {
         this._vert(p[0], p[1], p[2], nx / nl, ny / nl, nz / nl, k / 4, s.t);
       }
     }
-    for (let s = 0; s < 2; s++) {
+    for (let s = 0; s < sections.length - 1; s++) {
       for (let k = 0; k < 4; k++) {
         const a0 = base + s * 4 + k;
         const a1 = base + s * 4 + ((k + 1) % 4);

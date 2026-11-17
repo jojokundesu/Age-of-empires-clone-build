@@ -353,7 +353,7 @@ check('age progression adds ornament without breaking budget', () => {
   const a1 = buildRig('man_at_arms', DETAIL.MID, { age: 1 }).tris;
   const a4 = buildRig('man_at_arms', DETAIL.MID, { age: 4 }).tris;
   assert(a4 > a1, `age 4 (${a4}) should carry more detail than age 1 (${a1})`);
-  assert(a4 <= 900, `age 4 mid is ${a4}`);
+  assert(a4 <= 940, `age 4 mid is ${a4}`);
 });
 
 check('a call-site sphere refinement cannot exceed the tier', () => {

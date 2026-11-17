@@ -191,6 +191,12 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
      default aim already scales with the figure, so an offset would fight it;
      what you want when inspecting a head is 'look at 1.68 m'. */
   const target = [0, headroom > 0 ? headroom : aim * scale, mounted ? 0.12 : 0];
+  /* The eye's HEIGHT has to scale with the aim point, or a close-up of a face
+     is shot from hip level looking up the nose. It used to be a fixed 1.42 m
+     scaled by `--scale`, so `--scale 0.30 --headroom 1.72` put the camera at
+     0.43 m -- below the belt -- and every face close-up in these docs was a
+     view up the chin. */
+  const aimEye = headroom > 0 ? headroom : aim * scale;
   const baseEye = [(mounted ? 3.6 : 2.05), (mounted ? 2.05 : 1.42), (mounted ? 4.1 : 2.55)];
   /* `yaw` is an ABSOLUTE azimuth about the figure, measured from +Z, which is
      the way the model faces. `yaw 0` is dead in front, PI/2 is the +X flank,
@@ -203,7 +209,8 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
   const ry = yaw === null ? Math.atan2(baseEye[0], baseEye[2]) : yaw;
   const eye = [
     r * Math.sin(ry) * scale,
-    baseEye[1] * scale,
+    /* eye height rides the aim point for a close-up, otherwise the profile */
+    (headroom > 0 ? aimEye + 0.06 : baseEye[1] * scale),
     r * Math.cos(ry) * scale
   ];
   const view = lookAt(eye, target, [0, 1, 0]);
@@ -241,7 +248,7 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
     /* back-face cull in view space via the projected winding */
     const sA = xform(vp, A), sB = xform(vp, Bv), sC = xform(vp, C);
     const area = (sB[0] - sA[0]) * (sC[1] - sA[1]) - (sC[0] - sA[0]) * (sB[1] - sA[1]);
-    if (area >= 0) continue;
+    if (area >= 0 && !process.env.NOCULL) continue;
 
     /* Face normal, used only for the winding test. Shading uses the
        interpolated vertex normals, exactly as the GPU would: the whole

@@ -197,10 +197,14 @@ float mailRing(vec2 uv, float freq) {
    faces, and blending between them by the normal, is the standard fix and
    costs two more pattern evaluations blended by weight rather than any
    extra geometry. */
-vec2 triUV(vec3 w, vec3 n) {
+vec3 triWeights(vec3 n) {
   vec3 a = abs(n);
   a = a * a * a;               // sharpen so one axis dominates
-  a /= (a.x + a.y + a.z + 1e-5);
+  return a / (a.x + a.y + a.z + 1e-5);
+}
+
+vec2 triUV(vec3 w, vec3 n) {
+  vec3 a = triWeights(n);
   vec2 xy = w.xy, zy = w.zy, xz = w.xz;
   return xy * a.z + zy * a.x + xz * a.y;
 }
@@ -228,10 +232,65 @@ void main() {
     ao *= mix(0.55, 1.0, clamp(q * 1.4 + 0.45, 0.0, 1.0));
     roughness = 0.88;
   } else if (mat == MAT_MAIL) {
-    float ring = mailRing(wp, 74.0);
-    albedo *= mix(0.42, 1.16, ring);
-    metalness = 0.78;
-    roughness = mix(0.52, 0.28, ring);
+    /* Anti-aliasing, analytically. A 74-ring-per-metre pattern is about
+       seven rings across a soldier at Armory distance and finer than a
+       pixel further out, and a procedural pattern sampled finer than a pixel
+       does not blur -- it turns into static, which is exactly how every
+       mailed class looked on the pedestal: a figure cut out of television
+       noise. Fade the ring contrast out as the pattern's screen footprint
+       approaches a pixel, and the mail reads as smooth dark metal instead of
+       as interference. */
+    /* Blend the PATTERN, not the UV. Interpolating two pattern planes
+       before sampling them is fine for a smooth field (weave, quilt) and
+       wrong for a discrete one: two projections of the ring lattice are at
+       different phases, so their average is neither, and the band where the
+       triplanar weights cross -- a vertical line down the front quarter of
+       every torso and hauberk -- renders as a washed-out stripe. Sample all
+       three planes and blend the results by the same weights. */
+    vec3 tw = triWeights(nrm);
+    float ring = mailRing(vWorld.xy, 74.0) * tw.z
+               + mailRing(vWorld.zy, 74.0) * tw.x
+               + mailRing(vWorld.xz, 74.0) * tw.y;
+    /* Distance, not fwidth. fwidth is the obvious way to find a pattern's
+       screen footprint and it is wrong here: every lathe and every tube
+       wraps its UV from 1 back to 0 on the seam quad, so the derivative
+       across that one quad is enormous, the fade collapses to 0 there, and the
+       seam renders as a pale stripe running the whole length of the
+       hauberk -- which is the sash down every mailed soldier's spine and
+       down the back of both legs. The camera distance does not know about
+       UV seams. */
+    float aa = 1.0 - smoothstep(9.0, 22.0, vDist);
+    /* Fade to the pattern's own MEAN, not to the trough: mix(0.42, 1.16, 0.5)
+       is 0.79, which is mid-grey steel. An earlier version also multiplied a
+       brightness term by (1 - aa), and because fwidth is discontinuous
+       where triUV switches axes, that put a bright band down the middle of
+       every mailed torso -- the pale ribbon that looked like a sash. */
+    /* Ring contrast is gentle: 0.42..1.16 over a 74-ring lattice at these
+       sizes was a 3:1 stripe, and on an arm or a thigh -- where the lattice
+       runs with the limb -- it read as a pale bandage rather than as rings.
+       Mail at gameplay distance is a dark grey surface with a sheen; the
+       pattern is what you see when you stop to look. */
+    /* Ceiling, not just contrast. Mail authored at 0.62 and modulated up to
+       1.10 luminance peaks at 0.68; with the sun at 1.25 plus ambient that
+       saturates, and any limb whose whole tube faces the key light comes
+       out white -- an arm and a shin in bright mail read as pale bandages
+       against the dark torso behind them. Cap the modulation below 1.0 and
+       the same limb reads as lit steel with a ring texture on it. */
+    albedo *= mix(0.30, 0.62, mix(0.45, ring, aa));
+    /* Mail is a very rough metal. At 0.78 metalness with a 0.28 roughness
+       floor the arm and the thigh -- smooth tubes facing the light -- took a
+       broad specular that ran their whole length, and the figure read as
+       wearing pale bandages over its limbs. Roughness floor 0.44 keeps the
+       sheen to the ring highlights. */
+    /* A RANGE, not a value. Mail is a rough metal everywhere; the ring
+       pattern only decides how much the highlights vary. Varying the
+       roughness itself from 0.44 to 0.62 gave a hard specular crest along
+       each limb that tracked the lattice, and on the upper arm -- the one
+       smooth convex tube facing the key light -- that crest was the pale
+       bandage. Hold roughness near 0.6 and let the pattern move the albedo
+       alone. */
+    metalness = 0.58;
+    roughness = mix(0.60, mix(0.66, 0.52, ring), aa);
   } else if (mat == MAT_PLATE) {
     float brush = sin(y * 41.0 + hash12(floor(wp * 90.0)) * 3.0) * 0.5 + 0.5;
     vec2 b = abs(fract(wp * 2.2) - 0.5);
@@ -283,18 +342,40 @@ void main() {
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
   color += uSunColor * spec * sh * cl * 1.3;
 
-  /* Team colour on cloth: replace the hue, keep the weave's luminance so a
-     dyed tunic still reads as folded cloth. */
+  /* Team colour on cloth: take the HUE from the team, the VALUE from the
+     garment, and the weave's luminance variation from the cloth itself, so a
+     dyed tunic still reads as folded linen rather than as poured plastic. */
   if (mat == MAT_LINEN || mat == MAT_GAMBESON) {
     float shade = dot(albedo, vec3(0.299, 0.587, 0.114));
-    /* The multiplier is centred on 1.0 at mid grey. It used to be
-       0.55 + shade * 1.2, which for a garment authored at 0.7 luminance is
-       1.39 -- so the tint did not merely recolour the cloth, it brightened
-       it, and a knight's surcoat rendered as a lit slab of plastic blue.
-       A team colour should replace the hue and leave the value alone. */
-    float k = 0.30 + shade * 0.95;
-    vec3 teamAlb = vTint.rgb * k;
-    color = mix(color, teamAlb * (uSunColor * ndl * sh * cl * 1.25 + ambient), 0.62);
+    /* Normalise the team colour by its LARGEST channel, not by luminance.
+       Dividing by luminance turns the blue [0.32, 0.55, 0.98] into
+       [0.60, 1.04, 1.85]: out of gamut, and its blue channel saturates on
+       its own, so the surcoat rendered as a fluorescent pastel whatever
+       multiplier followed. Dividing by the max keeps the hue exactly and
+       pins the brightest channel at 1.0, which makes the shade a real value
+       control. White stays white, so a neutral tint gives back undyed
+       cloth. */
+    vec3 tintMax = vTint.rgb / max(max(vTint.r, vTint.g), max(vTint.b, 1e-3));
+    /* The dye is darker than the cloth it soaks into: a woad or madder bath
+       costs most of the value. Scale that cost by SATURATION, so a neutral
+       tint leaves the garment exactly as authored -- the offline rig
+       renderer passes white, and a flat 0.62 there turned every tunic and
+       surcoat a muddy grey, which is how this was found. */
+    float sat = 1.0 - min(min(vTint.r, vTint.g), vTint.b) /
+                      max(max(vTint.r, vTint.g), max(vTint.b, 1e-3));
+    /* A dye bath absorbs most of the light that hits it, and the richer the
+       colour the more it absorbs. 0.85 at full saturation brings the player
+       blue down to a real woad -- a deep slate blue with the hue intact --
+       while leaving a neutral tint at exactly 1.0, so the offline rig
+       renderer (which passes white) still shows the cloth as authored. */
+    /* Deepen the hue as well as the value: a saturated dye is not just a
+       darker version of the same pastel, it is a purer colour. Raising the
+       normalised hue to a power above 1 pulls the weak channels down and
+       leaves the dominant one where it is, which is the difference between
+       "pale sky blue" and "woad". Neutral tints have all three channels
+       equal, so a power leaves them untouched. */
+    vec3 teamAlb = pow(tintMax, vec3(2.1)) * shade * (1.0 - 0.86 * sat);
+    color = mix(color, teamAlb * (uSunColor * ndl * sh * cl * 1.25 + ambient), 0.82);
   }
 
   float dmg = vState.x;
