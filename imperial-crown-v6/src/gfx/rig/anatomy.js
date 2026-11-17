@@ -409,14 +409,30 @@ export function buildBody(g, prop, opts = {}) {
      then a wrapped or plated shin, then a boot with a cuff, and the three
      values break the cylinder's outline at exactly the heights the eye
      needs to read a knee and an ankle. */
-  const hoseCol = opts.bodyCol
-    ? [opts.bodyCol[0] * 0.62 + 0.30, opts.bodyCol[1] * 0.62 + 0.28, opts.bodyCol[2] * 0.62 + 0.26]
-    : [0.56, 0.52, 0.44];
+  /* A CONTRASTING value, and it must not be a tint of the tunic.
+     `bodyCol * 0.62 + 0.30` looks like a contrast on a dark tunic and is
+     almost exactly the tunic's own value on a light one, so the hose
+     disappeared into the surcoat over the hips and the legs read as one
+     0.9 m blue column from waist to knee. The hose is now a fixed warm
+     off-black, which is what a medieval stocking is, and it is the same on
+     every class -- the contrast is against the GARMENT, not against the
+     team colour. */
+  /* THREE VALUES, not three shades of the same brown. Hose at 0.42 reads as
+     wool, the shin bindings at 0.24 read as leather straps over it, and the
+     boot at 0.15 is the darkest thing on the figure -- which is what stops
+     the leg reading as one column and makes the ankle visible. */
+  const hoseCol = [0.44, 0.38, 0.29];
   for (const side of [-1, 1]) {
     /* Same trap as the arms: the boot at the end of the iteration switches
        the builder to LEATHER, so the second leg was being built in boot
        leather. One trouser leg brown, one grey. */
-    g.material(legMat).color(hoseCol[0], hoseCol[1], hoseCol[2]);
+    /* HOSE IS NOT CLOTH.
+       `legMat` defaults to MAT_GAMBESON (3) or MAT_LINEN (0), and both of
+       those are the TEAM-DYE materials in unitShaders -- so the thigh came
+       out in the player's blue whatever colour was written on it, and the
+       hose read as a continuation of the tunic. Wool hose is a non-team
+       garment: it is leather-material, which takes its albedo literally. */
+    g.material(6).color(hoseCol[0], hoseCol[1], hoseCol[2]);
     const HIP = side < 0 ? B.HIP_L : B.HIP_R;
     const THIGH = side < 0 ? B.THIGH_L : B.THIGH_R;
     const SHIN = side < 0 ? B.SHIN_L : B.SHIN_R;
@@ -434,7 +450,7 @@ export function buildBody(g, prop, opts = {}) {
     /* Shin: leather bindings or a greave, darker or lighter than the hose
        above it. This is the contrast band that reads as a boot even at mid
        range, and it costs nothing -- it is the same tube in another colour. */
-    g.material(6).color(0.34, 0.27, 0.20);
+    g.material(6).color(0.24, 0.18, 0.13);
     g.tube(SHIN, [hipX * 1.06, y(0.52), 0], [hipX * 1.02, y(0.13), 0],
       0.074 * lw, 0.050 * lw, { seg: g.detail === DETAIL.NEAR ? g.seg(0) : g.seg(-1), rings: 1, blend: THIGH });
     /* THE BOOT IS ONE LATHE, not a cuff ring stacked on a slab.
@@ -446,7 +462,7 @@ export function buildBody(g, prop, opts = {}) {
        `x` offset puts it under the shin.
        This is also the construct that fixes the peg-leg read, because it is
        one continuous surface from calf to toe. */
-    g.material(6).color(0.27, 0.20, 0.14);
+    g.material(6).color(0.15, 0.11, 0.08);
     /* A SLAB FOOT WITH A FLARED CUFF.
        The attempt to draw the boot as one lathe about the ankle failed in a
        way that is worth recording: a lathe's `squash` scales the radius, so
@@ -457,9 +473,9 @@ export function buildBody(g, prop, opts = {}) {
        cuff, and the two meet where the ankle actually is. */
     if (g.detail < DETAIL.FAR) {
       g.lathe(FOOT, [
-        [0.062 * lw, y(0.180)],
-        [0.084 * lw, y(0.150)],
-        [0.060 * lw, y(0.108)]
+        [0.058 * lw, y(0.192)],
+        [0.098 * lw, y(0.158)],
+        [0.062 * lw, y(0.104)]
       ], { seg: g.seg(-1), x: hipX * 1.02, squash: [1.0, 1.05], blend: SHIN });
     }
     g.slab(FOOT, [hipX * 1.02, y(0.050), 0.048], [0.100 * lw, 0.086 * H, 0.235 * H]);
