@@ -695,8 +695,10 @@ export function buildQuiver(g, m) {
   if (g.detail > DETAIL.MID) return;      // invisible at strategic zoom
   const { y, x } = m;
   g.material(MAT.LEATHER).color(0.34, 0.25, 0.17);
+  /* One ring at mid: a quiver is a straight tube, and the second ring was
+     sampling a curve that is not there. */
   g.tube(B.CHEST, [x(0.10), y(1.44), -0.14], [x(0.14), y(1.10), -0.17],
-    0.048, 0.042, { seg: 5, rings: 2 });
+    0.048, 0.042, { seg: 5, rings: g.detail === 0 ? 2 : 1 });
   g.material(MAT.WOOD).color(0.50, 0.42, 0.30);
   for (let i = 0; i < 3; i++) {
     const t = (i - 1) * 0.018;

@@ -146,7 +146,7 @@ export function buildMount(g, coat, opts = {}) {
     R, R * 0.82, { seg: g.seg(0), rings: barrelRings, squash: [1.0, 0.92] });
   /* croup: the rump, rounded and a touch higher than the loin */
   g.ellipsoid(body, [0, L.back - 0.14, L.rumpZ + 0.08], [R * 0.80, R * 0.78, 0.20],
-    { sph: [g.sph()[0], 4] });
+    { sph: [g.sph()[0], g.detail === 0 ? 4 : 3] });
   /* breast: gives the front of the animal a chest instead of a cut tube.
      Gated at far tier -- the barrel's own front cap covers it there. */
   if (g.detail !== 2) {
@@ -193,10 +193,10 @@ export function buildMount(g, coat, opts = {}) {
   /* The nose itself: a blunt pad covering the END of that tube, not a ball
      floating past it. It is centred back inside the tube's last ring. */
   g.ellipsoid(head, [0, L.muzzleY - 0.01, L.muzzleZ - R * 0.10],
-    [R * 0.245, R * 0.215, R * 0.20], { sph: [5, 4] });
+    [R * 0.245, R * 0.215, R * 0.20], { sph: [4, 3] });
   /* jaw, set back under the cheek */
   g.ellipsoid(head, [0, L.muzzleY + 0.20, L.muzzleZ - 0.26], [R * 0.30, R * 0.27, R * 0.30],
-    { sph: [5, 4] });
+    { sph: [4, 3] });
   /* ears, two small cones raked back off the poll */
   for (const sx of [-1, 1]) {
     g.tube(head, [sx * R * 0.16, L.pollY + 0.02, L.pollZ - 0.10],
@@ -213,7 +213,7 @@ export function buildMount(g, coat, opts = {}) {
      two things that separates a horse from a donkey at gameplay distance. */
   g.tube(neck, [R * 0.10, L.withers - 0.20, L.neckBaseZ - 0.04],
     [R * 0.07, L.pollY + 0.02, L.pollZ - 0.04], 0.088, 0.050,
-    { seg: 5, rings: 2, squash: [0.34, 1.0] });
+    { seg: g.seg(-1), rings: g.detail === 0 ? 2 : 1, squash: [0.34, 1.0] });
 
   /* ---------------- tail ----------------
      One bone. Leaves the rump high and hangs behind. */
@@ -257,6 +257,9 @@ export function buildMount(g, coat, opts = {}) {
        hind pair -- which the tail and the cantle cover -- is dropped. */
     for (const [bone, x, hipY, hipZ, kneeY, , topR] of legs) {
       if (g.detail === 0 && (bone === B.HORSE_HL || bone === B.HORSE_HR)) continue;
+      /* A caparisoned horse's haunch is under 16 mm of cloth: the bulge is
+         not on the silhouette at all, and the panel would z-fight it. */
+      if (caparison) continue;
       g.material(MAT.HAIR).color(coatDark[0], coatDark[1], coatDark[2]);
       g.ellipsoid(body, [x * 0.92, (hipY + kneeY) / 2 + 0.10, hipZ * 0.94],
         [topR * 1.02, Math.abs(hipY - kneeY) * 0.52, topR * 1.20],
@@ -369,6 +372,7 @@ export function buildMount(g, coat, opts = {}) {
          its curvature are the panel's by construction. Writing the strip out
          by hand got the mirrored side's normals backwards and the band was
          culled on the far flank. */
+      if (g.detail === 0) {
       g.material(MAT.TRIM).color(0.93, 0.91, 0.84);
       const bandPts = (z, k) => {
         const p = flip(section(z, k));
@@ -383,6 +387,7 @@ export function buildMount(g, coat, opts = {}) {
         { z: -0.28, pts: bandPts(-0.28, 0.99) },
         { z: -0.46, pts: bandPts(-0.46, 0.96) }
       ], {});
+      }
     }
   }
 
@@ -423,14 +428,15 @@ export function buildMount(g, coat, opts = {}) {
        muzzleZ - 0.10 the plate hung 100 mm off the end of the head and read
        as a mask floating in front of the horse. */
     g.tube(head, [0, L.pollY - 0.06, L.pollZ - 0.01], [0, L.muzzleY + 0.14, L.muzzleZ - 0.20],
-      R * 0.36 + 0.018, R * 0.25 + 0.018, { seg: 5, rings: 2 });
+      R * 0.36 + 0.018, R * 0.25 + 0.018,
+      { seg: 5, rings: g.detail === 0 ? 2 : 1 });
 
     /* peytral: the breast, concentric, 20 mm up. */
     g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02],
       [R * 0.70 + 0.020, R * 0.86 + 0.020, 0.18 + 0.020], { sph: [6, 4] });
     /* and its lower edge, a smaller shell of the same family */
     g.ellipsoid(body, [0, L.withers - 0.44, L.chestZ - 0.22],
-      [R * 0.52, 0.09, 0.11], { sph: [4, 3] });
+      [R * 0.52, 0.09, 0.11], { sph: [4, 2] });
   }
 
   return { body, neck, head };
