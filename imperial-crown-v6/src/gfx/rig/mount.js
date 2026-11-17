@@ -158,7 +158,7 @@ export function buildMount(g, coat, opts = {}) {
   }
   /* withers: the ridge the saddle sits behind */
   g.tube(body, [0, L.withers - 0.10, L.chestZ - 0.18], [0, L.withers, 0.06],
-    R * 0.62, R * 0.70, { seg: g.seg(-3), rings: 1, squash: [1.25, 0.62] });
+    R * 0.62, R * 0.70, { seg: g.seg(-4), rings: 1, squash: [1.25, 0.62] });
 
   /* ---------------- neck ----------------
      Long, and it must LEAVE the withers at a steep angle then flatten
@@ -315,83 +315,84 @@ export function buildMount(g, coat, opts = {}) {
   g.tube(body, [0, seatY, 0.22], [0, seatY + 0.01, -0.20], R * 0.80, R * 0.82,
     { seg: g.detail === 0 ? g.seg(-1) : 5, rings: 1, squash: [1.0, 0.42] });
   if (caparison) {
-    /* A DRAPED TRAPPER, not a blanket.
-       The old caparison was one short tube across the saddle: a pad. What
-       makes a medieval warhorse unmistakable at gameplay distance is cloth
-       hanging over both flanks from under the saddle to knee height,
-       framing the animal in the player's colour. It is built with `loft`,
-       because a trapper is the one shape in this file that is genuinely not
-       a surface of revolution: its section climbs the spine, rolls over the
-       top of the barrel, drops past the flank and then falls STRAIGHT to the
-       hem. Every attempt with lathe/tube/skirt turned the hem back in under
-       the belly, because a circle returns. */
-    const midY = (L.back + L.belly) / 2;
-    const hemY = L.kneeF + 0.02;         /* knee height, as specified */
-    const topY = L.back - 0.06;
-    const wallX = R * 1.06;              /* the cloth stands 16 mm off the ribs */
-    const SPINE = R * 0.34;              /* half-width of the spine ridge */
+    /* A DRAPED TRAPPER.
 
-    /* The section: five points. Spine centre, over the shoulder of the
-       barrel, out to the wall, and down. rV is folded into the authored
-       points, so the hem depth is stated directly rather than derived. */
-    const section = (z, k) => {
-      /* k < 1 tucks the panel under the saddle at the front and the cantle
-         at the back, where the cloth disappears under the leather. */
-      const wx = wallX * k;
-      const ty = (midY + 0.30) * k + topY * (1 - k);
-      const hy = hemY;
+       This is the one shape in the file that is genuinely not a surface of
+       revolution, and it has now been attempted every wrong way: a tube
+       across the saddle (a pad), a Y-lathe (a cone standing beside the
+       horse), a per-flank elliptical sweep (a diaper that turned back in
+       under the belly), and a loft whose sections stopped at the flank (a
+       flag hanging in the air with the barrel visible behind it).
+
+       What works is `skirt`: sections authored from the SPINE, out over the
+       top of the barrel, down the flank, and then STRAIGHT DOWN to the hem.
+       The section has to start at x = 0 and end well below the barrel's
+       widest point, or the cloth is a sheet of paper rather than a curtain,
+       and it has to CLOSE against the barrel's own radius at every height
+       on the way out or the rider's leg shows through the gap. */
+    const midY = (L.back + L.belly) / 2;
+    const hemY = L.kneeF + 0.02;               /* knee height */
+    const topY = L.back - 0.05;                /* just under the saddle pad */
+    const sect = (widthK) => {
+      /*  // one section, spine -> hem. `widthK` tucks the front and rear
+          // rings in under the saddle and the cantle. */
+      const wx = R * 1.10 * widthK;
       return [
-        [0, ty],
-        [SPINE * k, ty + (topY - ty) * 0.1],
-        [wx * 0.86, ty - 0.03],
-        [wx, (ty + hy) * 0.5],
-        [wx * 1.01, hy]
+        [0, topY],
+        [wx * 0.42, topY - 0.05],
+        [wx * 0.86, midY + 0.16],
+        [wx, midY - 0.05],
+        [wx * 1.02, (midY + hemY) * 0.5],
+        [wx * 1.01, hemY]
       ];
     };
-    /* one panel per flank, mirrored in X */
+    /* Four rings. The two middle rings at k = 1.00 are the same radius and
+       describe the same section; the panel only bends at the ends. */
+    const rings = [
+      { z: 0.42, k: 0.60 },
+      { z: 0.20, k: 0.94 },
+      { z: -0.30, k: 1.00 },
+      { z: -0.56, k: 0.94 }
+    ];
     for (const side of [1, -1]) {
-      const rings = [
-        { z: 0.30, k: 0.55 },
-        { z: 0.10, k: 0.95 },
-        { z: -0.24, k: 1.00 },
-        { z: -0.46, k: 0.96 }
-      ];
       const flip = (pts) => pts.map(([x, y]) => [x * side, y]);
       g.material(MAT.LINEN).color(caparison[0], caparison[1], caparison[2]);
       g.loft(body, rings.map((r) => {
-        const p = flip(section(r.z, r.k));
-        /* the fold: a slow ripple along Z in the wall, so the hem is not a
-           machined edge. Only at near tier -- at mid it reads as a wobble. */
+        const p = flip(sect(r.k));
         if (g.detail === 0) {
-          const t = (r.z + 0.46) / 0.76;
-          p[3][0] *= 1 + 0.020 * Math.cos(t * 12);
-          p[4][0] *= 1 + 0.026 * Math.cos(t * 12);
+          const t = (r.z + 0.56) / 0.98;
+          p[3][0] *= 1 + 0.016 * Math.cos(t * 11);
+          p[4][0] *= 1 + 0.020 * Math.cos(t * 11);
+          p[5][0] *= 1 + 0.024 * Math.cos(t * 11);
         }
         return { z: r.z, pts: p };
       }), {});
-
-      /* THE HERALDIC BORDER: an undyed band along the hem, the same trick
-         the tunic hem and the shield rim use. It is the panel's OWN section,
-         cut down to the bottom of the wall and grown 5 mm absolute, lofted
-         over the same span of Z -- so its winding, its normal direction and
-         its curvature are the panel's by construction. Writing the strip out
-         by hand got the mirrored side's normals backwards and the band was
-         culled on the far flank. */
-      if (g.detail === 0) {
+    }
+    /* THE HERALDIC BORDER, running ALONG the hem.
+       It is the bottom two points of the panel's own section, grown 12 mm
+       outward in X only, lofted from the front hem ring to the rear one.
+       Building it as its own hand-written strip is what went wrong before:
+       the mirrored side's winding came out reversed and the band was culled.
+       Re-using the section guarantees the winding matches the panel. */
+    if (g.detail === 0) {
       g.material(MAT.TRIM).color(0.93, 0.91, 0.84);
-      const bandPts = (z, k) => {
-        const p = flip(section(z, k));
-        const gx = (v) => v * 1.0 + Math.sign(v) * 0.014;
-        return [
-          [gx(p[3][0]), p[3][1]],
-          [gx(p[4][0]), p[4][1]],
-          [gx(p[4][0] * 0.99), hemY + 0.13]
-        ];
-      };
-      g.loft(body, [
-        { z: -0.28, pts: bandPts(-0.28, 0.99) },
-        { z: -0.46, pts: bandPts(-0.46, 0.96) }
-      ], {});
+      for (const side of [1, -1]) {
+        /* A NARROW strip along the hem -- 95 mm tall, not the whole lower
+           half of the panel. Slicing the section's last two points gave a
+           band from mid-flank to the hem, which is a cream slab across the
+           horse's ribs rather than a border. */
+        const band = (k) => {
+          const wx = R * 1.10 * k;
+          return [
+            [(wx * 1.035) * side, hemY + 0.095],
+            [(wx * 1.030) * side, hemY]
+          ];
+        };
+        g.loft(body, [
+          { z: 0.20, pts: band(0.94) },
+          { z: -0.30, pts: band(1.00) },
+          { z: -0.52, pts: band(0.94) }
+        ], {});
       }
     }
   }
