@@ -436,7 +436,15 @@ export class Armory {
     s.v3('uCameraPos', 0, 1.1, 3.2);
     s.f('uTime', this._t);
     s.f('uNight', 0);
-    s.f('uCloudOffset', 0);
+    /* uCloudOffset is a VEC2, and setting it with uniform1f raises
+       GL_INVALID_OPERATION: "Uniform size does not match uniform method."
+       It is harmless here -- the Armory passes uCloudStrength 0, so the
+       offset is multiplied away -- but the error is sticky: it sits on the
+       context until somebody reads getError(), and the Armory's own browser
+       check does exactly that on open, so the panel reported a broken GL
+       context on every run and the check has been red since it was written.
+       A flat 0 is not even the right shape. */
+    s.v2('uCloudOffset', 0, 0);
     s.f('uCloudStrength', 0);
     s.f('uShadowStrength', 0);
     s.f('uShadowTexel', 1 / 2048);
