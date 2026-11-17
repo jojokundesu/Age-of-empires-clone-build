@@ -24,7 +24,14 @@ import { B, BONE_COUNT } from './skeleton.js';
 /** Detail tiers. 0 = near (60 Hz), 1 = mid, 2 = far. */
 export const DETAIL = { NEAR: 0, MID: 1, FAR: 2 };
 
-const SEG = [8, 6, 4];   // radial segments by detail tier
+/* Radial segments by detail tier.
+   FAR is 3, not 4. A unit at strategic zoom is about 25 pixels tall and its
+   limbs are two or three pixels across; the fourth segment of a thigh is
+   entirely inside its own silhouette. Three still closes a tube (a triangle
+   is the minimum) and it is 25% off every tube and every lathe in the rig --
+   which is where the far tier's whole budget goes, and far is 43% of a
+   300-unit army. */
+const SEG = [8, 6, 3];   // radial segments by detail tier
 const RINGS = [4, 2, 1]; // rings along a limb by detail tier
 const SPH = [[8, 5], [6, 3], [4, 2]]; // sphere segments/rings by tier
 

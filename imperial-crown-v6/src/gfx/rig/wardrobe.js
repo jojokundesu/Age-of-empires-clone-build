@@ -203,37 +203,60 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
   }
 
   if (kind === 'great') {
-    /* A great helm is not a bigger barbute: it is a BARREL. Closed all the
-       way round, deep enough to reach the shoulders, and with the skull
-       given real clearance. */
+    /* A great helm is not a bigger barbute: it is a BARREL, closed all the
+       way round, deep enough to reach the shoulders, and with the skull given
+       real clearance.
+
+       THE SIGHT IS A GAP IN THE STEEL, not a dark band laid over it.
+       Three passes tried to paint a slit on: a slab poked out past the
+       silhouette, and a flush band, sized to within 3% of the shell, lost
+       every depth test to the shell's own facets -- a lathe's chords sag by
+       cos(pi/seg) between vertices, which at eight segments is 8%, so a band
+       3% proud is 5% INSIDE the steel over most of every segment. The band
+       exists, and it is hidden. There is no clearance that fixes that without
+       the band standing off the helmet like a shelf.
+
+       So build the helm the way the armourer did: TWO shells with a gap
+       between them, and a dark enclosed surface behind the gap. The slit is
+       then genuinely empty, which is the only thing that reads as a place to
+       see out of from every angle and at every distance. */
     coif();
+    const SIGHT_LO = headY + hr * 0.02;    /* bottom of the sight */
+    const SIGHT_HI = headY + hr * 0.26;    /* top of it */
+    /* the barrel, split */
     g.lathe(B.HEAD, [
       [hr * 1.02 * HELM_CLEAR, headY - hr * 0.92],
       [hr * 1.18 * HELM_CLEAR, headY - hr * 0.42],
+      [hr * 1.18 * HELM_CLEAR, SIGHT_LO]
+    ], { seg: g.seg(0), squash: [SQX + 0.02, SQZ * 1.06] });
+    g.lathe(B.HEAD, [
+      [hr * 1.18 * HELM_CLEAR, SIGHT_HI],
       [hr * 1.18 * HELM_CLEAR, headY + hr * 0.44],
       [hr * 0.96 * HELM_CLEAR, headY + hr * 1.00],
       [hr * 0.58 * HELM_CLEAR, headY + hr * 1.34],
       [0.0, headY + hr * 1.46]
-    ], { seg: g.seg(1), squash: [SQX + 0.02, SQZ * 1.06] });
+    ], { seg: g.seg(0), squash: [SQX + 0.02, SQZ * 1.06] });
+    /* THE INSIDE OF THE HELM, behind the slit. Without it the gap is a hole
+       through the head and you see sky: at 74% of the shell's radius it is
+       behind the steel everywhere except the one band that is missing, and
+       dark enough that the slit reads as shadow rather than as an opening.
+       It is also what the brow and the bridge of the nose sit against. */
     if (g.detail <= DETAIL.MID) {
-      /* The sight slit, as a flush band (see the barbute for why a slab
-         cannot win against a curved surface -- it was sticking out past the
-         side of the helm as a black bar). */
-      /* The band has to FOLLOW the cone, not stand off it as a cylinder.
-         The helm flares from 1.20 hr at -0.02 to 1.18 hr at +0.44, so a
-         straight-sided band 2 mm proud at its bottom edge was 2 mm INSIDE
-         the steel at its top, and the helm's own facets came through it as
-         three black fragments with grey between them. Interpolating the
-         radius to match the helm at both rings is the whole fix. */
-      const slitBottom = 1.20 * HELM_CLEAR * 1.05;
-      const slitTop = 1.183 * HELM_CLEAR * 1.05;
-      g.material(MAT.LEATHER).color(0.10, 0.10, 0.11);
+      g.material(MAT.LEATHER).color(0.06, 0.06, 0.07);
       g.lathe(B.HEAD, [
-        [hr * slitTop, headY + hr * 0.30],
-        [hr * slitBottom, headY + hr * 0.00]
-      ], { seg: 8, squash: [SQX, SQZ],
-           arc: Math.PI * 0.56, arcStart: Math.PI * 0.5 - Math.PI * 0.28 });
+        [hr * 1.06 * HELM_CLEAR * 0.74, SIGHT_LO - hr * 0.30],
+        [hr * 1.18 * HELM_CLEAR * 0.78, SIGHT_LO],
+        [hr * 1.18 * HELM_CLEAR * 0.78, SIGHT_HI],
+        [hr * 1.06 * HELM_CLEAR * 0.74, SIGHT_HI + hr * 0.30]
+      ], { seg: g.seg(0), squash: [SQX + 0.02, SQZ * 1.06] });
       g.material(MAT.PLATE).color(0.70, 0.72, 0.76);
+      /* A brow ridge over the slit, so it is shadowed and so the steel above
+         it does not read as a smooth continuation of the steel below. */
+      g.lathe(B.HEAD, [
+        [hr * 1.18 * HELM_CLEAR * 1.02, SIGHT_HI - hr * 0.01],
+        [hr * 1.19 * HELM_CLEAR * 1.02, SIGHT_HI + hr * 0.05],
+        [hr * 1.19 * HELM_CLEAR * 1.02, SIGHT_HI + hr * 0.09]
+      ], { seg: g.seg(0), squash: [SQX + 0.02, SQZ * 1.06] });
     }
     return;
   }
@@ -345,11 +368,14 @@ export function buildCrest(g, m, colour, count = 4) {
   g.material(MAT.HAIR).color(colour);
   /* A crest is a fin, so each lock is one quad wide and one segment deep:
      at two rings per lock, five locks cost 60 triangles for a plume. */
+  /* Three segments, not four: a plume lock is 12 mm across and reads purely
+     as a silhouette against the sky, and every triangle in the crest is a
+     triangle the age-4 soldier does not have for his armour. */
   for (let i = 0; i < count; i++) {
     const t = (i - (count - 1) / 2) / ((count - 1) / 2 || 1);
     g.tube(B.HEAD, [0, headY + hr * 1.10, t * hr * 0.60],
       [0, headY + hr * (1.55 + 0.20 * (1 - Math.abs(t))), t * hr * 0.90],
-      0.024, 0.015, { seg: 4, rings: 1, squash: [0.55, 1.0] });
+      0.024, 0.015, { seg: 3, rings: 1, squash: [0.55, 1.0] });
   }
 }
 
@@ -495,11 +521,13 @@ export function buildCape(g, m, colour) {
      profile at x(0.234) left its cut top edge standing a hand's width above
      the shoulders, a flat red bar across the upper back. The profile now
      begins narrow at the nape and widens as it falls. */
+  /* Four rings at near, three below it. The cape's silhouette is its hem and
+     its shoulders; the two rings between them sample a straight fall. It is
+     also the broadest single surface in the class -- at 14 segments it cost
+     120 triangles on its own, against 148 for the great helm. */
   g.lathe(B.SKIRT, [
     [x(0.105), y(1.585)],
-    [x(0.196), y(1.500)],
     [x(0.264), y(1.16)],
-    [x(0.316), y(0.78)],
     [x(0.326), y(0.56)],
     [x(0.300), y(0.45)]
   /* The model faces +Z, so the back is at theta = -PI/2. Centring the arc

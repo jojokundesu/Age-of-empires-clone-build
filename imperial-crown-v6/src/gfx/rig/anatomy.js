@@ -168,7 +168,7 @@ export function buildBody(g, prop, opts = {}) {
      below the pixel: keep the hip, the waist, the chest and the shoulder
      slope, drop the rings between them. */
   const nearTorso = g.detail === DETAIL.NEAR
-    ? torsoProfile.filter((_, i) => i !== 2 && i !== 4 && i !== 5)
+    ? torsoProfile.filter((_, i) => i !== 2 && i !== 3 && i !== 5)
     : g.detail === DETAIL.MID
       ? torsoProfile.filter((_, i) => i !== 1 && i !== 3 && i !== 6)
       : torsoProfile.filter((_, i) => i !== 1 && i !== 3 && i !== 6 && i !== 10);
@@ -247,7 +247,7 @@ export function buildBody(g, prop, opts = {}) {
   const neckTop = chinYc + (crownYc - chinYc) * 0.34;
   g.tube(B.NECK, [0, y(1.49), -0.004], [0, neckTop, 0.016],
     neckR * 1.16, neckR * 0.98,
-    { seg: Math.max(4, g.seg(0) - 2), rings: 1, squash: [HEAD_X / 0.86, 1.0] });
+    { seg: Math.max(3, g.seg(-1)), rings: 1, squash: [HEAD_X / 0.86, 1.0] });
 
   /* ---------- COLLAR / GORGET ----------
      A padded ring of cloth-and-mail at the throat, on EVERY class. Two jobs
@@ -264,7 +264,7 @@ export function buildBody(g, prop, opts = {}) {
 
      Mail under the steel classes and linen under the rest, keyed on the
      body material the class already declared. */
-  {
+  if (g.detail < DETAIL.FAR) {
     const mailCollar = fabric === 1 || opts.mailedBody;
     g.material(mailCollar ? 1 : 0);
     if (mailCollar) g.color(0.46, 0.47, 0.48);
@@ -279,10 +279,9 @@ export function buildBody(g, prop, opts = {}) {
     const collarR = x(0.170);
     g.lathe(B.NECK, [
       [collarR * 1.06, y(1.488)],
-      [neckR * 1.90, y(1.512)],
-      [neckR * 1.55, y(1.545)],
+      [neckR * 1.90, y(1.514)],
       [neckR * 1.42, y(1.566)]
-    ], { seg: g.seg(-1), squash: [HEAD_X / 0.86, 1.02] });
+    ], { seg: g.seg(-2), squash: [HEAD_X / 0.86, 1.02] });
   }
 
   /* ---------- HEAD ----------
@@ -323,10 +322,17 @@ export function buildBody(g, prop, opts = {}) {
   /* Seven rings at near, not eight: the ring at t 0.86 sits between the
      widest temple ring and the crown turn-over and describes a curve that the
      two either side already carry. It is 30 triangles on every soldier. */
+  /* SIX rings at near, from eight. The jaw (0.34) and the cheekbone (0.52)
+     are 20 mm apart and the skull is nearly straight between them; the crown
+     mass (0.86) is a curve the temple ring and the crown turn-over already
+     carry. What has to survive is: a blunt chin, a strong jaw, the temple
+     (the widest ring), and a crown that turns over rather than domes. At
+     8 segments every ring is 16 triangles and a head is 8 heads' worth of
+     the figure's budget, so this is the expensive place. */
   const skullProfile = g.detail === DETAIL.NEAR
-    ? skull.filter((_, i) => i !== 5)
+    ? skull.filter((_, i) => i !== 3 && i !== 5)
     : g.detail === DETAIL.MID
-      ? skull.filter((_, i) => i !== 5 && i !== 2)
+      ? skull.filter((_, i) => i !== 5 && i !== 2 && i !== 3)
       : skull.filter((_, i) => i !== 2 && i !== 5);
   /* A head is NARROWER than it is deep: about 155 mm across and 210 mm
      front to back. Built as a body of revolution it was 200 mm across and
@@ -337,12 +343,13 @@ export function buildBody(g, prop, opts = {}) {
   g.lathe(B.HEAD, skullProfile.map(([t, r]) => [r * hr, chinY + headH * t]), {
     seg: g.seg(0), squash: [HEAD_X, 1.10], blend: B.NECK
   });
-  if (g.detail === DETAIL.NEAR) {
-    /* nose: projects from the face, so it is the one feature the lathe
-       cannot carry */
-    g.ellipsoid(B.HEAD, [0, headY - hr * 0.14, hr * 0.86],
-      [hr * 0.16, hr * 0.26, hr * 0.26], { sph: [4, 3] });
-  }
+  /* A NOSE IS NOT OPTIONAL DETAIL. It is the only feature that projects past
+     the skull's own silhouette, which is what says "there is a person in
+     there" from any angle. This used to be NEAR-only, so at gameplay
+     distance every bare head was a smooth egg with two dots on it. */
+  g.ellipsoid(B.HEAD, [0, headY - hr * 0.16, hr * 0.86],
+    [hr * 0.17, hr * 0.28, hr * 0.28],
+    { sph: g.detail === DETAIL.NEAR ? [5, 3] : [4, 2] });
 
   /* ---------- PELVIS AND TUNIC SKIRT ----------
      Every medieval man wears a hemmed tunic over his braies, and without one
@@ -386,7 +393,6 @@ export function buildBody(g, prop, opts = {}) {
       g.material(8).color(0.92, 0.90, 0.83);
       g.lathe(B.SKIRT, [
         [x(0.250), y(0.628)],
-        [x(0.246), y(0.680)],
         [x(0.244), y(0.688)]
       ], { seg: g.seg(0), squash: [1.0, cd / sw * 1.02] });
       g.material(fabric);
@@ -422,7 +428,7 @@ export function buildBody(g, prop, opts = {}) {
        Three rings at near -> two, which is 40 triangles a man and the
        silhouette does not change. */
     g.tube(THIGH, [hipX, y(0.96), 0], [hipX * 1.06, y(0.52), 0],
-      0.092 * lw, 0.070 * lw, { seg: g.seg(1), rings: g.detail === DETAIL.FAR ? 1 : g.detail === DETAIL.MID ? 2 : 3, blend: HIP });
+      0.092 * lw, 0.070 * lw, { seg: g.detail === DETAIL.NEAR ? g.seg(1) : g.seg(0), rings: g.detail === DETAIL.NEAR ? 2 : 1, blend: HIP });
     /* A shin is nearly a straight taper: one fewer segment each way is
        invisible and worth 30 triangles per leg. */
     /* Shin: leather bindings or a greave, darker or lighter than the hose
@@ -430,22 +436,28 @@ export function buildBody(g, prop, opts = {}) {
        range, and it costs nothing -- it is the same tube in another colour. */
     g.material(6).color(0.34, 0.27, 0.20);
     g.tube(SHIN, [hipX * 1.06, y(0.52), 0], [hipX * 1.02, y(0.13), 0],
-      0.074 * lw, 0.050 * lw, { seg: g.seg(0), rings: g.detail === DETAIL.FAR ? 1 : 2, blend: THIGH });
-    /* BOOT CUFF. A flared ring at the ankle, which is what stops the shin
-       being a cylinder pushed into a box: the last two drafts of this rig
-       had a hard step from a taper straight into a slab and it read as a
-       peg leg. Closed at both ends, so there is nothing to see inside. */
+      0.074 * lw, 0.050 * lw, { seg: g.detail === DETAIL.NEAR ? g.seg(0) : g.seg(-1), rings: 1, blend: THIGH });
+    /* THE BOOT IS ONE LATHE, not a cuff ring stacked on a slab.
+       The pair of them cost 48 triangles a leg for a hard step where cloth
+       met a box -- which is exactly the seam a boot is supposed to hide. A
+       single lathe about the ankle runs from the shin's own radius out to a
+       flared cuff above the joint, back in at the instep, and forward along
+       the foot to a closed toe. The forward lean is the ankle angle; the
+       `x` offset puts it under the shin.
+       This is also the construct that fixes the peg-leg read, because it is
+       one continuous surface from calf to toe. */
+    g.material(6).color(0.27, 0.20, 0.14);
     if (g.detail < DETAIL.FAR) {
       g.lathe(FOOT, [
-        [0.062 * lw, y(0.185)],
-        [0.082 * lw, y(0.155)],
-        [0.080 * lw, y(0.105)],
-        [0.058 * lw, y(0.090)]
-      ], { seg: g.seg(0), x: hipX * 1.02, squash: [1.0, 1.06], blend: SHIN });
+        [0.030 * lw, y(0.200)],   /* inside the shin, so no seam */
+        [0.086 * lw, y(0.164)],   /* flared cuff */
+        [0.092 * lw, y(0.050)],   /* the foot itself */
+        [0.058 * lw, y(0.002)]    /* sole, closed */
+      ], { seg: g.seg(0), x: hipX * 1.02, squash: [1.0, 3.4],
+           blend: SHIN });
+    } else {
+      g.slab(FOOT, [hipX * 1.02, y(0.052), 0.050], [0.104 * lw, 0.090 * H, 0.245 * H]);
     }
-    /* the boot: a slab is correct here, feet are boxy */
-    g.material(6).color(0.26, 0.19, 0.13);
-    g.slab(FOOT, [hipX * 1.02, y(0.052), 0.050], [0.104 * lw, 0.090 * H, 0.245 * H]);
   }
 
   /* ---------- ARMS ----------
@@ -491,15 +503,20 @@ export function buildBody(g, prop, opts = {}) {
          - it is smaller than the arm it caps, so the arm's silhouette
            carries the shoulder rather than a bead on top of it. */
     g.ellipsoid(SHO, [sx * 0.90, y(1.418), 0],
-      [0.082 * lw, 0.088 * lw, 0.085 * lw], { sph: [6, 4] });
+      [0.082 * lw, 0.088 * lw, 0.085 * lw],
+      { sph: g.detail === DETAIL.NEAR ? [6, 4] : [4, 2] });
     /* THREE rings at near, not four. Both arm segments are near-straight
        tapers with a muscle swell at one end that the deltoid above already
        covers -- the fourth ring samples a curve that is a straight line
        within a millimetre, and there are four of these tubes on every one of
        300 units. */
-    const armRings = g.detail === DETAIL.NEAR ? 3 : g.rings(0);
+    /* Near gets three rings, everything else one. An upper arm is 0.27 m of
+       straight taper: the only curvature on it is the deltoid's swell, and at
+       mid the deltoid is a 24 mm lump on a figure a centimetre tall. */
+    const armRings = g.detail === DETAIL.NEAR ? 3 : 1;
     g.tube(UP, [sx, y(1.432), 0], [sx * 0.98, y(1.13), 0],
-      0.080 * lw, 0.058 * lw, { seg: g.seg(0), rings: armRings, blend: SHO });
+      0.080 * lw, 0.058 * lw,
+      { seg: g.detail === DETAIL.NEAR ? g.seg(-1) : g.seg(0), rings: armRings, blend: SHO });
     /* THE FOREARM IS A DIFFERENT GARMENT FROM THE UPPER ARM.
        One material from shoulder to wrist is why the whole cast reads as
        navy tubes: the torso, both sleeves and the skirt were the same dyed
@@ -515,14 +532,17 @@ export function buildBody(g, prop, opts = {}) {
     if (outMailed) g.color(0.50, 0.51, 0.52);
     else g.color(0.90, 0.88, 0.81);
     g.tube(FORE, [sx * 0.98, y(1.13), 0], [sx * 0.96, y(0.86), 0],
-      0.058 * lw, 0.044 * lw, { seg: g.seg(0), rings: armRings, blend: UP });
+      0.058 * lw, 0.044 * lw,
+      { seg: g.detail === DETAIL.NEAR ? g.seg(0) : g.seg(-1), rings: 1, blend: UP });
     /* and the elbow joint itself is cloth of the upper sleeve, so the two
        garments meet at a seam rather than at a step */
-    g.material(fabric);
-    if (opts.bodyCol) g.color(opts.bodyCol[0], opts.bodyCol[1], opts.bodyCol[2]);
-    else g.color(0.66, 0.62, 0.55);
-    g.tube(UP, [sx * 0.985, y(1.19), 0], [sx * 0.982, y(1.08), 0],
-      0.062 * lw, 0.058 * lw, { seg: g.seg(0), rings: 1, blend: UP });
+    if (g.detail < DETAIL.FAR) {
+      g.material(fabric);
+      if (opts.bodyCol) g.color(opts.bodyCol[0], opts.bodyCol[1], opts.bodyCol[2]);
+      else g.color(0.66, 0.62, 0.55);
+      g.tube(UP, [sx * 0.985, y(1.19), 0], [sx * 0.982, y(1.08), 0],
+        0.062 * lw, 0.058 * lw, { seg: g.seg(-1), rings: 1, blend: UP });
+    }
     /* GLOVES. A bare skin tube at the end of a coloured sleeve is the last
        mannequin cue on the arm, and every class in every reference has
        something on its hands -- gauntlets, gloves, or a wrapped cuff. It is
@@ -532,12 +552,13 @@ export function buildBody(g, prop, opts = {}) {
       g.material(6).color(0.40, 0.29, 0.20);
       /* the flared cuff, on the forearm bone so it does not swing with the
          hand */
-      g.lathe(FORE, [
-        [0.042 * lw, y(0.885)],
-        [0.056 * lw, y(0.868)],
-        [0.050 * lw, y(0.845)],
-        [0.040 * lw, y(0.840)]
-      ], { seg: g.seg(-2), x: sx * 0.96, squash: [1.0, 1.06], blend: FORE });
+      if (g.detail < DETAIL.FAR) {
+        g.lathe(FORE, [
+          [0.042 * lw, y(0.885)],
+          [0.058 * lw, y(0.866)],
+          [0.044 * lw, y(0.842)]
+        ], { seg: g.seg(-2), x: sx * 0.96, squash: [1.0, 1.06], blend: FORE });
+      }
       g.tube(HAND, [sx * 0.96, y(0.86), 0], [sx * 0.95, y(0.78), 0],
         0.046 * lw, 0.039 * lw, { seg: 4, rings: 1, blend: FORE });
     } else {
@@ -652,7 +673,11 @@ export function buildHair(g, m, prop, opts = {}) {
   const hairR = hr * 1.055;
   g.ellipsoid(B.HAIR,
     [0, headY + hr * 0.74, -hr * 0.10],
-    [hairR * HEAD_X * 1.03, hr * 0.46, hairR * 1.02],
+    /* The Z semi-axis has to beat the skull's own depth, which is squashed
+       1.10 on Z: at hairR * 1.02 the cap was INSIDE the skull front to back
+       and only the back of it showed, which is a bald man with a patch of
+       hair behind one ear. */
+    [hairR * HEAD_X * 1.04, hr * 0.46, hairR * 1.10 * 1.05],
     { sph: g.detail === DETAIL.NEAR ? [9, 5] : [6, 3] });
 
   if (style === 'long') {

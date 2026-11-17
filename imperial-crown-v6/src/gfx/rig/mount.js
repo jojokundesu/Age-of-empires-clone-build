@@ -242,11 +242,16 @@ export function buildMount(g, coat, opts = {}) {
   /* Skipped at far tier: below ~700 tris a horse is four lines and a back,
      and the haunch mass costs 120 of them for something nobody can see. */
   if (g.detail !== 2) {
-    for (const [, x, hipY, hipZ, kneeY, , topR] of legs) {
+    /* Four spheres at 40 triangles each is a tenth of the horse. The haunch
+       is a bulge where the leg meets the barrel, and the barrel already
+       swells there: two rings of a four-segment sphere is plenty, and the
+       hind pair -- which the tail and the cantle cover -- is dropped. */
+    for (const [bone, x, hipY, hipZ, kneeY, , topR] of legs) {
+      if (g.detail === 0 && (bone === B.HORSE_HL || bone === B.HORSE_HR)) continue;
       g.material(MAT.HAIR).color(coatDark[0], coatDark[1], coatDark[2]);
       g.ellipsoid(body, [x * 0.92, (hipY + kneeY) / 2 + 0.10, hipZ * 0.94],
         [topR * 1.02, Math.abs(hipY - kneeY) * 0.52, topR * 1.20],
-        { sph: g.detail === 0 ? [5, 4] : [4, 2] });
+        { sph: g.detail === 0 ? [5, 3] : [4, 2] });
     }
   }
 
@@ -278,7 +283,7 @@ export function buildMount(g, coat, opts = {}) {
   const seatY = L.back - 0.02;
   g.material(MAT.LEATHER).color(0.34, 0.22, 0.14);
   g.tube(body, [0, seatY, 0.22], [0, seatY + 0.01, -0.20], R * 0.80, R * 0.82,
-    { seg: g.seg(-1), rings: 1, squash: [1.0, 0.42] });
+    { seg: g.detail === 0 ? g.seg(-1) : 5, rings: 1, squash: [1.0, 0.42] });
   if (caparison) {
     g.material(MAT.LINEN).color(caparison[0], caparison[1], caparison[2]);
     g.tube(body, [0, seatY - 0.06, 0.28], [0, seatY - 0.06, -0.30], R * 0.92, R * 0.92,
