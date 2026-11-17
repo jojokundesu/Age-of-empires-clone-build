@@ -206,9 +206,14 @@ export function buildMount(g, coat, opts = {}) {
   /* mane: a flat crest down the neck, offset slightly so it does not fight
      the silhouette head-on */
   g.material(MAT.HAIR).color(mane[0], mane[1], mane[2]);
-  g.tube(neck, [R * 0.13, L.withers - 0.16, L.neckBaseZ - 0.06],
-    [R * 0.10, L.pollY - 0.04, L.pollZ - 0.06], 0.075, 0.036,
-    { seg: 4, rings: 1, squash: [0.30, 1.0] });
+  /* The mane is the crest of the neck made visible: a thick slab of hair
+     standing proud of the spine, not a 2 cm fin. At 0.075 it was narrower
+     than the ears and disappeared from every angle but dead abeam; a
+     destrier's mane is a hand's breadth of dark hair and it is one of the
+     two things that separates a horse from a donkey at gameplay distance. */
+  g.tube(neck, [R * 0.10, L.withers - 0.20, L.neckBaseZ - 0.04],
+    [R * 0.07, L.pollY + 0.02, L.pollZ - 0.04], 0.088, 0.050,
+    { seg: 5, rings: 2, squash: [0.34, 1.0] });
 
   /* ---------------- tail ----------------
      One bone. Leaves the rump high and hangs behind. */
@@ -229,10 +234,14 @@ export function buildMount(g, coat, opts = {}) {
     /* topR/kneeR were 0.66/0.30 of the barrel radius, which is a 89 mm
        forearm on a 540 mm barrel -- deer's legs under a cow's body. A
        destrier's forearm is nearer 0.9 and the cannon 0.45. */
-    [B.HORSE_FL, -L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.90, R * 0.44],
-    [B.HORSE_FR, L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.90, R * 0.44],
-    [B.HORSE_HL, -L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.56, R * 1.02, R * 0.50],
-    [B.HORSE_HR, L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.56, R * 1.02, R * 0.50]
+    /* kneeR is the CANNON radius, and 0.44 R was a 119 mm cannon on an
+       180 mm forearm: the lower leg was nearly as thick as the upper, which
+       is what made the horse look like it was standing on four posts. A real
+       cannon is a third of the forearm, and rule 5 asks for R * 0.26. */
+    [B.HORSE_FL, -L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.90, R * 0.30],
+    [B.HORSE_FR, L.hipX, L.hipY, L.hipFZ, L.kneeF, 0.46, R * 0.90, R * 0.30],
+    [B.HORSE_HL, -L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.56, R * 1.04, R * 0.34],
+    [B.HORSE_HR, L.hipX * 1.04, L.hipY - 0.02, L.hipHZ, L.kneeH, -0.56, R * 1.04, R * 0.34]
   ];
   /* The haunch is BODY, not leg. On a horse the mass above the knee is
      shoulder and rump: it does not swing, it is part of the barrel. Building
@@ -266,15 +275,28 @@ export function buildMount(g, coat, opts = {}) {
     /* knee / hock knob */
     g.tube(bone, [x, kneeY + 0.06, kneeZ + 0.01], [x, kneeY - 0.06, kneeZ],
       kneeR * 1.24, kneeR * 1.10, { seg: g.seg(-1), rings: 1 });
-    /* cannon: overlaps the joint, near-constant width */
-    g.tube(bone, [x, kneeY + 0.01, kneeZ + 0.01], [x, L.hoof + 0.11, footZ],
-      kneeR * 1.12, kneeR * 0.86, { seg: g.seg(-1), rings: 1 });
-    /* hoof */
+    /* THE CANNON AND THE FETLOCK.
+       A cannon is a thin column that runs almost plumb to just above the
+       ground, then the fetlock JOINT kicks the hoof forward and the pastern
+       slopes down into it. Running one cone from the knee to the hoof made a
+       post: the leg met the floor at a right angle, which no horse's leg
+       does, and at 1.12 of the knee radius the cannon was as thick as the
+       joint above it. Taper hard, then angle. */
+    const cannonTopR = kneeR * 1.06;
+    const cannonR = R * 0.26;
+    const fetY = L.hoof + 0.15;
+    const fetZ = footZ - 0.02;
+    g.tube(bone, [x, kneeY + 0.01, kneeZ + 0.01], [x, fetY, fetZ],
+      cannonTopR, cannonR, { seg: g.seg(-1), rings: 2 });
+    /* fetlock knob, then the pastern raked forward into the hoof */
+    g.tube(bone, [x, fetY + 0.035, fetZ], [x, fetY - 0.020, fetZ + 0.010],
+      cannonR * 1.34, cannonR * 1.14, { seg: g.seg(-2), rings: 1 });
     g.material(MAT.LEATHER).color(hoofCol[0], hoofCol[1], hoofCol[2]);
-    /* The hoof has to be visibly wider and darker than the cannon or the
-       leg just ends. At 0.92 of the cannon radius it did not read at all. */
-    g.tube(bone, [x, L.hoof + 0.15, footZ], [x, L.hoof, footZ + 0.03],
-      kneeR * 1.16, kneeR * 1.10, { seg: g.seg(-2), rings: 1 });
+    g.tube(bone, [x, fetY - 0.010, fetZ + 0.010], [x, L.hoof + 0.012, footZ + 0.055],
+      cannonR * 1.10, cannonR * 1.22, { seg: g.seg(-2), rings: 1 });
+    /* hoof: wider and darker than the pastern, flat on the ground */
+    g.tube(bone, [x, L.hoof + 0.055, footZ + 0.045], [x, L.hoof, footZ + 0.065],
+      cannonR * 1.34, cannonR * 1.46, { seg: g.seg(-2), rings: 1 });
   }
 
   /* ---------------- saddle ----------------
@@ -285,9 +307,83 @@ export function buildMount(g, coat, opts = {}) {
   g.tube(body, [0, seatY, 0.22], [0, seatY + 0.01, -0.20], R * 0.80, R * 0.82,
     { seg: g.detail === 0 ? g.seg(-1) : 5, rings: 1, squash: [1.0, 0.42] });
   if (caparison) {
-    g.material(MAT.LINEN).color(caparison[0], caparison[1], caparison[2]);
-    g.tube(body, [0, seatY - 0.06, 0.28], [0, seatY - 0.06, -0.30], R * 0.92, R * 0.92,
-      { seg: 6, rings: 1, squash: [1.0, 0.52] });
+    /* A DRAPED TRAPPER, not a blanket.
+       The old caparison was one short tube across the saddle: a pad. What
+       makes a medieval warhorse unmistakable at gameplay distance is cloth
+       hanging over both flanks from under the saddle to knee height,
+       framing the animal in the player's colour. It is built with `loft`,
+       because a trapper is the one shape in this file that is genuinely not
+       a surface of revolution: its section climbs the spine, rolls over the
+       top of the barrel, drops past the flank and then falls STRAIGHT to the
+       hem. Every attempt with lathe/tube/skirt turned the hem back in under
+       the belly, because a circle returns. */
+    const midY = (L.back + L.belly) / 2;
+    const hemY = L.kneeF + 0.02;         /* knee height, as specified */
+    const topY = L.back - 0.06;
+    const wallX = R * 1.06;              /* the cloth stands 16 mm off the ribs */
+    const SPINE = R * 0.34;              /* half-width of the spine ridge */
+
+    /* The section: five points. Spine centre, over the shoulder of the
+       barrel, out to the wall, and down. rV is folded into the authored
+       points, so the hem depth is stated directly rather than derived. */
+    const section = (z, k) => {
+      /* k < 1 tucks the panel under the saddle at the front and the cantle
+         at the back, where the cloth disappears under the leather. */
+      const wx = wallX * k;
+      const ty = (midY + 0.30) * k + topY * (1 - k);
+      const hy = hemY;
+      return [
+        [0, ty],
+        [SPINE * k, ty + (topY - ty) * 0.1],
+        [wx * 0.86, ty - 0.03],
+        [wx, (ty + hy) * 0.5],
+        [wx * 1.01, hy]
+      ];
+    };
+    /* one panel per flank, mirrored in X */
+    for (const side of [1, -1]) {
+      const rings = [
+        { z: 0.30, k: 0.55 },
+        { z: 0.10, k: 0.95 },
+        { z: -0.24, k: 1.00 },
+        { z: -0.46, k: 0.96 }
+      ];
+      const flip = (pts) => pts.map(([x, y]) => [x * side, y]);
+      g.material(MAT.LINEN).color(caparison[0], caparison[1], caparison[2]);
+      g.loft(body, rings.map((r) => {
+        const p = flip(section(r.z, r.k));
+        /* the fold: a slow ripple along Z in the wall, so the hem is not a
+           machined edge. Only at near tier -- at mid it reads as a wobble. */
+        if (g.detail === 0) {
+          const t = (r.z + 0.46) / 0.76;
+          p[3][0] *= 1 + 0.020 * Math.cos(t * 12);
+          p[4][0] *= 1 + 0.026 * Math.cos(t * 12);
+        }
+        return { z: r.z, pts: p };
+      }), {});
+
+      /* THE HERALDIC BORDER: an undyed band along the hem, the same trick
+         the tunic hem and the shield rim use. It is the panel's OWN section,
+         cut down to the bottom of the wall and grown 5 mm absolute, lofted
+         over the same span of Z -- so its winding, its normal direction and
+         its curvature are the panel's by construction. Writing the strip out
+         by hand got the mirrored side's normals backwards and the band was
+         culled on the far flank. */
+      g.material(MAT.TRIM).color(0.93, 0.91, 0.84);
+      const bandPts = (z, k) => {
+        const p = flip(section(z, k));
+        const gx = (v) => v * 1.0 + Math.sign(v) * 0.014;
+        return [
+          [gx(p[3][0]), p[3][1]],
+          [gx(p[4][0]), p[4][1]],
+          [gx(p[4][0] * 0.99), hemY + 0.13]
+        ];
+      };
+      g.loft(body, [
+        { z: -0.28, pts: bandPts(-0.28, 0.99) },
+        { z: -0.46, pts: bandPts(-0.46, 0.96) }
+      ], {});
+    }
   }
 
   /* ---------------- barding ----------------

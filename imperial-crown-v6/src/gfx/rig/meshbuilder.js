@@ -169,6 +169,125 @@ export class SkinnedBuilder {
    * `end` is the end point and `radius` the radius of the ring there;
    * `axis` points OUT of the tube so the disc faces the viewer.
    */
+  /* ----------------------------------------------------------------
+     SKIRT: cloth hanging off a body that runs along Z.
+
+     `lathe` revolves about Y, so it cannot make a drape over a horse: a
+     barrel lies along Z and a Y-lathe over it is a cone standing on its
+     point beside the animal. This is the same sweep with two changes --
+     the rings advance along the Z axis, and the radius is an ELLIPSE whose
+     vertical semi-axis may differ from its horizontal one, because a horse
+     is narrow and deep and a circle section reads as a barrel.
+
+     Rings run front to back, the arc is centred on the back (theta = -PI/2,
+     matching every other garment in the rig), and `folds` ripples the radius
+     around the sweep so the hem is not a machined edge.
+
+       skirt(bone, [[z, y, rH, rV], ...], opts)
+     ---------------------------------------------------------------- */
+  skirt(bone, profile, opts = {}) {
+    const seg = Math.max(3, opts.seg ?? this.seg());
+    const arc = opts.arc ?? Math.PI * 2;
+    const arcStart = opts.arcStart ?? 0;
+    const folds = opts.folds || 0;
+    const foldDepth = opts.foldDepth ?? 0.07;
+    const base = this.count;
+    for (let r = 0; r < profile.length; r++) {
+      const [zc, yc, rH, rV] = profile[r];
+      const v = profile.length > 1 ? r / (profile.length - 1) : 1;
+      for (let s = 0; s <= seg; s++) {
+        const th = arcStart + (s / seg) * arc;
+        const fold = folds ? 1 + foldDepth * v * Math.cos(th * folds) : 1;
+        const ca = Math.cos(th), sa = Math.sin(th);
+        const px = rH * fold * ca;
+        const py = yc - rV * fold * sa;
+        const pz = zc;
+        /* radial normal, tilted by the profile's own slope in Z so a
+           tapering panel shades as a cone rather than as a cylinder */
+        let nx = ca / Math.max(0.05, rH);
+        let ny = -sa / Math.max(0.05, rV);
+        const nl = Math.hypot(nx, ny) || 1;
+        nx /= nl; ny /= nl;
+        this._vert(px, py, pz, nx, ny, 0, s / seg, v);
+      }
+    }
+    for (let r = 0; r + 1 < profile.length; r++) {
+      for (let s = 0; s < seg; s++) {
+        const i0 = base + r * (seg + 1) + s;
+        const i1 = i0 + 1;
+        const i2 = i0 + seg + 1;
+        const i3 = i2 + 1;
+        this._tri(i0, i2, i1);
+        this._tri(i1, i2, i3);
+      }
+    }
+    this._skin(bone);
+    return this;
+  }
+
+  /* ----------------------------------------------------------------
+     LOFT: skin a stack of hand-authored 2D cross-sections along Z.
+
+     Neither `lathe` (revolves about Y) nor `tube` (a circle about an
+     arbitrary axis) can describe cloth hanging over a horse, because a
+     trapper is NOT a surface of revolution about anything: its section goes
+     up the spine, over the top of the barrel, out past the flank and then
+     straight DOWN to the hem. Authoring that as a radial ellipse was four
+     failed passes -- the elliptical form turns back in under the belly and
+     the cloth ends up as a diaper.
+
+     With a loft the section is just a polyline, so the vertical fall of the
+     hem is stated instead of derived.
+
+       loft(bone, [{ z, pts: [[x, y], ...] }, ...], opts)
+
+     `pts` must be the same length in every section. Normals are the
+     outward normal of the local section tangent, so a panel shades like the
+     curves it actually has and a fold shades as a fold.
+     ---------------------------------------------------------------- */
+  loft(bone, sections, opts = {}) {
+    const n = sections.length;
+    if (n < 2) return this;
+    const m = sections[0].pts.length;
+    const base = this.count;
+    const push = (pts) => {
+      /* outward normal from the section's own winding: the section runs
+         left-to-right across the shell, so the outward side is on its right
+         when travelling in +x, which for a horse's back means +y at the top
+         and -x on the far flank. */
+      const out = [];
+      for (let k = 0; k < m; k++) {
+        const a = pts[Math.max(0, k - 1)];
+        const b = pts[Math.min(m - 1, k + 1)];
+        let dx = b[0] - a[0], dy = b[1] - a[1];
+        const l = Math.hypot(dx, dy) || 1;
+        out.push([dy / l, -dx / l]);
+      }
+      return out;
+    };
+    for (let r = 0; r < n; r++) {
+      const { z, pts } = sections[r];
+      const nor = push(pts);
+      const v = r / (n - 1);
+      for (let k = 0; k < m; k++) {
+        const u = m > 1 ? k / (m - 1) : 0;
+        this._vert(pts[k][0], pts[k][1], z, nor[k][0], nor[k][1], 0, u, v);
+      }
+    }
+    for (let r = 0; r + 1 < n; r++) {
+      for (let k = 0; k + 1 < m; k++) {
+        const i0 = base + r * m + k;
+        const i1 = i0 + 1;
+        const i2 = i0 + m;
+        const i3 = i2 + 1;
+        this._tri(i0, i1, i2);
+        this._tri(i1, i3, i2);
+      }
+    }
+    this._skin(bone);
+    return this;
+  }
+
   cap(bone, end, radius, axis, opts = {}) {
     const seg = Math.max(3, opts.seg ?? this.seg());
     let ax = axis[0], ay = axis[1], az = axis[2];
