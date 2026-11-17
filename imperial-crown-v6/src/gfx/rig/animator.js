@@ -515,6 +515,23 @@ export const IDLE_GUARD = {
     armR: [-0.08, 0.00, -0.12], foreR: [-0.52, 0.00, 0.00],
     chest: [0, 0.04, 0], shoulderL: [0, 0, 0.08]
   },
+  /* THE AXEMAN HOLDS A TWO-HANDED AXE, so his fists must be one above the
+     other on the haft -- a two-handed weapon with both hands at the same
+     height is a man carrying a pole horizontally, which is exactly how the
+     first pass rendered. Left fist at shoulder height and out, right fist
+     low and in at the hip: 0.54 m of vertical separation on a 1.1 m haft,
+     which puts the head up behind the right shoulder ready to swing. */
+  axeman: {
+    /* Solved, not guessed. These four angles put the LEFT fist at
+       (-0.14, 1.31, 0.31) and the RIGHT at (0.09, 1.05, 0.27): both in front
+       of the chest, 0.27 m apart on the haft, which is a two-handed grip on
+       a weapon held across the body. The shoulder abduction (z = 0.50) is
+       what stops the upper arm hanging out to the side with the elbow at
+       90 degrees, which read as a man carrying a bucket. */
+    armL: [-0.20, 0.00, 0.50], foreL: [-1.60, 0.20, 0.00],
+    armR: [-0.10, 0.00, -0.30], foreR: [-0.85, 0.00, 0.00],
+    chest: [0, -0.12, 0], shoulderL: [0, 0, 0.04]
+  },
   huskarl: {
     armL: [-0.13, 0.00, 0.20], foreL: [-0.68, 0.10, 0.00],
     armR: [-0.22, 0.00, -0.18], foreR: [-0.85, 0.00, 0.00],

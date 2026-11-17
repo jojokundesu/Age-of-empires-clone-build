@@ -541,7 +541,11 @@ export class SkinnedBuilder {
    */
   heater(bone, c, size, opts = {}) {
     const [w, h, d] = size;
-    const steps = opts.steps || Math.max(3, Math.round(this.seg() * 0.55));
+    /* Six steps at near, from `seg * 0.55` = 4.4 rounded to 4 -- but the
+       steps also set the FACE grid, so this is the resolution of the shield's
+       dome and its heraldic border, and four was visibly faceted on a 470 mm
+       board. Kept at five at mid, where the board is 20 px tall. */
+    const steps = opts.steps || (this.detail === 0 ? 4 : this.detail === 1 ? 4 : 3);
     const dome = opts.dome ?? 0.22;        // how far the face bulges
     const rot = opts.rot || 0;
     const cs = Math.cos(rot), sn = Math.sin(rot);

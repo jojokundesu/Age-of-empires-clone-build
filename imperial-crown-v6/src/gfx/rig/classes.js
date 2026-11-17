@@ -199,7 +199,9 @@ export const CLASSES = {
     crest: (age) => (age >= 4 ? [0.62, 0.14, 0.12] : null),
     build(g, m, o) {
       buildHelm(g, m, this.helm(o.age), o.age);
-      if (this.crest(o.age)) buildCrest(g, m, this.crest(o.age), 5);
+      /* Three locks. A crest is read as a colour and a direction against
+         the sky; a fourth lock is 8 triangles nobody resolves. */
+      if (this.crest(o.age)) buildCrest(g, m, this.crest(o.age), 3);
       buildPauldrons(g, m);
       buildCape(g, m, o.capeColor || [0.34, 0.12, 0.14]);
       buildSurcoat(g, m);
@@ -366,9 +368,14 @@ export const CLASSES = {
 
   /* ---------- AXEMAN ----------
      A two-handed axe: heavy shoulders, no shield, a beard and a bare head
-     or a simple cap. */
+     or a simple cap. NO SHIELD, and that matters more than it sounds: the
+     class was sharing the man-at-arms build, so it wore a heater on the left
+     forearm -- which is the forearm its left hand has to hold the haft with.
+     The two-handed grip left the arm out to the side wrapped round a shield
+     that had nowhere to be. He carries nothing but the axe. */
   axeman: {
     profile: 'manAtArms',
+    mailedBody: false,
     helm: (age) => (age <= 2 ? 'kettle' : 'barbute'),
     hair: 'short',
     beard: true,
@@ -385,6 +392,82 @@ export const CLASSES = {
          It is parented to the pelvis because the pelvis is upright in every
          pose in the rig, so the line it draws survives the guard. */
       buildTwoHandedAxe(g, m);
+    }
+  },
+
+  /* ---------- HUSKARL ----------
+     Norse heavy infantry: round shield, axe, mail, no horse. */
+  huskarl: {
+    profile: 'manAtArms',
+    mailedBody: true,
+    helm: (age) => (age <= 2 ? 'kettle' : 'nasal'),
+    hair: 'braid',
+    beard: true,
+    build(g, m, o) {
+      buildHelm(g, m, this.helm(o.age), o.age);
+      buildFaceDetail(g, m, { hair: o.hair, beard: true });
+      if (o.age >= 3) buildPauldrons(g, m);
+      buildBelt(g, m);
+      buildSword(g, B.HAND_R, [m.handX, m.handY, 0.03], m.y(0.40));
+      /* Round shield. It was a 300 mm radius disc centred 285 mm out from
+         the centre line, i.e. most of its width hung inside the torso: the
+         near arm, the belt and the whole flank were drawn through it and
+         what showed was a brown wedge beside the hip. A shield covers the
+         near side, so it is 230 mm across and sits OUTSIDE the shoulder
+         line at armX. */
+      /* ONE lathe for the whole board, and that is what makes the round
+         shield affordable. The draft before it was three spheres -- a wooden
+         disc, an iron disc 5 mm in front of it and a boss -- i.e. three
+         closed shells of which two were almost entirely hidden by each
+         other: ~120 triangles to show a 6 mm ring and a stud. A lathe about
+         the shield's own axis draws the board and its iron edge as one
+         profile, from the boss at the centre out to the rim and back in a
+         short lip. The whole shield costs 32.
+         The axis is the face normal, so the lathe has to be laid on its
+         side: the profile is in the shield's radius, and `rot` tips it to
+         face forward. */
+      g.material(MAT.WOOD).color(0.52, 0.42, 0.30);
+      /* FOUR rings, which is a fan from the boss to the rim and one lip back
+         over the edge. A disc drawn from its centre pays one ring of
+         triangles per ring of profile whether or not that ring describes
+         anything, and the last draft carried seven. */
+      const sy = m.y(1.03);
+      g.lathe(B.HAND_L, g.detail === DETAIL.FAR ? [
+        [0.000, sy + 0.052],
+        [0.070, sy + 0.006],
+        [0.258, sy + 0.020]
+      ] : [
+        [0.000, sy + 0.052],   /* boss crown, proud of the face */
+        [0.070, sy + 0.006],   /* the face itself */
+        [0.246, sy + 0.000],
+        [0.258, sy + 0.020]    /* iron rim, turned forward over the edge */
+      /* Eight segments, not ten. A disc's rim error is a tenth of a radius
+         at ten segments and an eighth at eight, on a shield 230 mm across
+         seen from 20 m -- and ten segments made this the single most
+         expensive piece of kit on any infantryman. */
+      ], { seg: g.detail === DETAIL.NEAR ? 8 : g.detail === DETAIL.MID ? 6 : 5,
+           x: -m.x(0.372), z: 0.13 });
+    }
+  },
+
+  /* ---------- BERSERK ----------
+     Bare torso, no helm, long hair and beard. The only topless humanoid,
+     which is exactly what makes him readable. */
+  berserk: {
+    profile: 'manAtArms',
+    helm: () => 'none',
+    hair: 'long',
+    beard: true,
+    bareChest: true,
+    build(g, m, o) {
+      buildHairAfterHelm(g, m, this, o);
+      buildFaceDetail(g, m, { hair: o.hair, beard: true });
+      buildBelt(g, m);
+      g.material(MAT.WOOD).color(0.44, 0.32, 0.20);
+      g.tube(B.HAND_R, [m.x(0.14), m.y(1.14), 0.10], [m.x(0.36), m.y(1.96), 0.26],
+        0.023, 0.020, { seg: 5, rings: 2 });
+      g.material(MAT.PLATE).color(0.58, 0.60, 0.64);
+      g.slab(B.HAND_R, [m.x(0.38), m.y(2.00), 0.27], [0.20, 0.16, 0.028], { rot: 0.28 });
     }
   },
 
@@ -564,12 +647,16 @@ export const CLASSES = {
     crest: (age) => (age >= 2 ? [0.66, 0.52, 0.16] : null),
     build(g, m, o) {
       buildHelm(g, m, this.helm(o.age), o.age);
-      if (this.crest(o.age)) buildCrest(g, m, this.crest(o.age), 3);
+      /* Two locks, not three: a claimant's crest is a single gold fin, and
+         at three it was the difference between fitting and not fitting. */
+      if (this.crest(o.age)) buildCrest(g, m, this.crest(o.age), 2);
       buildPauldrons(g, m);
       buildCape(g, m, [0.46, 0.34, 0.10]);
-      /* no surcoat: the claimant has a cape, and the two overlap over the
-         same skirt rings for no visible gain */
-      buildBelt(g, m);
+      /* No surcoat: the claimant has a cape, and the two overlap over the
+         same skirt rings for no visible gain. No belt either -- the cape
+         hangs over the waist, so the belt was 24 triangles of leather drawn
+         entirely behind cloth. */
+
       buildSword(g, B.HAND_R, [m.handX, m.handY, 0.03], m.y(0.44));
       g.material(MAT.WOOD).color(0.50, 0.42, 0.28);
       hangHeater(g, m, [0.32, 0.48, 0.030], o.age);

@@ -505,10 +505,17 @@ export function buildPauldrons(g, m) {
        fourth band the first draft carried was between two of those three and
        added nothing but cost 56 triangles per man at near and 28 at far,
        where a pauldron is a grey blob on the shoulder. */
-    g.lathe(SHO, [
+    /* Three rings below near tier, four at it. A pauldron's silhouette is
+       its crown, its flare and its lame; the fourth ring sits between the
+       flare and the lame and describes no feature at 8 segments. */
+    g.lathe(SHO, g.detail === DETAIL.NEAR ? [
       [0.000, y(1.492)],
       [0.092 * lw, y(1.428)],
       [0.152 * lw, y(1.314)],
+      [0.120 * lw, y(1.291)]
+    ] : [
+      [0.000, y(1.492)],
+      [0.104 * lw, y(1.400)],
       [0.120 * lw, y(1.291)]
     ], { seg: g.seg(1), x: sx, squash: [1.0, 1.04] });
     /* The arm bone points straight down, so a lathe about its own axis has
@@ -624,8 +631,13 @@ export function buildTwoHandedAxe(g, m, opts = {}) {
   const dir = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
   const dl = Math.hypot(dir[0], dir[1], dir[2]) || 1;
   const u = [dir[0] / dl, dir[1] / dl, dir[2] / dl];
-  const butt = [lo[0] - u[0] * 0.20, lo[1] - u[1] * 0.20, lo[2] - u[2] * 0.20];
-  const top = [hi[0] + u[0] * 0.20, hi[1] + u[1] * 0.20, hi[2] + u[2] * 0.20];
+  /* The BUTT is the end that points UP on this grip. A Dane axe is carried
+     head-low in the guard and driven up and over on the swing, and the two
+     fists are already stated the right way round -- left high, right low --
+     so the long end of the haft, the end the head hangs off, is the one past
+     the LOWER fist. Written the other way the axe head sat behind the hip. */
+  const butt = [lo[0] + u[0] * 0.02, lo[1] + u[1] * 0.02, lo[2] + u[2] * 0.02];
+  const top = [hi[0] + u[0] * 0.60, hi[1] + u[1] * 0.60, hi[2] + u[2] * 0.60];
 
   g.material(MAT.WOOD).color(0.46, 0.34, 0.22);
   g.tube(UPRIGHT, butt, top, 0.016, 0.018,
@@ -641,29 +653,40 @@ export function buildTwoHandedAxe(g, m, opts = {}) {
      haft instead of across it is a spike, not an axe. */
   const side = hi[0] >= 0 ? 1 : -1;
   const hx = top[0] + side * 0.085;
-  const socketTop = [top[0], top[1] - 0.05, top[2]];
+  const socketTop = [top[0], top[1] + 0.02, top[2]];
   g.material(MAT.PLATE).color(0.66, 0.68, 0.72);
-  g.tube(UPRIGHT, [socketTop[0], socketTop[1] + 0.045, socketTop[2]],
-    [socketTop[0], socketTop[1] - 0.045, socketTop[2]], 0.031, 0.027,
+  g.tube(UPRIGHT, [socketTop[0], socketTop[1] + 0.055, socketTop[2]],
+    [socketTop[0], socketTop[1] - 0.055, socketTop[2]], 0.034, 0.030,
     { seg: 4, rings: 1 });
   /* THE BLADE: a broad crescent, so it is NARROW at the socket and widest at
      the cutting edge. `blade`'s default section list tapers toward the far
      end, which is right for a sword pointing at the target and exactly wrong
      for an axe -- it made the head a spear point growing sideways out of the
      haft. Sections are stated here, widening from the eye to the edge. */
-  g.blade(UPRIGHT, socketTop, [hx, socketTop[1] - 0.015, socketTop[2]],
-    0.080, {
-      thick: 0.016,
-      sections: [
-        { t: 0, w: 0.038, th: 0.016 },
-        { t: 0.45, w: 0.070, th: 0.014 },
-        { t: 0.80, w: 0.086, th: 0.011 },
-        { t: 1, w: 0.074, th: 0.007 }
-      ]
-    });
-  /* the beard, hooked back down under the eye */
-  g.slab(UPRIGHT, [socketTop[0] + side * 0.036, socketTop[1] - 0.085, socketTop[2]],
-    [0.090, 0.150, 0.020], { rot: side * 0.20 });
+  /* THE HEAD, BUILT AS A CRESCENT IN THE X-Y PLANE.
+     `blade` spreads its width along an axis perpendicular to the blade's
+     LENGTH, and for a horizontally-held haft that perpendicular runs
+     front-to-back -- so the axe head rendered as a flat card seen edge-on
+     from the side, which is the one angle it is ever looked at. An axe head
+     is a plate whose FLAT lies in the plane of the haft: tall along the
+     haft, thin perpendicular to it, broad outward from the socket.
+     So: a slab with its height on Y and its thin axis on Z, plus a second
+     slab raked back to make the bearded lower horn. Two boxes, 24
+     triangles, and the silhouette is an axe from every side. */
+  g.material(MAT.PLATE).color(0.66, 0.68, 0.72);
+  const bladeX = socketTop[0] + side * 0.105;
+  /* the main plate: 210 mm tall, 105 mm out, 18 mm thick */
+  g.slab(UPRIGHT, [socketTop[0] + side * 0.052, socketTop[1] - 0.01, socketTop[2]],
+    [0.105, 0.210, 0.018], { rot: 0 });
+  /* the cutting edge: a thinner plate standing proud of the main one, at the
+     outer end, so the edge catches light separately from the cheek */
+  g.material(MAT.PLATE).color(0.86, 0.88, 0.91);
+  g.slab(UPRIGHT, [bladeX, socketTop[1] - 0.01, socketTop[2]],
+    [0.026, 0.225, 0.010], { rot: 0 });
+  /* the beard: the lower horn, raked back toward the haft */
+  g.material(MAT.PLATE).color(0.66, 0.68, 0.72);
+  g.slab(UPRIGHT, [socketTop[0] + side * 0.058, socketTop[1] - 0.145, socketTop[2]],
+    [0.098, 0.130, 0.017], { rot: side * 0.30 });
 }
 
 export function buildSword(g, hand, pos, len, opts = {}) {
@@ -716,11 +739,13 @@ export function buildSword(g, hand, pos, len, opts = {}) {
      feather rather than a sword. */
   g.blade(UPRIGHT, [pos[0], top, pos[2] + 0.01], tip, 0.030, {
     thick: 0.009,
+    /* Four sections, from five. The 0.10 and 0.82 rings describe a
+       parallel-sided blade between two tapers, and one straight run between
+       the shoulder and the point reads identically at 30 cm on screen. */
     sections: [
       { t: 0, w: 0.021, th: 0.009 },
       { t: 0.10, w: 0.030, th: 0.010 },
-      { t: 0.82, w: 0.027, th: 0.009 },
-      { t: 0.94, w: 0.018, th: 0.007 },
+      { t: 0.90, w: 0.024, th: 0.008 },
       { t: 1, w: 0.004, th: 0.003 }
     ]
   });

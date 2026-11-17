@@ -138,12 +138,15 @@ export function buildMount(g, coat, opts = {}) {
      sampling a smooth curve with straight chords, at 8 and 6 segments, on a
      thing that is a fifth of the screen at the closest the camera ever
      gets to a horse. */
-  const barrelRings = g.detail === 0 ? 2 : 1;
+  /* One ring. A horse's barrel is close to a straight taper over the
+     0.6 m between the withers and the loin, and the second ring was
+     sampling curvature the two end rings already describe. */
+  const barrelRings = 1;
   g.tube(body, [0, L.withers - 0.12, L.chestZ], [0, (L.back + L.belly) / 2 + 0.04, 0.04],
     R * 0.74, R, { seg: g.seg(0), rings: barrelRings, squash: [1.0, 0.90] });
   /* girth -> loin */
   g.tube(body, [0, (L.back + L.belly) / 2 + 0.04, 0.04], [0, L.back - 0.16, L.rumpZ + 0.22],
-    R, R * 0.82, { seg: g.seg(0), rings: barrelRings, squash: [1.0, 0.92] });
+    R, R * 0.82, { seg: g.seg(0), rings: 1, squash: [1.0, 0.92] });
   /* croup: the rump, rounded and a touch higher than the loin */
   g.ellipsoid(body, [0, L.back - 0.14, L.rumpZ + 0.08], [R * 0.80, R * 0.78, 0.20],
     { sph: [g.sph()[0], g.detail === 0 ? 4 : 3] });
@@ -151,11 +154,11 @@ export function buildMount(g, coat, opts = {}) {
      Gated at far tier -- the barrel's own front cap covers it there. */
   if (g.detail !== 2) {
     g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02], [R * 0.70, R * 0.86, 0.18],
-      { sph: [6, 3] });
+      { sph: [5, 3] });
   }
   /* withers: the ridge the saddle sits behind */
   g.tube(body, [0, L.withers - 0.10, L.chestZ - 0.18], [0, L.withers, 0.06],
-    R * 0.62, R * 0.70, { seg: g.seg(-2), rings: 1, squash: [1.25, 0.62] });
+    R * 0.62, R * 0.70, { seg: g.seg(-3), rings: 1, squash: [1.25, 0.62] });
 
   /* ---------------- neck ----------------
      Long, and it must LEAVE the withers at a steep angle then flatten
@@ -193,7 +196,7 @@ export function buildMount(g, coat, opts = {}) {
   /* The nose itself: a blunt pad covering the END of that tube, not a ball
      floating past it. It is centred back inside the tube's last ring. */
   g.ellipsoid(head, [0, L.muzzleY - 0.01, L.muzzleZ - R * 0.10],
-    [R * 0.245, R * 0.215, R * 0.20], { sph: [4, 3] });
+    [R * 0.245, R * 0.215, R * 0.20], { sph: [4, 2] });
   /* jaw, set back under the cheek */
   g.ellipsoid(head, [0, L.muzzleY + 0.20, L.muzzleZ - 0.26], [R * 0.30, R * 0.27, R * 0.30],
     { sph: [4, 3] });
@@ -256,14 +259,14 @@ export function buildMount(g, coat, opts = {}) {
        swells there: two rings of a four-segment sphere is plenty, and the
        hind pair -- which the tail and the cantle cover -- is dropped. */
     for (const [bone, x, hipY, hipZ, kneeY, , topR] of legs) {
-      if (g.detail === 0 && (bone === B.HORSE_HL || bone === B.HORSE_HR)) continue;
+      if (bone === B.HORSE_HL || bone === B.HORSE_HR) continue;
       /* A caparisoned horse's haunch is under 16 mm of cloth: the bulge is
          not on the silhouette at all, and the panel would z-fight it. */
       if (caparison) continue;
       g.material(MAT.HAIR).color(coatDark[0], coatDark[1], coatDark[2]);
       g.ellipsoid(body, [x * 0.92, (hipY + kneeY) / 2 + 0.10, hipZ * 0.94],
         [topR * 1.02, Math.abs(hipY - kneeY) * 0.52, topR * 1.20],
-        { sph: g.detail === 0 ? [5, 3] : [4, 2] });
+        { sph: g.detail === 0 ? [4, 3] : [4, 2] });
     }
   }
 
@@ -277,7 +280,8 @@ export function buildMount(g, coat, opts = {}) {
       { seg: 6, rings: 1, squash: [1.0, 0.92] });
     /* knee / hock knob */
     g.tube(bone, [x, kneeY + 0.06, kneeZ + 0.01], [x, kneeY - 0.06, kneeZ],
-      kneeR * 1.24, kneeR * 1.10, { seg: g.seg(-1), rings: 1 });
+      kneeR * 1.24, kneeR * 1.10,
+      { seg: g.detail === 0 ? g.seg(-1) : g.seg(-2), rings: 1 });
     /* THE CANNON AND THE FETLOCK.
        A cannon is a thin column that runs almost plumb to just above the
        ground, then the fetlock JOINT kicks the hoof forward and the pastern
@@ -299,7 +303,8 @@ export function buildMount(g, coat, opts = {}) {
       cannonR * 1.10, cannonR * 1.22, { seg: g.seg(-2), rings: 1 });
     /* hoof: wider and darker than the pastern, flat on the ground */
     g.tube(bone, [x, L.hoof + 0.055, footZ + 0.045], [x, L.hoof, footZ + 0.065],
-      cannonR * 1.34, cannonR * 1.46, { seg: g.seg(-2), rings: 1 });
+      cannonR * 1.34, cannonR * 1.46,
+      { seg: g.detail === 0 ? g.seg(-2) : g.seg(-3), rings: 1 });
   }
 
   /* ---------------- saddle ----------------
@@ -433,7 +438,7 @@ export function buildMount(g, coat, opts = {}) {
 
     /* peytral: the breast, concentric, 20 mm up. */
     g.ellipsoid(body, [0, L.withers - 0.20, L.chestZ - 0.02],
-      [R * 0.70 + 0.020, R * 0.86 + 0.020, 0.18 + 0.020], { sph: [6, 4] });
+      [R * 0.70 + 0.020, R * 0.86 + 0.020, 0.18 + 0.020], { sph: [5, 3] });
     /* and its lower edge, a smaller shell of the same family */
     g.ellipsoid(body, [0, L.withers - 0.44, L.chestZ - 0.22],
       [R * 0.52, 0.09, 0.11], { sph: [4, 2] });
