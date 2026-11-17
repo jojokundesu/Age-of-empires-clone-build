@@ -139,8 +139,19 @@ function skinVertex(packed, u8, i8, vi, pal, out) {
 
 /* ---------------- render ---------------- */
 
+/* The player colours the game actually uses, so a screenshot can show the
+   cast in all four rather than in the renderer's neutral. */
+const TEAMS = {
+  blue: [0.13, 0.32, 0.80],
+  red: [0.72, 0.16, 0.12],
+  green: [0.16, 0.52, 0.24],
+  gold: [0.78, 0.56, 0.14]
+};
+
 function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scale = 1,
-  width = 720, height = 900, cls = 'man_at_arms', yaw = null, headroom = 0 }) {
+  width = 720, height = 900, cls = 'man_at_arms', yaw = null, headroom = 0,
+  teamName = 'blue' }) {
+  const team = TEAMS[teamName] || TEAMS.blue;
   const rig = buildRig(cls, tier, { age, skin: SKIN_TONES[0], hair: HAIR_COLORS[0] });
   const mounted = isMounted(cls);
   const profileName = (RIGS[cls] || { profile: 'spearman' }).profile;
@@ -259,9 +270,31 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
     const P = [px(sA), px(sB), px(sC)];
 
     /* material tint, approximating the shader's per-material colour */
-    const base = [pa[6], pa[7], pa[8]];
     const mat = pa[9];
     const tint = MATERIAL_TINT[mat] || [1, 1, 1];
+    /* THE TEAM DYE, applied exactly as UNIT_FS applies it.
+       This renderer used to skip the team tint entirely, so every cloth
+       surface came out as the authored value -- and because the authored
+       value on a surcoat is deliberately a mid grey (the shader's dye is
+       what colours it), that is a grey mannequin in every screenshot. A
+       preview that does not run the same colour maths as the game cannot be
+       used to judge the game's colour, which is what it is for. */
+    let base = [pa[6] * tint[0], pa[7] * tint[1], pa[8] * tint[2]];
+    if (mat === 0 || mat === 3) {
+      /* saturation of the team colour, and the dye bath, per UNIT_FS */
+      const mx = Math.max(team[0], team[1], team[2], 1e-3);
+      const mn = Math.min(team[0], team[1], team[2]);
+      const sat = 1 - mn / mx;
+      const shade = 0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2];
+      const tm = [Math.pow(team[0] / mx, 2.1), Math.pow(team[1] / mx, 2.1), Math.pow(team[2] / mx, 2.1)];
+      const dye = [tm[0] * shade * (1 - 0.55 * sat), tm[1] * shade * (1 - 0.55 * sat), tm[2] * shade * (1 - 0.55 * sat)];
+      base = [
+        base[0] + (dye[0] - base[0]) * sat,
+        base[1] + (dye[1] - base[1]) * sat,
+        base[2] + (dye[2] - base[2]) * sat
+      ];
+    }
+    base = [base[0] * tint[0], base[1] * tint[1], base[2] * tint[2]];
     /* rasterise */
     const minX = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])));
     const maxX = Math.min(width - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])));
@@ -292,9 +325,9 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
            still describes the form instead of going to mud */
         const lit = 0.22 + 0.78 * (nd * 0.82 + 0.18);
         const o = di * 3;
-        color[o] = Math.round(Math.min(1, base[0] * tint[0] * lit * 1.10) * 255);
-        color[o + 1] = Math.round(Math.min(1, base[1] * tint[1] * lit * 1.10) * 255);
-        color[o + 2] = Math.round(Math.min(1, base[2] * tint[2] * lit * 1.10) * 255);
+        color[o] = Math.round(Math.min(1, base[0] * lit * 1.10) * 255);
+        color[o + 1] = Math.round(Math.min(1, base[1] * lit * 1.10) * 255);
+        color[o + 2] = Math.round(Math.min(1, base[2] * lit * 1.10) * 255);
       }
     }
   }
@@ -322,16 +355,24 @@ const opt = (name, def) => {
   const i = args.indexOf('--' + name);
   return i >= 0 && args[i + 1] ? args[i + 1] : def;
 };
+/* A positional class name, because that is how everyone types it and how
+   the usage line reads. It was silently ignored for months: every command
+   of the form `rigshot out.png villager` rendered a man-at-arms, so every
+   "villager" comparison in the docs was a comparison of two men-at-arms. */
+const positionalCls = args[1] && !args[1].startsWith('--') ? args[1] : null;
 const tierName = opt('tier', 'mid');
 const tier = tierName === 'near' ? DETAIL.NEAR : tierName === 'far' ? DETAIL.FAR : DETAIL.MID;
 const r = render({
   out,
-  cls: opt('cls', 'man_at_arms'),
+  cls: opt('cls', positionalCls || 'man_at_arms'),
+  width: parseInt(opt('width', '720'), 10),
+  height: parseInt(opt('height', '900'), 10),
   pose: opt('pose', 'idle'),
   tier,
   age: parseInt(opt('age', '3'), 10),
   scale: parseFloat(opt('scale', '1')),
   yaw: opt('yaw', null) === null ? null : parseFloat(opt('yaw', '0')),
-  headroom: parseFloat(opt('headroom', '0'))
+  headroom: parseFloat(opt('headroom', '0')),
+  teamName: opt('team', 'blue')
 });
 console.log(`${r.out}  ${r.verts} verts, ${r.tris} tris, ${r.drawn} drawn`);

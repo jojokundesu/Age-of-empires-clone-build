@@ -29,7 +29,34 @@ import { DETAIL } from './meshbuilder.js';
  */
 /** Head width as a fraction of the skull lathe's radius. A head is about
     0.75 as wide as it is deep; the lathe is built round, so X is squashed. */
-export const HEAD_X = 0.84;
+export const HEAD_X = 0.86;
+
+/* Head radius as a fraction of the profile's `headR`. This is the single
+   most important proportion in the rig.
+
+   It was 0.098, then 0.118, and both read as a pin-head: a head is one
+   seventh of a standing figure, and at 0.118 on a 1.08-height body the head
+   came out at 6.1 heads, which is a giant, but it was drawn 0.24 m across
+   against 0.60 m shoulders, i.e. TWO AND A HALF heads wide, which is a
+   bodybuilder. Age of Empires IV sits at a heroic 6.8 heads with shoulders
+   2.2 heads wide, and that is what makes a soldier read at 3/4 zoom: the
+   head is big enough to hold a face and a helmet, and small enough that the
+   body is not a box. 0.126 with the profile table below lands on 6.8. */
+export const HEAD_R = 0.126;
+
+/* The skull's radius profile, as (height fraction, radius fraction of hr).
+   Hoisted to module scope because the face layer has to solve for the
+   surface these rings describe -- see surfZ in buildFaceDetail. */
+export const SKULL_RINGS = [
+  [0.00, 0.22],   /* chin closes, blunt -- a point is a spike on a lathe */
+  [0.15, 0.58],   /* chin and jaw come out almost at once */
+  [0.34, 0.82],   /* jaw: strong, nearly as wide as the cheek */
+  [0.52, 0.96],   /* cheekbone */
+  [0.72, 1.00],   /* temples: widest */
+  [0.86, 1.02],   /* crown mass -- a skull is not a paraboloid */
+  [0.955, 0.66],
+  [1.00, 0.12]    /* crown closes: a lathe's top rim is a hole */
+];
 
 export function buildBody(g, prop, opts = {}) {
   const H = prop.height;
@@ -65,7 +92,7 @@ export function buildBody(g, prop, opts = {}) {
      collar top is a further two centimetres down: above the chin the tunic
      stands in front of the jaw and the lower face disappears into it. */
   const headYc = y(1.68);
-  const hrc = 0.118 * prop.headR;
+  const hrc = HEAD_R * prop.headR;
   /* chin, and the height the neck runs up to inside the skull. The neck has
      to stop where the HEAD is still wider than it is, or its open top shows
      above the jaw as a tan collar of its own. */
@@ -170,7 +197,14 @@ export function buildBody(g, prop, opts = {}) {
      what every close-up of this rig has been showing. */
   /* `hr` is declared further down with the head, so the neck measures the
      head from `prop` directly. */
-  const neckR = 0.118 * prop.headR;
+  /* A neck is 55% of the head's width, not 100% of its radius.
+     `neckR` was set to HEAD_R -- one full head radius -- so the neck tube was
+     0.126 * 1.10 = 252 mm across against a 212 mm head: WIDER THAN THE HEAD
+     IT CARRIES. That is the bare cylinder standing on the shoulders in every
+     close-up, and it is the single largest piece of the "flesh cylinder"
+     complaint. At 0.56 of the head radius it is 118 mm across, which is a
+     heavy man's neck. */
+  const neckR = HEAD_R * prop.headR * 0.56;
   /* Narrow. A neck is roughly HALF the width of the head it carries; at
      0.66 of a head radius, squashed only ten per cent, this was 132 mm
      across against a 156 mm head and read as a column of skin from the jaw
@@ -192,8 +226,62 @@ export function buildBody(g, prop, opts = {}) {
      skull -- where its own open top is hidden by the jaw. It is wider at the
      bottom than the collar it passes through, so the dome meets it rather
      than standing off it in a ring. */
-  g.tube(B.NECK, [0, y(1.42), 0], [0, chinYc + (crownYc - chinYc) * 0.34, 0],
-    0.086, 0.062, { seg: Math.max(4, g.seg(0) - 2), rings: 1, squash: [HEAD_X / 0.84, 1.0] });
+  /* THE NECK STARTS AT THE COLLAR, NOT IN THE RIBCAGE.
+     It ran from y(1.42) -- forty millimetres BELOW the shoulder slope --
+     straight up and out. Because the chest lathe turns inward above 1.474,
+     the bottom of that tube was inside the ribcage and its top was in front
+     of the collar, so the tube emerged THROUGH the front slope of the tunic:
+     a tan cylinder punching out of the chest, which is exactly what every
+     close-up showed.
+
+     Now it begins at y(1.49), above the slope and inside the collar ring,
+     and it is narrower than the collar it passes through so the opening
+     reads as a throat with cloth round it.
+
+     The tilt is the other half. A neck does not rise vertically out of the
+     shoulders -- it leans forward, which is what puts the head over the
+     chest instead of on a pole. `top` carries the head's own centre line
+     forward by 0.02 of height. */
+  const neckTop = chinYc + (crownYc - chinYc) * 0.34;
+  g.tube(B.NECK, [0, y(1.49), -0.004], [0, neckTop, 0.016],
+    neckR * 1.16, neckR * 0.98,
+    { seg: Math.max(4, g.seg(0) - 2), rings: 1, squash: [HEAD_X / 0.86, 1.0] });
+
+  /* ---------- COLLAR / GORGET ----------
+     A padded ring of cloth-and-mail at the throat, on EVERY class. Two jobs
+     that no amount of neck geometry can do on its own:
+
+       1. It hides the joint where the neck passes through the tunic collar.
+          That joint is a hole by construction -- a lathe can only close on
+          its own axis -- and a hole with a cylinder through it is a hole.
+          A gorget is a real garment with real thickness and it sits exactly
+          where the seam is.
+       2. It is the Aoe4 silhouette cue: knights, men-at-arms and even
+          villagers read as dressed rather than as bare-limbed mannequins
+          because there is a visible band of cloth at the throat.
+
+     Mail under the steel classes and linen under the rest, keyed on the
+     body material the class already declared. */
+  {
+    const mailCollar = fabric === 1 || opts.mailedBody;
+    g.material(mailCollar ? 1 : 0);
+    if (mailCollar) g.color(0.46, 0.47, 0.48);
+    else if (opts.bodyCol) g.color(opts.bodyCol[0] * 1.18, opts.bodyCol[1] * 1.18, opts.bodyCol[2] * 1.18);
+    else g.color(0.88, 0.86, 0.80);
+    /* It has to be WIDER than the tunic collar it stands inside, and the
+       tunic collar closes to radius zero at y(1.512), so anything narrower
+       than the shoulder slope at that height is simply inside the torso and
+       invisible -- which is what the first draft of this ring was. The
+       collar sits at x(0.170) at y(1.492); the gorget is placed 8% inside
+       THAT at the bottom and tapers to the throat above it. */
+    const collarR = x(0.170);
+    g.lathe(B.NECK, [
+      [collarR * 1.06, y(1.488)],
+      [neckR * 1.90, y(1.512)],
+      [neckR * 1.55, y(1.545)],
+      [neckR * 1.42, y(1.566)]
+    ], { seg: g.seg(-1), squash: [HEAD_X / 0.86, 1.02] });
+  }
 
   /* ---------- HEAD ----------
      ONE surface of revolution, from the point of the chin to the crown.
@@ -229,16 +317,7 @@ export function buildBody(g, prop, opts = {}) {
      because it was one. A head is nearly as wide at the jaw as at the
      cheekbones, and the cranium above the temples turns over quickly. These
      fractions put the mass back in the lower half and blunt the chin. */
-  const skull = [
-    [0.00, 0.22],   /* chin closes, blunt -- a point is a spike on a lathe */
-    [0.15, 0.58],   /* chin and jaw come out almost at once */
-    [0.34, 0.82],   /* jaw: strong, nearly as wide as the cheek */
-    [0.52, 0.96],   /* cheekbone */
-    [0.72, 1.00],   /* temples: widest */
-    [0.86, 1.02],   /* crown mass -- a skull is not a paraboloid */
-    [0.955, 0.66],
-    [1.00, 0.12]    /* crown closes: a lathe's top rim is a hole */
-  ];
+  const skull = SKULL_RINGS;
   /* Seven rings at near, not eight: the ring at t 0.86 sits between the
      widest temple ring and the crown turn-over and describes a curve that the
      two either side already carry. It is 30 triangles on every soldier. */
@@ -325,7 +404,7 @@ export function buildBody(g, prop, opts = {}) {
      floating beside a body with a strip of background between them, and that
      gap is what made every unarmoured unit read as a balloon animal. The
      chest is widened below to meet it, and the joint pulled in to 0.244. */
-  const armX = 0.244;
+  const armX = 0.228;
   for (const side of [-1, 1]) {
     /* The sleeve material is set INSIDE the loop. It used to be set once
        before it, and the hand block at the end of the iteration switched the
@@ -343,19 +422,32 @@ export function buildBody(g, prop, opts = {}) {
        the forearm drew inside the torso. */
     const sx = side * x(armX);
 
-    /* A shoulder CAP, not a balloon: flatter, and set so its inner edge is
-       buried in the ribcage. A deltoid is a muscle draped over a joint, and
-       at 0.108 all round it read as a ball stuck on a stick. */
-    g.ellipsoid(SHO, [sx * 0.94, y(1.403), 0],
-      [0.090 * lw, 0.096 * lw, 0.094 * lw], { sph: [6, 4] });
+    /* A SHOULDER SLOPE, not a cannonball.
+       This was a 0.096 sphere -- 192 mm across, sitting proud of a 0.238
+       ribcage -- and a sphere at the top of a cylinder is a ball glued to a
+       stick. Every armoured class then got a lathed pauldron over the top of
+       it, and the two polyhedra crossed in a different place on every panel,
+       which is the shattered-shard artefact.
+
+       A deltoid is a muscle draped OVER a joint: wide at the top where it
+       meets the trapezius, tapering down the arm. Three things make this one
+       read that way rather than as a ball:
+         - it is squashed on Y, so its widest point is at the shoulder and it
+           falls away below;
+         - it is centred INBOARD of the arm's own axis, so its inner edge is
+           buried in the ribcage and there is no gap to see through;
+         - it is smaller than the arm it caps, so the arm's silhouette
+           carries the shoulder rather than a bead on top of it. */
+    g.ellipsoid(SHO, [sx * 0.90, y(1.418), 0],
+      [0.082 * lw, 0.088 * lw, 0.085 * lw], { sph: [6, 4] });
     /* THREE rings at near, not four. Both arm segments are near-straight
        tapers with a muscle swell at one end that the deltoid above already
        covers -- the fourth ring samples a curve that is a straight line
        within a millimetre, and there are four of these tubes on every one of
        300 units. */
     const armRings = g.detail === DETAIL.NEAR ? 3 : g.rings(0);
-    g.tube(UP, [sx, y(1.40), 0], [sx * 0.98, y(1.13), 0],
-      0.074 * lw, 0.058 * lw, { seg: g.seg(0), rings: armRings, blend: SHO });
+    g.tube(UP, [sx, y(1.432), 0], [sx * 0.98, y(1.13), 0],
+      0.080 * lw, 0.058 * lw, { seg: g.seg(0), rings: armRings, blend: SHO });
     g.tube(FORE, [sx * 0.98, y(1.13), 0], [sx * 0.96, y(0.86), 0],
       0.058 * lw, 0.044 * lw, { seg: g.seg(0), rings: armRings, blend: UP });
     /* hand: a small tapered block, not a sphere */
@@ -410,6 +502,15 @@ export function buildHair(g, m, prop, opts = {}) {
   const hc = m.headY - hr * 1.06;   /* chin */
   const hh = hr * 2.20;             /* chin to crown */
   const hs = (t, r) => [hr * r, hc + hh * t];
+  /* THE HAIR HAS TO CLEAR THE SKULL AT EVERY RING, and the numbers below are
+     derived rather than eyeballed. A cap at a fixed 1.06-1.09 hr touches the
+     skull at the brow ring (where the skull is widest, 1.02) and dives
+     INSIDE it at the crown, where the skull is still 1.02 at t = 0.86: the
+     result is two dark tufts at the temples and a bald dome between them,
+     which is what the last three passes rendered.
+     SKULL_CLEARANCE is applied to the skull's OWN radius at each height, so
+     the cap is a real 6% shell over the whole cranium. */
+  const SKULL_CLEARANCE = 1.07;
   /* From the hairline UP AND OVER, closing on the crown. Starting the sweep
      at t 0.50 and letting it stop at 1.00 hr left a band around a bald head:
      the profile has to return to zero radius at the top or the hair is a
@@ -427,21 +528,41 @@ export function buildHair(g, m, prop, opts = {}) {
      his skull and a black wedge behind one ear. Short hair is a cap that
      starts just above the brow and closes over the crown, and that IS a body
      of revolution. */
-  /* Three rings at far. The cap's whole job there is to be a darker value
-     than the skull across a four-pixel head, and the crown rings that give
-     it a round silhouette at arm's length are inside that silhouette. */
-  const hairProfile = [
-    hs(0.80, 1.06),
-    hs(0.88, 1.09),
-    hs(0.95, 0.98),
-    hs(0.99, 0.62),
-    hs(1.02, 0.26),
-    hs(1.055, 0.0)
-  ];
-  g.lathe(B.HAIR, g.detail === DETAIL.FAR
-    ? [hairProfile[0], hairProfile[2], hairProfile[5]]
-    : hairProfile,
-  { seg: g.seg(1), squash: [HEAD_X * 1.03, 1.13] });
+  /* A CLOSED SHELL, not a lathe.
+     A lathe cap can only close on its own axis, so its hairline is an open
+     rim, and an open rim that crosses a curved skull at a shallow angle
+     aliases: skull and cap alternate pixel by pixel, which is the ragged
+     black hairline in every render. Every fix that kept the rim (tucking
+     it, raising the clearance, adding a ring) moved the tear rather than
+     removing it, because the rim is still a rim.
+
+     A full ellipsoid has no rim. It is a closed surface, so there is no edge
+     to alias and no underside to see; its lower half is inside the skull,
+     which costs a few triangles and needs no cap. It is also cheaper than
+     the six-ring lathe it replaces (48 against 66), and it follows the
+     head bone with the skull so no blend weighting is needed. */
+  /* Positioned so its CROWN clears the skull's (1.14 hr above centre) and
+     its lowest point lands near the cheekbone at the sides: a cap that
+     reaches the brow at the front is a fringe, and this one is hair. The X
+     semi-axis carries HEAD_X because the skull is squashed on X and the cap
+     has to be squashed with it or it is wider than the head inside it. */
+  /* The hairline is where the cap's surface crosses the SKULL's, so it is
+     set by pushing the cap back and up rather than by choosing a cut
+     height: the front of the ellipsoid then lies inside the skull and the
+     hair simply does not appear there, which is what a hairline is. The
+     crown is 1.22 hr above the head's centre, clear of the skull's 1.14. */
+  /* Its HEIGHT is what sets the hairline at the sides, and a tall semi-axis
+     is what made the last draft read as a hood pulled down to the eyes: the
+     skull is 2.2 hr from chin to crown, so an ellipsoid centred on the head
+     with a 1.1 hr semi-axis reaches the brow on both sides. A short crop is
+     a shallow cap sitting on the crown -- bottom edge at the brow (0.26 hr
+     above centre), crown 1.20 hr, and the front pulled back inside the
+     skull so the face is bare. */
+  const hairR = hr * 1.055;
+  g.ellipsoid(B.HAIR,
+    [0, headY + hr * 0.74, -hr * 0.10],
+    [hairR * HEAD_X * 1.03, hr * 0.46, hairR * 1.02],
+    { sph: g.detail === DETAIL.NEAR ? [9, 5] : [6, 3] });
 
   if (style === 'long') {
     /* Long hair is a CURTAIN, so it is a lathe swept round the back of the
@@ -478,81 +599,111 @@ export function buildFaceDetail(g, m, opts = {}) {
   if (g.detail > DETAIL.MID) return;
   const { headY, hr } = m;
   const hair = opts.hair || [0.16, 0.12, 0.09];
-  /* The face's own depth. `hr` is the skull lathe's radius, but the lathe is
-     squashed [HEAD_X, 1.10], so the front of the face sits at 1.10 hr and
-     every feature has to be placed against that, not against hr. Feature
-     depths below are fractions OF this. */
-  const fz = hr * 1.10;
   const SKIN = 4, HAIR = 5;
-  /* ...and the head is squashed on X as well, so a feature centred at
-     `ex` on the face plane lands on a surface that is only HEAD_X of the way
-     out there. Dividing by HEAD_X puts the eyes back on the cheeks instead
-     of a centimetre in front of them. */
-  const fxs = 1 / HEAD_X;
-  /* Feature tessellation by tier. The eyes and the brow are three or four
-     pixels across at mid range and one at far, and a sphere at [5,3] is 30
-     triangles: this is the cheapest detail in the rig and it is also the
-     detail that gives a head a face, so it is worth spending on -- but not
-     the same amount at every tier. */
-  const fa = g.detail === DETAIL.NEAR ? [5, 3] : [4, 2];
+
+  /* ---------------------------------------------------------------
+     WHERE THE SURFACE ACTUALLY IS.
+
+     This is the bug that made every face in the game a mess of floating
+     shards, and it is worth stating precisely because it looked like a
+     tessellation problem for weeks.
+
+     The skull is a lathe: at each ring it has radius r*hr, squashed to
+     [HEAD_X, 1.10]. So the front of the face at height `t` of the skull is
+     at z = r(t) * hr * 1.10, and at a horizontal offset `ex` it is at
+       z = r(t) * hr * 1.10 * sqrt(1 - (ex / (r(t)*hr))^2)
+     which is the equation of the ellipse the ring projects to.
+
+     Every feature in this function used to be placed at `fz * k` where
+     `fz = hr * 1.10` and k was a guess between 0.74 and 0.90. Those numbers
+     are all INSIDE the skull: at eye height the surface is at 1.05 hr and
+     the eyes were placed at 0.86 hr, so two thirds of each eyeball was
+     within the head and what rendered was the sliver poking out of the
+     cheek -- a torn black wedge across the face. Same for the brow, same
+     for the nose.
+
+     So: compute the surface, then place each feature as a fraction of the
+     way OUT from it. `surfZ` returns the surface z at a given height offset
+     and horizontal offset. */
+  const CHIN = headY - hr * 1.06;
+  const HEAD_H = hr * 2.20;
+  /* Skull radius fraction at a height. Linear between the profile's own
+     rings, which is what the lathe does, so this is exact at every ring. */
+  const skullFrac = (yy) => {
+    const t = (yy - CHIN) / HEAD_H;
+    if (t <= 0) return 0.22;
+    if (t >= 1) return 0.12;
+    let prev = [0, 0.22];
+    for (const [tt, rr] of SKULL_RINGS) {
+      if (t <= tt) {
+        const u = (t - prev[0]) / (tt - prev[0] || 1);
+        return prev[1] + (rr - prev[1]) * u;
+      }
+      prev = [tt, rr];
+    }
+    return 0.12;
+  };
+  const surfZ = (yy, xLocal) => {
+    const r = skullFrac(yy) * hr;
+    if (r <= 1e-6) return 0;
+    const sx = Math.min(0.999, Math.abs(xLocal) / r);
+    return r * 1.10 * Math.sqrt(1 - sx * sx);
+  };
 
   /* ---------- BROW ----------
-     One bar across the forehead, slightly proud. It is what gives the face a
-     shadow line under a helmet, which is most of what makes a head read as a
-     head at gameplay distance. */
-  g.material(SKIN).color(0.62, 0.47, 0.36);
-  if (g.detail === DETAIL.NEAR) {
-    g.ellipsoid(B.HEAD, [0, headY + hr * 0.28, fz * 0.74],
-      [hr * 0.56, hr * 0.12, hr * 0.20], { sph: fa });
-  } else {
-    g.slab(B.HEAD, [0, headY + hr * 0.28, fz * 0.70],
-      [hr * 1.10, hr * 0.20, hr * 0.18]);
+     A ridge under the hairline, not a bar on the forehead. It is a squashed
+     ellipsoid lying along the bone, its centre INSIDE the skull and its
+     front face a few millimetres proud, so what shows is a ridge with a
+     shadow under it rather than a box glued on. */
+  g.material(SKIN).color(0.58, 0.44, 0.34);
+  {
+    const by = headY + hr * 0.26;
+    const bz = surfZ(by, 0);
+    g.ellipsoid(B.HEAD, [0, by, bz - hr * 0.10],
+      [hr * 0.52, hr * 0.11, hr * 0.20], { sph: [5, 2] });
   }
 
   /* ---------- NOSE ----------
-     A bridge and a tip, not one ball. The point of the nose is the only
-     feature that ever projects far enough to matter in silhouette. */
-  /* Bridge, then tip. At 0.30 hr tall the bridge ran from the brow to the
-     mouth and the nose read as a beak hung off the face; a nose is a short
-     wedge, wide at the bottom. */
-  if (g.detail === DETAIL.NEAR) {
-    g.ellipsoid(B.HEAD, [0, headY + hr * 0.02, fz * 0.86],
-      [hr * 0.15, hr * 0.22, hr * 0.24], { sph: fa });
+     The one feature that projects. A bridge from the brow down to a tip,
+     both closed volumes whose centres sit inside the skull and whose front
+     faces clear it, so they read as a wedge rather than as a beak hung off
+     the face. */
+  {
+    const ny = headY - hr * 0.10;
+    const nz = surfZ(ny, 0);
+    g.ellipsoid(B.HEAD, [0, ny, nz - hr * 0.04],
+      [hr * 0.17, hr * 0.20, hr * 0.20], { sph: [4, 3] });
+    const ty = headY - hr * 0.26;
+    g.ellipsoid(B.HEAD, [0, ty, surfZ(ty, 0) - hr * 0.03],
+      [hr * 0.24, hr * 0.13, hr * 0.17], { sph: [4, 2] });
   }
-  g.ellipsoid(B.HEAD, [0, headY - hr * 0.16, fz * 0.90],
-    [hr * 0.23, hr * 0.15, hr * 0.22], { sph: fa });
-  /* Both of those are drawn at NEAR and MID; at far the whole face is under
-     a helmet rim or five pixels of skin and the rig drops it. */
 
   /* ---------- EYES ----------
-     Sockets first, in a shadowed skin tone, then a dark iris inside each.
-     A single dark dot on a bare cheek reads as a freckle; the socket is what
-     makes it an eye. Both sit just proud of the face so neither z-fights the
-     skull.
-
-     Spheres at NEAR, BARS at MID. A head is twenty pixels tall at gameplay
-     distance: an eyeball there is a single pixel and an 18-triangle sphere
-     to put it on the screen is the worst trade in the rig. A flat bar of the
-     same two colours reads identically at that size for six triangles. The
-     face costs 140 triangles per unit at mid without this, and 40% of a
-     300-unit army is at mid. */
+     A socket in shadow, and an iris inside it -- both placed ON the surface
+     the skull actually presents at that offset, then pushed out by a fixed
+     2 mm so nothing is coplanar with a triangle of the skull. The offset is
+     the whole point: the previous draft placed them on a flat plane and the
+     skull is an ellipse, so the outer corner of each eye sank and the inner
+     corner floated. */
   for (const side of [-1, 1]) {
-    const ex = side * hr * 0.30 * fxs;
-    g.material(SKIN).color(0.44, 0.33, 0.26);
+    const ex = side * hr * 0.34;
+    const ey = headY + hr * 0.06;
+    const ez = surfZ(ey, ex);
+    g.material(SKIN).color(0.40, 0.30, 0.24);
     if (g.detail === DETAIL.NEAR) {
-      g.ellipsoid(B.HEAD, [ex, headY + hr * 0.10, fz * 0.80],
-        [hr * 0.21, hr * 0.13, hr * 0.15], { sph: fa });
+      g.ellipsoid(B.HEAD, [ex, ey, ez - hr * 0.035],
+        [hr * 0.20, hr * 0.115, hr * 0.13], { sph: [4, 2] });
     } else {
-      g.slab(B.HEAD, [ex, headY + hr * 0.10, fz * 0.80],
-        [hr * 0.40, hr * 0.24, hr * 0.20]);
+      g.slab(B.HEAD, [ex, ey, ez - hr * 0.030],
+        [hr * 0.34, hr * 0.20, hr * 0.10]);
     }
-    g.material(HAIR).color(0.10, 0.09, 0.09);
+    g.material(HAIR).color(0.09, 0.08, 0.08);
     if (g.detail === DETAIL.NEAR) {
-      g.ellipsoid(B.HEAD, [ex, headY + hr * 0.10, fz * 0.86],
-        [hr * 0.11, hr * 0.09, hr * 0.10], { sph: [3, 2] });
+      g.ellipsoid(B.HEAD, [ex, ey, ez + hr * 0.010],
+        [hr * 0.105, hr * 0.085, hr * 0.085], { sph: [3, 2] });
     } else {
-      g.slab(B.HEAD, [ex, headY + hr * 0.10, fz * 0.88],
-        [hr * 0.20, hr * 0.16, hr * 0.10]);
+      g.slab(B.HEAD, [ex, ey, ez + hr * 0.010],
+        [hr * 0.17, hr * 0.13, hr * 0.05]);
     }
   }
 
@@ -588,7 +739,7 @@ export function buildFaceDetail(g, m, opts = {}) {
       : beardProfile.filter((_, i) => i !== 2);
     g.lathe(B.HEAD, beardRings, {
       seg: g.seg(0), squash: [HEAD_X, 1.10],
-      arc: Math.PI * 1.30, arcStart: Math.PI * 0.5 - Math.PI * 0.65
+      arc: Math.PI * 1.34, arcStart: Math.PI * 0.5 - Math.PI * 0.67
     });
   }
 }

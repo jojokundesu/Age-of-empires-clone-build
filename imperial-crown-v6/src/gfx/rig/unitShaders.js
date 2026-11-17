@@ -374,7 +374,15 @@ void main() {
        leaves the dominant one where it is, which is the difference between
        "pale sky blue" and "woad". Neutral tints have all three channels
        equal, so a power leaves them untouched. */
-    vec3 teamAlb = pow(tintMax, vec3(2.1)) * shade * (1.0 - 0.86 * sat);
+    /* A DYE, not a repaint. The dye soaks a saturation in proportion to how
+       saturated the team colour is, so a neutral tint leaves every garment
+       exactly as authored. This is the bug that made every offline render a
+       grey mannequin: the old line dropped the authored colour entirely and
+       rebuilt the garment out of its own luminance, so white tint in meant
+       flat grey out, and the authored cream trim and tan leather on every
+       tunic never appeared in a single screenshot. */
+    vec3 dye = pow(tintMax, vec3(2.1)) * shade * (1.0 - 0.55 * sat);
+    vec3 teamAlb = mix(albedo, dye, sat);
     color = mix(color, teamAlb * (uSunColor * ndl * sh * cl * 1.25 + ambient), 0.82);
   }
 

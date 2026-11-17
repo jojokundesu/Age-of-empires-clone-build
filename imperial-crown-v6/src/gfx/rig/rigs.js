@@ -33,41 +33,55 @@ export const MAT = {
  * Anatomy profiles. `height`/`limbW`/`chestD` scale the skeleton's rest
  * offsets; the rest are direct measurements in metres at height = 1.
  */
+/* THE PROPORTION TABLE, and what it is aiming at.
+   Age of Empires IV draws its soldiers at a heroic 6.8 heads: a head big
+   enough to carry a face, a helmet and a plume at 3/4 zoom, on a body that
+   is 2.2 heads wide at the shoulders. The old table was 6.1 heads on
+   shoulders 2.5 heads wide, which is a bodybuilder with a pin-head -- the
+   single most damaging thing about the old cast, and the reason every
+   render read as a mannequin.
+
+   `headR` is a multiplier on HEAD_R in anatomy.js. `shoulderW` scales the
+   shoulder joint and every lathe that is measured across the body. The two
+   are tuned together: widening one without the other breaks the ratio, and
+   the ratio is the whole point. */
 export const PROFILES = {
-  /* The approved imposing juggernaut. */
+  /* The approved imposing juggernaut: tallest, broadest, and still 6.8
+     heads because the head scales with the body. */
   manAtArms: {
-    height: 1.08, shoulderW: 1.24, chestD: 1.22, waist: 1.02, limbW: 1.16,
-    headR: 1.02, stance: 1.2
+    height: 1.08, shoulderW: 1.12, chestD: 1.16, waist: 1.02, limbW: 1.14,
+    headR: 1.0, stance: 1.2
   },
   /* The tighter alternative — same read, less "different species". */
   manAtArmsTight: {
-    height: 1.05, shoulderW: 1.18, chestD: 1.16, waist: 1.0, limbW: 1.10,
+    height: 1.05, shoulderW: 1.08, chestD: 1.12, waist: 1.0, limbW: 1.08,
     headR: 1.0, stance: 1.15
   },
   villager: {
-    height: 0.94, shoulderW: 0.96, chestD: 0.95, waist: 0.88, limbW: 0.90,
-    headR: 0.98, stance: 1.0
+    height: 0.94, shoulderW: 0.94, chestD: 0.95, waist: 0.88, limbW: 0.92,
+    headR: 1.0, stance: 1.0
   },
   spearman: {
-    height: 1.0, shoulderW: 1.02, chestD: 1.0, waist: 0.94, limbW: 1.0,
+    height: 1.0, shoulderW: 1.0, chestD: 1.0, waist: 0.94, limbW: 1.0,
     headR: 1.0, stance: 1.05
   },
   /* Approved archer row: wide shoulders, the narrowest waist in the cast. */
   archer: {
-    height: 0.99, shoulderW: 1.05, chestD: 0.97, waist: 0.85, limbW: 0.96,
+    height: 0.99, shoulderW: 1.02, chestD: 0.97, waist: 0.85, limbW: 0.96,
     headR: 1.0, stance: 1.04
   },
   /* The knight rider: tallest, broadest, standing in stirrups. */
   knight: {
-    height: 1.12, shoulderW: 1.26, chestD: 1.20, waist: 1.04, limbW: 1.18,
-    headR: 1.02, stance: 1.24
+    height: 1.12, shoulderW: 1.14, chestD: 1.18, waist: 1.04, limbW: 1.16,
+    headR: 1.0, stance: 1.24
   },
   /* The monk: narrow, stooped, a long robe does the rest. */
   monk: {
-    height: 1.02, shoulderW: 0.98, chestD: 1.0, waist: 1.04, limbW: 0.96,
+    height: 1.02, shoulderW: 0.96, chestD: 1.0, waist: 1.04, limbW: 0.96,
     headR: 1.0, stance: 1.0
   }
 };
+
 
 /* Profiles for the riders, which are just the knight's frame seated. Kept
    separate from `knight` because a mounted profile also carries a `mount`
