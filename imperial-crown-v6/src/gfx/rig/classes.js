@@ -104,7 +104,7 @@ export const CLASSES = {
       buildSurcoat(g, m, { flares: true });
       buildBelt(g, m);
       buildSatchel(g, m);
-      buildTool(g, B.HAND_R, [m.x(0.255), m.y(0.80), 0.02], o.tool || 'axe');
+      buildTool(g, B.HAND_R, [m.handX + 0.030, m.y(0.98), 0.06], o.tool || 'axe');
     }
   },
 
@@ -120,8 +120,13 @@ export const CLASSES = {
       buildHelm(g, m, this.helm(o.age), o.age);
       if (o.age <= 2) buildHairAfterHelm(g, m, this, o);
       buildBelt(g, m);
-      /* The spear is the silhouette: nearly two metres of it. */
-      buildSpear(g, B.HAND_R, [m.x(0.250), m.y(0.82), 0.04], m.y(2.10));
+      /* The spear is the silhouette: nearly two metres of it, planted on the
+         ground just outside the right foot and rising past the shoulder. The
+         grip origin is the right hand's position under the spearman guard --
+         forward of the body and out to the side, which is where the hand
+         actually is once the pose is applied, not where it hangs in bind. */
+      buildSpear(g, B.HAND_R,
+        [m.handX + 0.055, m.y(1.02), 0.14], m.y(1.28));
     }
   },
 

@@ -560,6 +560,12 @@ export function buildSword(g, hand, pos, len, opts = {}) {
      inside the surcoat from the waist to the hem and only the last few
      centimetres of it show, which is why a swordsman looked unarmed next
      to a spearman. */
+  /* Parented to the PELVIS for the same reason the spear is: a weapon
+     authored in bind space and skinned to the hand rotates with the guard,
+     which swings the blade across the body. The pelvis is upright in every
+     pose, so the angle written here is the angle that renders -- and the
+     hand is posed to close on the grip. */
+  const UPRIGHT = B.SKIRT;
   const grip = Math.min(0.13, len * 0.3);
   const out = Math.sign(pos[0] || 1);
   g.material(MAT.LEATHER).color(0.30, 0.21, 0.14);
@@ -567,10 +573,10 @@ export function buildSword(g, hand, pos, len, opts = {}) {
     /* grip and pommel. At mid and far the fist itself is the hilt: a
        4-sided tube 2 cm across is a handful of pixels there, and a pommel
        is less than one. */
-    g.tube(hand, [pos[0], pos[1] + grip * 0.55, pos[2]],
+    g.tube(UPRIGHT, [pos[0], pos[1] + grip * 0.55, pos[2]],
       [pos[0], pos[1] - grip * 0.55, pos[2]], 0.020, 0.019, { seg: 4, rings: 1 });
     g.material(MAT.PLATE).color(0.62, 0.64, 0.68);
-    g.ellipsoid(hand, [pos[0], pos[1] + grip * 0.58, pos[2]],
+    g.ellipsoid(UPRIGHT, [pos[0], pos[1] + grip * 0.58, pos[2]],
       [0.030, 0.026, 0.030], { sph: [4, 3] });
   }
   if (g.detail <= DETAIL.MID) {
@@ -578,7 +584,7 @@ export function buildSword(g, hand, pos, len, opts = {}) {
        +Z, so the quillons lie along X: a slab 0.17 wide in X, 0.034 along
        the blade, and thin in Z. A slab with its long axis on Y is just a
        lump on the hand. */
-    g.slab(hand, [pos[0], pos[1] - grip * 0.62, pos[2] + 0.012],
+    g.slab(UPRIGHT, [pos[0], pos[1] - grip * 0.62, pos[2] + 0.012],
       [0.175, 0.032, 0.030]);
   }
   const top = pos[1] - grip * 0.78;
@@ -592,7 +598,7 @@ export function buildSword(g, hand, pos, len, opts = {}) {
   /* 3 cm at the base over a 40 cm blade. At 4.2 cm the parallel section
      was as wide as a forefinger and the thing read as a paddle or a
      feather rather than a sword. */
-  g.blade(hand, [pos[0], top, pos[2] + 0.01], tip, 0.030, {
+  g.blade(UPRIGHT, [pos[0], top, pos[2] + 0.01], tip, 0.030, {
     thick: 0.009,
     sections: [
       { t: 0, w: 0.021, th: 0.009 },
@@ -606,12 +612,54 @@ export function buildSword(g, hand, pos, len, opts = {}) {
 
 /** A spear: a long shaft with a leaf head. Thrusts, so it hangs upright. */
 export function buildSpear(g, hand, pos, len = 1.9) {
-  g.material(MAT.WOOD).color(0.48, 0.36, 0.24);
-  g.tube(hand, [pos[0], pos[1] + 0.25, pos[2]], [pos[0], pos[1] - len + 0.25, pos[2]],
-    0.016, 0.014, { seg: 4, rings: 2 });
-  g.material(MAT.PLATE).color(0.76, 0.78, 0.82);
-  g.blade(hand, [pos[0], pos[1] + 0.25, pos[2]], [pos[0], pos[1] + 0.52, pos[2]],
-    0.030, { thick: 0.012 });
+  /* A SPEAR IS HELD UPRIGHT, AND IT IS HELD IN TWO HANDS.
+     The old one ran 0.25 m above the hand and `len` below it along a single
+     line from a hip-height origin, so it was a 2.1 m shaft standing on the
+     diagonal in front of the belly -- and at rest the hands hang at the
+     model's sides, so nothing was holding it. Every reference soldier plants
+     his spear: butt on the ground beside the right foot, shaft vertical, top
+     hand at shoulder height, and the blade two metres up where it belongs.
+
+     That is a position that only exists in an IDLE pose, which is why it is
+     authored against the guard rather than against the bind pose. The two
+     grip points below are where the right and left hands actually end up
+     under IDLE_GUARD.spearman. If the guard moves, these move with it. */
+  const [rx, ry, rz] = pos;
+  /* top hand (left) high on the shaft, right hand lower and closer to the
+     body -- the pose leans the shoulders, so the shaft tilts slightly */
+  const topX = rx, topY = ry + 0.30, topZ = rz;
+  const botX = topX - 0.045, botY = topY - len, botZ = topZ - 0.02;
+  /* SKINNED TO THE PELVIS, not the hand.
+     Everything here is emitted in bind space and posed afterwards, so a
+     shaft parented to the hand inherits whatever rotation the guard gives
+     that hand -- and the spearman's guard swings the arm forward, which laid
+     the "planted" spear out at forty degrees across his body. The pelvis
+     stays upright in every pose this rig has, so a vertical shaft parented
+     to it stays vertical. The hands are posed to meet it. */
+  const UPRIGHT = B.SKIRT;
+  g.material(MAT.WOOD).color(0.50, 0.37, 0.24);
+  g.tube(UPRIGHT, [botX, botY, botZ], [topX, topY, topZ],
+    0.015, 0.017, { seg: g.detail === DETAIL.NEAR ? 5 : 4, rings: 1 });
+  /* BUTT CAP, so the shaft is not an open tube resting on the ground. */
+  g.material(MAT.PLATE).color(0.40, 0.42, 0.46);
+  g.tube(UPRIGHT, [botX, botY, botZ], [botX, botY + 0.055, botZ], 0.021, 0.017,
+    { seg: 4, rings: 1 });
+  /* THE HEAD: a winged spear tip with a socket, and a team-coloured tassel
+     below it. The tassel is the Age of Empires signature on a spear and it is
+     four triangles -- it reads as a coloured accent at gameplay distance even
+     when the blade itself is one pixel wide. */
+  g.material(MAT.PLATE).color(0.78, 0.80, 0.84);
+  g.tube(UPRIGHT, [topX, topY, topZ], [topX, topY + 0.10, topZ], 0.021, 0.024,
+    { seg: 4, rings: 1 });                       /* socket */
+  g.blade(UPRIGHT, [topX, topY + 0.10, topZ], [topX, topY + 0.44, topZ],
+    0.042, { thick: 0.013 });                    /* leaf blade */
+  /* the wings: two small cross-pieces at the base of the blade */
+  g.slab(UPRIGHT, [topX, topY + 0.115, topZ], [0.115, 0.020, 0.016]);
+  /* the tassel, in undyed cloth so it frames the team colour */
+  g.material(MAT.TRIM).color(0.90, 0.88, 0.80);
+  g.tube(UPRIGHT, [topX, topY + 0.055, topZ], [topX + 0.012, topY - 0.09, topZ + 0.012],
+    0.026, 0.016, { seg: 4, rings: 1 });
+  g.material(MAT.PLATE).color(0.78, 0.80, 0.84);
 }
 
 /** A bow, held in the off hand. A curved stave, not a straight stick. */
@@ -659,21 +707,28 @@ export function buildQuiver(g, m) {
 
 /** A farmer's tool: axe, pick, sickle, crook or mallet. */
 export function buildTool(g, hand, pos, kind) {
+  /* SKINNED TO THE PELVIS, like every other carried thing in this file.
+     A haft parented to the hand swings with the guard and ends up lying
+     across the body pointing at nothing; the pelvis is upright in every
+     pose, so the tool hangs where it is drawn. */
+  const UPRIGHT = B.SKIRT;
   g.material(MAT.WOOD).color(0.46, 0.34, 0.22);
-  const top = [pos[0], pos[1] + 0.30, pos[2]];
-  const bottom = [pos[0], pos[1] - 0.42, pos[2]];
-  g.tube(hand, top, bottom, 0.015, 0.017, { seg: 4, rings: 1 });
+  const top = [pos[0], pos[1] + 0.26, pos[2]];
+  const bottom = [pos[0], pos[1] - 0.40, pos[2]];
+  g.tube(UPRIGHT, top, bottom, 0.015, 0.017, { seg: 4, rings: 1 });
   if (g.detail > DETAIL.MID) return;
   g.material(MAT.PLATE).color(0.62, 0.63, 0.66);
   if (kind === 'axe' || kind === 'pick') {
-    /* A head at the top, offset perpendicular to the haft. */
-    g.slab(hand, [top[0] - 0.06, top[1] - 0.02, top[2]],
-      [0.11, 0.10, 0.022], { rot: kind === 'pick' ? 0.4 : 0 });
+    /* A head at the top, offset perpendicular to the haft -- and just under
+       it, not beside it: a slab centred on the haft's own axis swallowed the
+       top 40 mm of the shaft and read as a lump balanced on a stick. */
+    g.slab(UPRIGHT, [top[0] - 0.058, top[1] - 0.045, top[2]],
+      [0.115, 0.105, 0.022], { rot: kind === 'pick' ? 0.4 : 0 });
   } else if (kind === 'sickle') {
-    g.tube(hand, top, [top[0] + 0.11, top[1] + 0.03, top[2]],
+    g.tube(UPRIGHT, [top[0], top[1] - 0.02, top[2]], [top[0] + 0.11, top[1] + 0.01, top[2]],
       0.016, 0.008, { seg: 3, rings: 1 });
   } else if (kind === 'mallet') {
-    g.slab(hand, [top[0], top[1] - 0.03, top[2]], [0.14, 0.075, 0.075]);
+    g.slab(UPRIGHT, [top[0], top[1] - 0.05, top[2]], [0.14, 0.075, 0.075]);
   }
 }
 

@@ -496,45 +496,51 @@ function applyFidget(pose, st, kind, amt) {
    bends the elbow.
    ------------------------------------------------------------ */
 export const IDLE_GUARD = {
+  /* The numbers are SMALL. A shoulder rotation is applied at the joint and
+     then the whole length of the arm swings with it, so half a radian at the
+     shoulder puts the hand most of a metre from where it started. The first
+     draft of this table used the values from the design note -- -0.45 at the
+     shoulder, -0.95 at the elbow -- and every soldier ended up reaching
+     forward at hip height with his weapon a metre in front of him. A guard
+     is a COMPACT posture: the elbows tuck in, the shoulders barely move, and
+     the hands come to the middle of the body. These were then trimmed
+     against renders until the hands landed where the kit is authored. */
   man_at_arms: {
-    armL: [-0.45, 0.00, 0.22], foreL: [-0.95, 0.00, 0.35],
-    armR: [-0.35, 0.00, -0.18], foreR: [-0.75, 0.00, 0.00],
-    chest: [0, 0.10, 0], shoulderL: [0, 0, 0.10]
+    armL: [-0.16, 0.00, 0.16], foreL: [-0.72, 0.10, 0.00],
+    armR: [-0.10, 0.00, -0.12], foreR: [-0.55, 0.00, 0.00],
+    chest: [0, 0.05, 0], shoulderL: [0, 0, 0.08]
   },
   knight: {
-    armL: [-0.42, 0.00, 0.24], foreL: [-1.00, 0.00, 0.30],
-    armR: [-0.30, 0.00, -0.20], foreR: [-0.70, 0.00, 0.00],
-    chest: [0, 0.08, 0], shoulderL: [0, 0, 0.10]
+    armL: [-0.14, 0.00, 0.18], foreL: [-0.70, 0.10, 0.00],
+    armR: [-0.08, 0.00, -0.12], foreR: [-0.52, 0.00, 0.00],
+    chest: [0, 0.04, 0], shoulderL: [0, 0, 0.08]
   },
   huskarl: {
-    /* axe over the shoulder, round shield out */
-    armL: [-0.40, 0.00, 0.26], foreL: [-0.90, 0.00, 0.30],
-    armR: [-0.55, 0.00, -0.30], foreR: [-1.15, 0.00, 0.00],
-    chest: [0, -0.12, 0], shoulderL: [0, 0, 0.12]
+    armL: [-0.13, 0.00, 0.20], foreL: [-0.68, 0.10, 0.00],
+    armR: [-0.22, 0.00, -0.18], foreR: [-0.85, 0.00, 0.00],
+    chest: [0, -0.07, 0], shoulderL: [0, 0, 0.10]
   },
   spearman: {
-    /* the shaft is planted: the top hand high, the bottom hand at the hip */
-    armL: [-0.55, 0.00, 0.16], foreL: [-0.85, 0.00, 0.20],
-    armR: [-0.20, 0.00, -0.12], foreR: [-0.55, 0.00, 0.00],
-    chest: [0, 0.06, 0], shoulderL: [0, 0, 0.08]
+    /* the top hand high on a planted shaft: the upper arm comes out a little
+       and the elbow folds it back in to shoulder height */
+    armL: [-0.10, 0.00, 0.13], foreL: [-0.62, 0.06, 0.00],
+    armR: [-0.06, 0.00, -0.08], foreR: [-0.30, 0.00, 0.00],
+    chest: [0, 0.03, 0], shoulderL: [0, 0, 0.06]
   },
   archer: {
-    /* bow carried across the body, string hand at the hip */
-    armL: [-0.65, 0.25, 0.30], foreL: [-0.55, 0.00, 0.20],
-    armR: [-0.30, 0.00, -0.10], foreR: [-0.65, 0.00, 0.00],
-    chest: [0, -0.14, 0], shoulderL: [0, 0, 0.06]
+    armL: [-0.20, 0.16, 0.22], foreL: [-0.40, 0.00, 0.00],
+    armR: [-0.08, 0.00, -0.08], foreR: [-0.45, 0.00, 0.00],
+    chest: [0, -0.08, 0], shoulderL: [0, 0, 0.05]
   },
   monk: {
-    /* both hands to the crozier, at chest height */
-    armL: [-0.30, 0.00, 0.10], foreL: [-0.80, 0.00, 0.10],
-    armR: [-0.32, 0.00, -0.10], foreR: [-0.85, 0.00, 0.00],
-    chest: [0.04, 0, 0], shoulderL: [0, 0, 0.04]
+    armL: [-0.12, 0.00, 0.08], foreL: [-0.62, 0.06, 0.00],
+    armR: [-0.12, 0.00, -0.08], foreR: [-0.66, 0.00, 0.00],
+    chest: [0.03, 0, 0], shoulderL: [0, 0, 0.03]
   },
   villager: {
-    /* both hands on a tool carried across the body */
-    armL: [-0.25, 0.00, 0.08], foreL: [-0.55, 0.00, 0.10],
-    armR: [-0.28, 0.00, -0.08], foreR: [-0.70, 0.00, 0.00],
-    chest: [0.03, 0, 0], shoulderL: [0, 0, 0.03]
+    armL: [-0.10, 0.00, 0.06], foreL: [-0.42, 0.00, 0.00],
+    armR: [-0.12, 0.00, -0.06], foreR: [-0.52, 0.00, 0.00],
+    chest: [0.02, 0, 0], shoulderL: [0, 0, 0.02]
   }
 };
 
@@ -542,9 +548,9 @@ export const IDLE_GUARD = {
    the sternum, which is the only way a crossbow or a hand-cannon reads as
    held rather than as hanging off one wrist. */
 const TWO_HANDED = {
-  armL: [-0.62, 0.00, 0.20], foreL: [-1.10, 0.30, 0.10],
-  armR: [-0.58, 0.00, -0.22], foreR: [-1.05, -0.30, 0.00],
-  chest: [0.02, -0.10, 0], shoulderL: [0, 0, 0.08]
+  armL: [-0.22, 0.00, 0.18], foreL: [-0.90, 0.20, 0.00],
+  armR: [-0.20, 0.00, -0.18], foreR: [-0.88, -0.20, 0.00],
+  chest: [0.02, -0.06, 0], shoulderL: [0, 0, 0.06]
 };
 for (const k of ['hand_cannoneer', 'crossbowman', 'mangudai', 'samurai',
   'longbowman', 'axeman', 'berserk', 'swordsman', 'claimant_knight',

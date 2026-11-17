@@ -447,17 +447,22 @@ export function buildBody(g, prop, opts = {}) {
        This is also the construct that fixes the peg-leg read, because it is
        one continuous surface from calf to toe. */
     g.material(6).color(0.27, 0.20, 0.14);
+    /* A SLAB FOOT WITH A FLARED CUFF.
+       The attempt to draw the boot as one lathe about the ankle failed in a
+       way that is worth recording: a lathe's `squash` scales the radius, so
+       squashing Z by 3.4 to make a long shoe also made the CUFF 3.4 times
+       deep, and the result was a set of talons. A foot is a box -- it has
+       flat sides and a flat sole -- and the only curved part of a boot is the
+       cuff where it meets the leg. Box for the foot, three rings for the
+       cuff, and the two meet where the ankle actually is. */
     if (g.detail < DETAIL.FAR) {
       g.lathe(FOOT, [
-        [0.030 * lw, y(0.200)],   /* inside the shin, so no seam */
-        [0.086 * lw, y(0.164)],   /* flared cuff */
-        [0.092 * lw, y(0.050)],   /* the foot itself */
-        [0.058 * lw, y(0.002)]    /* sole, closed */
-      ], { seg: g.seg(0), x: hipX * 1.02, squash: [1.0, 3.4],
-           blend: SHIN });
-    } else {
-      g.slab(FOOT, [hipX * 1.02, y(0.052), 0.050], [0.104 * lw, 0.090 * H, 0.245 * H]);
+        [0.062 * lw, y(0.180)],
+        [0.084 * lw, y(0.150)],
+        [0.060 * lw, y(0.108)]
+      ], { seg: g.seg(-1), x: hipX * 1.02, squash: [1.0, 1.05], blend: SHIN });
     }
+    g.slab(FOOT, [hipX * 1.02, y(0.050), 0.048], [0.100 * lw, 0.086 * H, 0.235 * H]);
   }
 
   /* ---------- ARMS ----------
