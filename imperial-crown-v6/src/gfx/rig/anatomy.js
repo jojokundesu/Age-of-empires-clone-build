@@ -44,6 +44,33 @@ export const HEAD_X = 0.86;
    body is not a box. 0.126 with the profile table below lands on 6.8. */
 export const HEAD_R = 0.126;
 
+/* The skull's width at a height, as a fraction of hr.
+   Hoisted to module scope because BOTH the face layer and the helmets need
+   it: a nose guard placed by eye sits in front of the face at one height and
+   inside it at another, which is what made every spangenhelm look like a
+   pale bar floating beside a nose it never touched. */
+export function skullFracAt(yy, headY, hr) {
+  const CHIN = headY - hr * 1.06;
+  const HEAD_H = hr * 2.20;
+  const t = (yy - CHIN) / HEAD_H;
+  if (t <= 0) return 0.22;
+  if (t >= 1) return 0.12;
+  for (let i = 1; i < SKULL_RINGS.length; i++) {
+    const [t1, r1] = SKULL_RINGS[i];
+    const [t0, r0] = SKULL_RINGS[i - 1];
+    if (t <= t1) return r0 + (r1 - r0) * ((t - t0) / (t1 - t0));
+  }
+  return 0.12;
+}
+
+/** Surface Z of the skull at a height and a horizontal offset. */
+export function skullSurfZ(yy, xLocal, headY, hr) {
+  const r = skullFracAt(yy, headY, hr) * hr;
+  if (r <= 1e-6) return 0;
+  const sx = Math.min(0.999, Math.abs(xLocal) / r);
+  return r * 1.10 * Math.sqrt(1 - sx * sx);
+}
+
 /* The skull's radius profile, as (height fraction, radius fraction of hr).
    Hoisted to module scope because the face layer has to solve for the
    surface these rings describe -- see surfZ in buildFaceDetail. */
@@ -592,6 +619,9 @@ export function buildBody(g, prop, opts = {}) {
   return {
     H, lw, sw, cd, y, x,
     headY, hr, armX,
+    /* The skull surface solver, so the wardrobe can stand a nose guard ON
+       the face instead of guessing at a Z. */
+    surfZ: (yy, xLocal) => skullSurfZ(yy, xLocal, headY, hr),
     /** Where the two hands sit in bind pose, for placing weapons and tools.
         These have to follow `armX`, which is a profile-driven joint: they
         were pinned to the literal 0.268 and stayed there when the shoulder

@@ -199,6 +199,13 @@ export const CLASSES = {
     crest: (age) => (age >= 4 ? [0.62, 0.14, 0.12] : null),
     build(g, m, o) {
       buildHelm(g, m, this.helm(o.age), o.age);
+      /* THE FACE, under an open helm.
+         A spangenhelm leaves the whole face visible, and this class has been
+         drawing a blank one: no brow, no nose, no eyes. Under the nasal helm
+         that reads as a man with a metal bar hanging in front of a featureless
+         oval, and it was the reason the nose guard looked mis-placed -- there
+         was no nose for it to guard. Skipped once the helm closes at Age III. */
+      if (o.age <= 2) buildFaceDetail(g, m, { hair: o.hair, beard: false });
       /* Three locks. A crest is read as a colour and a direction against
          the sky; a fourth lock is 8 triangles nobody resolves. */
       if (this.crest(o.age)) buildCrest(g, m, this.crest(o.age), 3);

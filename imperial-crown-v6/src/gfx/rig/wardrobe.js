@@ -209,19 +209,48 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
        over the brow and the nasal helm was a bowl with a beard under it and
        no face at all -- the same failure as the old cone cap. A spangenhelm
        sits at the brow, which is +0.14 hr above the head's centre. */
+    /* The rim comes down to +0.04 hr, not +0.12. At +0.12 the coif's top
+       ring and the helmet's rim left a wedge of bare cheek between them on
+       each side -- a bright skin-coloured notch under the steel that read as
+       a hole in the helm. The two now overlap. */
     g.lathe(B.HEAD, [
-      [hr * 1.00 * HELM_CLEAR, headY + hr * 0.12],
-      [hr * 1.06 * HELM_CLEAR, headY + hr * 0.50],
-      [hr * 1.02 * HELM_CLEAR, headY + hr * 1.00],
-      [hr * 0.60 * HELM_CLEAR, headY + hr * 1.36],
+      [hr * 1.02 * HELM_CLEAR, headY + hr * 0.04],
+      [hr * 1.08 * HELM_CLEAR, headY + hr * 0.46],
+      [hr * 1.04 * HELM_CLEAR, headY + hr * 1.00],
+      [hr * 0.62 * HELM_CLEAR, headY + hr * 1.36],
       [0.0, headY + hr * 1.48]
     ], { seg: g.seg(1), squash: [SQX, SQZ] });
-    /* The guard: a narrow bar from under the brow down the bridge. It is the
-       one part of a spangenhelm that is not a body of revolution, so it is a
-       slab -- narrow in X, and centred just outside the face plane so it
-       stands proud of the nose instead of floating in front of it. */
-    g.slab(B.HEAD, [0, headY - hr * 0.20, hr * 1.10],
-      [hr * 0.22, hr * 0.86, hr * 0.15]);
+    /* THE NOSE GUARD: a narrow bar from the brow down the bridge.
+       It is the one part of a spangenhelm that is not a body of revolution,
+       so it is a slab -- and the slab was 22 x 86 x 15 per cent of a head
+       radius, i.e. 280 mm wide by 22 mm deep on a 200 mm-wide head. What
+       rendered was a grey plank across the face from brow to chin, with the
+       eyes and the beard behind it. A nasal is a finger's width of steel:
+       0.20 hr across (25 mm, which is a nose guard) and it stops at the tip
+       of the nose, not at the chin. */
+    /* CENTRED ON THE FACE PLANE, not in front of it.
+       The skull's own surface at eye height is z = 1.10 * hr (it is squashed
+       1.10 on Z), so a slab centred at 0.99 hr with a 0.10 hr half-depth was
+       0.06 hr INSIDE the face at its front and floating in front of the nose
+       at its back: it rendered as a pale bar hanging in the air beside a
+       nose it never touched. Centre it at 1.11 hr and make it deep enough to
+       swallow the surface it stands on. */
+    /* A NOSE GUARD IS A TONGUE OF STEEL ON THE NOSE.
+       Three quarters of it was missing. The slab was 0.20 x 0.62 x 0.09 hr
+       centred 0.10 hr below the head's centre, so it spanned +0.21 to -0.41
+       hr -- it stopped at the bridge and never reached the nose, whose tip is
+       at -0.44 hr. What showed was a small grey tab hanging under the brow
+       with a bare nose below it, which reads as a broken helmet.
+       It now runs from under the brow (+0.30 hr) down past the nose tip
+       (-0.56 hr): 0.86 hr long, 0.20 hr wide, and placed on the skull's own
+       surface with `surfZ`, stepped proud at each end so it stands off the
+       bridge the way a nasal does. */
+    const guardTop = headY + hr * 0.30;
+    const guardBot = headY - hr * 0.56;
+    const midY2 = (guardTop + guardBot) / 2;
+    const faceZ = m.surfZ ? m.surfZ(midY2, 0) : hr * 1.10;
+    g.slab(B.HEAD, [0, midY2, faceZ + hr * 0.10],
+      [hr * 0.20, hr * 0.86, hr * 0.10]);
     return;
   }
 
