@@ -69,6 +69,12 @@ export const CLASSES = {
     beard: false,
     crest: (age) => (age >= 4 ? [0.55, 0.10, 0.10] : null),
     build(g, m, o) {
+      /* Open-faced from Age III: the barbute shows the face, so the face
+         has to exist. `light` because these are the massed units -- five of
+         the game's most common classes pay for this face, and a socket ring
+         that is sub-pixel at gameplay distance is not worth 80 triangles a
+         figure times three hundred. */
+      buildFaceDetail(g, m, { hair: o.hair, beard: true, light: true });
       buildHelm(g, m, this.helm(o.age), o.age);
       if (this.crest(o.age)) buildCrest(g, m, this.crest(o.age));
       if (o.age <= 2) buildHairAfterHelm(g, m, this, o);
@@ -117,6 +123,7 @@ export const CLASSES = {
     hair: 'short',
     beard: false,
     build(g, m, o) {
+      buildFaceDetail(g, m, { hair: o.hair, beard: true, light: true });
       buildHelm(g, m, this.helm(o.age), o.age);
       if (o.age <= 2) buildHairAfterHelm(g, m, this, o);
       buildBelt(g, m);
@@ -178,6 +185,7 @@ export const CLASSES = {
     hair: 'short',
     beard: false,
     build(g, m, o) {
+      buildFaceDetail(g, m, { hair: o.hair, beard: true, light: true });
       buildHelm(g, m, this.helm(o.age), o.age);
       if (o.age >= 3) buildPauldrons(g, m);
       buildBelt(g, m);
@@ -387,9 +395,15 @@ export const CLASSES = {
     hair: 'short',
     beard: true,
     build(g, m, o) {
+      /* ONE call to buildFaceDetail. There were two, six lines apart: the
+         second was the pre-existing one and the first was added when the
+         barbute was opened up, and nothing about a duplicated face plausibly
+         costs 180 triangles -- it costs 50 and the other 130 was three
+         classes' worth of other noise. Removed anyway: two faces at
+         identical coordinates is a z-fighting bug waiting for a camera. */
+      buildFaceDetail(g, m, { hair: o.hair, beard: true, light: true });
       buildHelm(g, m, this.helm(o.age), o.age);
       if (o.age <= 2) buildHairAfterHelm(g, m, this, o);
-      buildFaceDetail(g, m, { hair: o.hair, beard: true });
       buildBelt(g, m);
       /* A DANISH AXE, HELD IN TWO HANDS ACROSS THE BODY.
          The haft runs THROUGH BOTH FISTS, which is the only way a two-handed
@@ -555,6 +569,7 @@ export const CLASSES = {
     hair: 'short',
     beard: true,
     build(g, m, o) {
+      buildFaceDetail(g, m, { hair: o.hair, beard: true, light: true });
       buildHelm(g, m, this.helm(o.age), o.age);
       buildBelt(g, m);
       /* a short iron tube, angled up, with a wooden stock */

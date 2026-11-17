@@ -76,7 +76,7 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
      the back leaves the whole front quarter open. */
   const AVENTAIL_ARC = Math.PI * 1.55;
   const AVENTAIL_START = -Math.PI * 0.5 - Math.PI * 0.775;
-  const coif = () => {
+  const coif = (nape = true) => {
     /* ONE arc, not two. A linen cap under a mail curtain was 70 triangles to
        render a surface the curtain already covers; the curtain alone does
        both jobs -- it darkens the rim and it hides the jaw under the steel. */
@@ -104,14 +104,23 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
        inside the rim, and the FRONT is still open: the arc spans 1.55 PI
        centred on the back, so the gap it leaves is the 81 degrees the face
        occupies. Sides and nape covered from the steel down, face clear. */
-    g.lathe(B.HEAD, [
-      [hr * 1.22, headY - hr * 1.50],
-      [hr * 1.16, headY - hr * 1.18],
-      [hr * 1.04, headY - hr * 0.70],
-      [hr * 1.00, headY - hr * 0.20],
-      [hr * 1.00, headY + hr * 0.10]
-    ], { seg: g.seg(0), squash: [SQX, SQZ],
-         arc: AVENTAIL_ARC, arcStart: AVENTAIL_START });
+    /* `nape = false` skips the curtain entirely.
+       The BARBUTE does not need it: its skirt is itself an arc that comes
+       down over the nape and the cheeks to the collarbone, and it is built
+       wider (1.21-1.23 hr against the curtain's 1.00-1.22), so the whole
+       curtain sat inside the steel unseen. That is 72 triangles per
+       barbute-wearing soldier for a surface no camera can reach -- and there
+       are five such classes. Every other helm keeps it. */
+    if (nape) {
+      g.lathe(B.HEAD, [
+        [hr * 1.22, headY - hr * 1.50],
+        [hr * 1.16, headY - hr * 1.18],
+        [hr * 1.04, headY - hr * 0.70],
+        [hr * 1.00, headY - hr * 0.20],
+        [hr * 1.00, headY + hr * 0.10]
+      ], { seg: g.seg(0), squash: [SQX, SQZ],
+           arc: AVENTAIL_ARC, arcStart: AVENTAIL_START });
+    }
     g.material(kind === 'hood' || kind === 'turban' ? MAT.LINEN : MAT.PLATE);
     g.color(kind === 'hood' ? 0.55 : 0.70, kind === 'hood' ? 0.50 : 0.72,
       kind === 'hood' ? 0.44 : 0.76);
@@ -139,18 +148,39 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
   };
 
   if (kind === 'hood') {
-    /* Cloth over the skull, falling to the shoulders. A FULL body of
-       revolution from the cowl hem to the crown, so it has no rim to sit
-       above the eyes and no interior to see. */
+    /* A COWL IS FABRIC OVER THE SKULL WITH A FACE OPENING -- not a cone.
+       This was a single closed lathe from the hem to the crown, which is a
+       cloth egg. It produced the SECOND version of the same complaint the
+       barbute produced: five classes at the head close-up were a blank blue
+       or brown mass with no visible face at all (skirmisher, longbowman,
+       mob_rioter, and every age-1/2 archer).
+       Same construction as the barbute, for the same reason: a closed crown
+       (where the skull's curvature is) plus an open-arc mantle (where the
+       face is). Cloth sits closer than steel, so the clearance is smaller
+       and the opening is wider -- a cowl is pushed back off the brow, it
+       does not wrap the chin the way a barbute's cheekpiece does. */
+    const OPEN = Math.PI * 0.46;
+    const COVERED = Math.PI * 2 - OPEN;
+    const START = Math.PI * 0.5 + OPEN * 0.5;
+    const BROW_Y = headY + hr * 0.30;
+    /* crown */
+    g.lathe(B.HEAD, [
+      [hr * 1.13 * HELM_CLEAR, BROW_Y - hr * 0.02],
+      [hr * 1.14 * HELM_CLEAR, headY + hr * 0.56],
+      [hr * 0.98 * HELM_CLEAR, headY + hr * 1.02],
+      [hr * 0.60 * HELM_CLEAR, headY + hr * 1.40],
+      [0.0, headY + hr * 1.54]
+    ], { seg: g.seg(1), squash: [SQX, SQZ] });
+    /* mantle, falling to the shoulders. It flares DOWNWARD, which is what
+       makes a cowl read as cloth over shoulders rather than as a tube round
+       a neck: 1.05 at the brow out to 1.30 at the hem. */
     g.lathe(B.HEAD, [
       [hr * 1.30, headY - hr * 1.34],
-      [hr * 1.18, headY - hr * 0.92],
-      [hr * 1.10 * HELM_CLEAR, headY - hr * 0.24],
-      [hr * 1.14 * HELM_CLEAR, headY + hr * 0.52],
-      [hr * 0.94 * HELM_CLEAR, headY + hr * 1.06],
-      [hr * 0.56 * HELM_CLEAR, headY + hr * 1.44],
-      [0.0, headY + hr * 1.58]
-    ], { seg: g.seg(1), squash: [SQX, SQZ] });
+      [hr * 1.22, headY - hr * 0.94],
+      [hr * 1.12, headY - hr * 0.44],
+      [hr * 1.10 * HELM_CLEAR, headY - hr * 0.06],
+      [hr * 1.13 * HELM_CLEAR, BROW_Y + hr * 0.04]
+    ], { seg: g.seg(1), squash: [SQX, SQZ], arc: COVERED, arcStart: START });
     return;
   }
 
@@ -342,104 +372,94 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
     return;
   }
 
-  /* barbute: a CLOSED shell with a T-shaped face opening cut into the front.
-     It used to be an arc lathe with the face left out, and an arc is the
-     wrong tool for a helmet. An open sweep has a RIM -- two radial edges
-     running from the crown to the jaw -- and because a lathe has no
-     thickness those rims render as a pair of hard vertical faces standing
-     off the head, which is what read as a black rectangle bolted to the
-     face. It also cannot be widened without exposing the back of the skull.
-     A closed lathe plus a dark slab for the sight and the mouth is both
-     cleaner and closer to the actual armour. */
-  coif();
-  /* IT COVERS THE WHOLE FACE. The lower rim used to stop at headY - 0.62 hr,
-     which is 56 mm ABOVE the chin -- so a closed steel crown sat on a bare
-     jaw and a bare nose, and the "helmet" read as a bowl worn on top of a
-     head. A barbute is a full enclosure: it comes down over the chin, and
-     the face is visible only through the sights.
-     The bottom ring turns inward and closes on the axis, so there is no open
-     mouth to see up into where the neck goes. */
-  /* The shell has to clear the TEMPLES, which is where the skull is widest,
-     not merely the crown. At 1.10 * HELM_CLEAR on a 1.06 squash the front of
-     the shell at eye height came out at 0.185 z against a skull at 0.137 --
-     only 48 mm of steel -- and with eight segments the flat chords in
-     between sag by cos(22.5 deg) = 8%, which is 15 mm of the 48. Add the
-     brow's own 12 mm of projection and the skull's forehead is level with
-     the steel. That is why the sights seemed to vanish: they were competing
-     with a face pressed against them.
-     Widening to 1.18 gives the sights real dark, and a great helm is
-     supposed to be bigger than the head inside it anyway. */
-  g.lathe(B.HEAD, [
-    [hr * 0.30, headY - hr * 1.44],
-    [hr * 1.06 * HELM_CLEAR, headY - hr * 1.24],
-    [hr * 1.18 * HELM_CLEAR, headY - hr * 0.18],
-    [hr * 1.16 * HELM_CLEAR, headY + hr * 0.50],
-    [hr * 0.70 * HELM_CLEAR, headY + hr * 1.20],
-    [0.0, headY + hr * 1.34]
-  ], { seg: g.seg(1), squash: [SQX, SQZ] });
-  if (g.detail <= DETAIL.MID) {
-    /* The sight, as a BAND, not a slab.
-       A box drawn across a curved surface cannot win: it has to be wide
-       enough to span the face and deep enough to cut the surface, and those
-       two requirements put its corners outside the helmet's silhouette --
-       which rendered as a black bar sticking out past the side of the head.
-       A short arc lathe at the helm's own radius is flush by construction:
-       it follows the curvature, so there is nothing to poke out. Its two
-       radial rims are 0.20 hr tall and the same dark colour as the band, so
-       they are not visible. */
-    /* 1.05, not 1.012. A lathe's flat chords sag to R*cos(pi/seg) between its
-       vertices, so a band a hundredth of a percent proud of the helmet is
-       still INSIDE it over most of each segment and the steel comes through
-       in a periodic row of fragments. Five per cent clears the sag by a
-       factor of three and still reads as a slit cut in the surface. */
-    const sightR = 1.18 * HELM_CLEAR * 1.05;
-    g.material(MAT.LEATHER).color(0.075, 0.075, 0.085);
-    /* A NARROW slit, not a visor band. At 0.52 pi the opening was 94 degrees
-       of the helmet's circumference, i.e. the whole front of the face, and
-       it read as a black censor bar across a steel egg rather than as a
-       place to see out of. A barbute's sight is a slot about a third of the
-       face wide, and it is the STEEL either side of it that makes it a
-       helmet. 0.30 pi, and 0.18 hr tall rather than 0.26. */
-    /* ASCENDING, and that is not cosmetic. `lathe()` derives each vertex's
-       normal from the profile's slope as (-dr, dy) normalised, so a profile
-       written top-down gets nOut = dy/|d| < 0: its normals point INWARD and
-       its triangles are wound inward with them, and it is culled. That is
-       why every face opening in this file has been the single thing that
-       would not render -- the slit, the breath slot, the great helm's sight
-       -- while the steel around them was fine. Writing the band bottom-up
-       makes nOut positive and it draws. */
+  /* ---------------- BARBUTE ----------------
+     AN OPEN-FACED HELMET. This is the single most mis-read piece of kit in
+     the whole rig, and the user's words for it were "a big white blob as
+     their face" -- which is exactly right.
+
+     It was built as a CLOSED shell over an enclosed skull, with a painted
+     dark band for the sight and a painted dark slot for the breath. Painted
+     openings do not work; there is a note about that further down this file
+     and a much longer one in the great helm. What that construction actually
+     produces is a smooth pale egg with two small dark marks on it, and since
+     a smooth pale egg is very close to the shape of a skull, the result
+     reads as a giant blank face rather than as armour. At age 3 it hit
+     man_at_arms, spearman, swordsman, axeman and hand_cannoneer -- five of
+     the most common units in the game -- so it was also the most visible
+     thing wrong with the rig.
+
+     A barbute is NOT an enclosed helmet. Its defining feature is a
+     T-SHAPED OPENING with the wearer's face fully visible behind it: steel
+     over the crown and the ears, steel cheekpieces sweeping down to the
+     collarbone, a brow ridge over the eyes, and an open mouth and chin. That
+     is why it reads instantly as armour -- you can see a face in it.
+
+     The geometry that makes it read:
+       - an OPEN ARC, not a closed lathe, so there is no steel across the
+         face at all. The gap IS the opening.
+       - 1.42 pi of sweep leaves 0.58 pi (104 degrees) of face open, which
+         is wide enough to show both eyes, the nose and the mouth.
+       - the sweep has to start at 0.21 pi and end at 1.79 pi, i.e. centred
+         on the face, so the opening is symmetric about +Z.
+       - cheekpieces come DOWN at the sides of the opening and reach below
+         the chin, which is the barbute's other signature.
+       - the coif's aventail is SKIPPED, because this helmet's own skirt is
+         wider and already covers the nape. */
+  coif(false);
+  {
+    /* THE SWEEP. `arcStart` is the first COVERED angle, measured from +X
+       toward +Z: +Z is the way the model faces, so an opening centred on the
+       face means the covered arc starts just past it and runs all the way
+       round the back. */
+    /* 0.50 pi, not 0.58: at 104 degrees of opening the cheekpieces were wide
+       enough apart to read as two separate panels bolted to the sides of a
+       face rather than as one helmet. 90 degrees shows both eyes, the nose
+       and the mouth and still leaves the sides joined by the crown. */
+    const OPEN = Math.PI * 0.50;
+    const COVERED = Math.PI * 2 - OPEN;
+    const START = Math.PI * 0.5 + OPEN * 0.5;
+    /* TWO PIECES, NOT ONE.
+       An arc lathe over the whole helm looks like the obvious answer and it
+       is wrong: the crown of a lathe closes where the profile reaches radius
+       zero, so an open arc leaves a 104-degree WEDGE MISSING OUT OF THE TOP
+       OF THE SKULL. The first attempt at this rendered a bare bald crown
+       with a steel fin beside it, which is a worse blob than the one it
+       replaced.
+       A barbute is closed over the crown and open over the face, and those
+       are two different sweeps, so it is two pieces:
+         - the CROWN, a full 2 pi dome from the brow up, which is where the
+           skull's own curvature lives;
+         - the SKIRT, an arc from the collarbone up to the brow, which is
+           where the opening lives.
+       They overlap by 0.04 hr at the brow so there is no seam to see. */
+    const BROW_Y = headY + hr * 0.24;
+    /* --- crown: closed --- */
     g.lathe(B.HEAD, [
-      [hr * sightR, headY + hr * 0.02],
-      [hr * sightR, headY + hr * 0.20]
-    /* 0.22 pi, centred on the face. The previous arc started at 0.35 pi and
-       swept past the nose, so the sight sat off to one side of the helmet --
-       which is what made it read as a slot bolted on rather than cut in. */
-    ], { seg: 7, squash: [SQX, SQZ],
-         arc: Math.PI * 0.22, arcStart: Math.PI * 0.5 - Math.PI * 0.11 });
-    /* The breath channel is a short vertical slot under the nose, not a
-       second horizontal bar: two parallel bars read as punctuation. */
+      [hr * 1.21 * HELM_CLEAR, BROW_Y - hr * 0.02],
+      [hr * 1.20 * HELM_CLEAR, headY + hr * 0.72],
+      [hr * 0.94 * HELM_CLEAR, headY + hr * 1.10],
+      [hr * 0.52 * HELM_CLEAR, headY + hr * 1.32],
+      [0.0, headY + hr * 1.40]
+    ], { seg: g.seg(1), squash: [SQX, SQZ] });
+    /* --- skirt: open across the face --- */
+    /* A MONOTONIC TAPER, NOT A DERIVED ONE.
+       Deriving each ring from the skull profile looked right and rendered a
+       jagged mess: the skull narrows fast toward the jaw, so the derived
+       radii went 1.32, 0.76, 1.04, 1.19, 1.22, 1.40 -- out, in, out, in.
+       A lathe profile that reverses like that draws folds, and the folds
+       read as broken bands across the helmet.
+       A barbute's cheekpieces converge downward toward the neck, so the
+       profile is simply widest at the temple and narrowest at the hem. Read
+       off the skull's own numbers -- 1.02 hr at +0.83 (widest), 1.14 at the
+       crown -- and monotonically decreasing below the temple. */
     g.lathe(B.HEAD, [
-      [hr * sightR * 0.99, headY - hr * 0.34],
-      [hr * sightR, headY - hr * 0.12]
-    ], { seg: 4, squash: [SQX, SQZ],
-         arc: Math.PI * 0.10, arcStart: Math.PI * 0.5 - Math.PI * 0.05 });
-    g.material(MAT.PLATE).color(0.70, 0.72, 0.76);
-    /* THE NASAL RIDGE between them. It is what turns two holes in a shell
-       into a T-shaped opening: a raised steel bar from the brow down over
-       the nose, flush with the helm at its ends and standing 6% proud in
-       the middle, so it catches a highlight and separates the slit from the
-       breath slot. Every closed helm in the reference art has one. */
-    /* Only 2% proud, and 0.09 pi wide. At 7% and 0.13 pi it was a steel box
-       with a visible side face, not a ridge; a raised bar on a curved helmet
-       is read almost entirely from its highlight, and the highlight needs a
-       slope, not a wall. */
-    g.lathe(B.HEAD, [
-      [hr * sightR * 1.005, headY - hr * 0.34],
-      [hr * sightR * 1.03, headY - hr * 0.18],
-      [hr * sightR * 1.03, headY + hr * 0.06],
-      [hr * sightR * 1.005, headY + hr * 0.40]
-    ], { seg: 3, squash: [SQX, SQZ],
-         arc: Math.PI * 0.09, arcStart: Math.PI * 0.5 - Math.PI * 0.045 });
+      [hr * 1.10 * HELM_CLEAR, headY - hr * 1.20],
+      [hr * 1.15 * HELM_CLEAR, headY - hr * 0.78],
+      [hr * 1.20 * HELM_CLEAR, headY - hr * 0.34],
+      [hr * 1.22 * HELM_CLEAR, headY + hr * 0.12],
+      [hr * 1.21 * HELM_CLEAR, BROW_Y + hr * 0.06]
+    ], { seg: g.seg(2), squash: [SQX, SQZ], arc: COVERED, arcStart: START });
+
   }
 }
 
@@ -562,11 +582,15 @@ export function buildBelt(g, m) {
      thickness -- a ribbon standing off the waist with visible nothing
      behind it at the top and bottom edges. */
   g.material(MAT.LEATHER).color(0.42, 0.31, 0.20);
+  /* THREE rings, not four. The middle pair described a 2 mm bulge that no
+     camera resolves, and the belt is drawn on every soldier in the game --
+     24 triangles a man times three hundred is 7k in the frame for a curve
+     nobody can see. The two end rings still turn inward, so the strap keeps
+     its thickness and its shadow. */
   g.lathe(B.SKIRT, [
-    [x(0.176), y(1.055)],
-    [x(0.190), y(1.035)],
-    [x(0.192), y(0.975)],
-    [x(0.176), y(0.955)]
+    [x(0.180), y(1.055)],
+    [x(0.192), y(0.978)],
+    [x(0.180), y(0.955)]
   ], { seg: g.seg(2), squash: [1.0, cd / sw] });
   /* buckle: a small plate on the front, which is what stops the band
      reading as a painted stripe */

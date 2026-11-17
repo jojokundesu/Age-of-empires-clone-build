@@ -448,7 +448,13 @@ export function buildBody(g, prop, opts = {}) {
      wool, the shin bindings at 0.24 read as leather straps over it, and the
      boot at 0.15 is the darkest thing on the figure -- which is what stops
      the leg reading as one column and makes the ankle visible. */
-  const hoseCol = [0.44, 0.38, 0.29];
+  /* Three values, and the SPREAD is the point: hose, then a darker shin, then
+     a darker boot still. Previously hose 0.44/0.38/0.29 and shin
+     0.24/0.18/0.13 and boot 0.15/0.11/0.08 -- the last two were close enough
+     to merge at gameplay distance, so the leg read as one brown tube with a
+     boot on the end. Widening the top of the ladder gives the thigh/shin
+     break the eye needs to read a knee. */
+  const hoseCol = [0.56, 0.48, 0.36];
   for (const side of [-1, 1]) {
     /* Same trap as the arms: the boot at the end of the iteration switches
        the builder to LEATHER, so the second leg was being built in boot
@@ -470,16 +476,36 @@ export function buildBody(g, prop, opts = {}) {
        tunic and the knee, and the tunic skirt now covers its top third.
        Three rings at near -> two, which is 40 triangles a man and the
        silhouette does not change. */
+    /* A THIGH HAS A QUAD AND A KNEE, and a straight cone has neither.
+       `profile(t)` scales the radius along the limb, so one extra ring buys
+       the shape that makes a leg read as a leg: the quadriceps swells a
+       third of the way down from the hip and the limb narrows again into the
+       knee. It is a multiplexer on the same tube, so it costs the ring and
+       nothing else. */
+    const quad = (t) => 1 + 0.14 * Math.sin(Math.PI * Math.min(1, t * 0.92));
     g.tube(THIGH, [hipX, y(0.96), 0], [hipX * 1.06, y(0.52), 0],
-      0.092 * lw, 0.070 * lw, { seg: g.detail === DETAIL.NEAR ? g.seg(1) : g.seg(0), rings: g.detail === DETAIL.NEAR ? 2 : 1, blend: HIP });
+      0.092 * lw, 0.068 * lw, {
+        seg: g.detail === DETAIL.NEAR ? g.seg(1) : g.seg(0),
+        rings: g.detail === DETAIL.NEAR ? 2 : 1,
+        blend: HIP, profile: quad
+      });
     /* A shin is nearly a straight taper: one fewer segment each way is
        invisible and worth 30 triangles per leg. */
     /* Shin: leather bindings or a greave, darker or lighter than the hose
        above it. This is the contrast band that reads as a boot even at mid
        range, and it costs nothing -- it is the same tube in another colour. */
-    g.material(6).color(0.24, 0.18, 0.13);
-    g.tube(SHIN, [hipX * 1.06, y(0.52), 0], [hipX * 1.02, y(0.13), 0],
-      0.074 * lw, 0.050 * lw, { seg: g.detail === DETAIL.NEAR ? g.seg(0) : g.seg(-1), rings: 1, blend: THIGH });
+    /* THE CALF. Same trick on the shin, and it matters more than the quad:
+       the calf is the widest point of a shin and it sits high, a quarter of
+       the way down from the knee. Without it the lower leg is a rod, and a
+       rod under a tunic is the thing that reads as a stick figure. */
+    g.material(6).color(0.27, 0.21, 0.15);
+    const calf = (t) => 1 + 0.30 * Math.exp(-((t - 0.20) / 0.26) * ((t - 0.20) / 0.26));
+    g.tube(SHIN, [hipX * 1.06, y(0.52), 0], [hipX * 1.02, y(0.128), 0],
+      0.070 * lw, 0.044 * lw, {
+        seg: g.detail === DETAIL.NEAR ? g.seg(0) : g.seg(-1),
+        rings: g.detail === DETAIL.NEAR ? 2 : 1,
+        blend: THIGH, profile: calf
+      });
     /* THE BOOT IS ONE LATHE, not a cuff ring stacked on a slab.
        The pair of them cost 48 triangles a leg for a hard step where cloth
        met a box -- which is exactly the seam a boot is supposed to hide. A
@@ -498,14 +524,28 @@ export function buildBody(g, prop, opts = {}) {
        flat sides and a flat sole -- and the only curved part of a boot is the
        cuff where it meets the leg. Box for the foot, three rings for the
        cuff, and the two meet where the ankle actually is. */
+    /* THE CUFF HAS TO MEET THE FOOT.
+       It ended at y(0.104) and the foot's box began at y(0.093): an 11 mm
+       band of nothing between the boot's own two halves, which is the
+       bright seam that made the feet look like separate objects dropped
+       under the legs. The cuff now ends where the foot begins, and it ends
+       WIDER than the foot, so the join is a boot's welt rather than a gap.
+       The foot also has a HEEL now: the box used to run from z -0.07 to
+       +0.17, i.e. almost all toe and no heel, so every soldier stood on the
+       ball of his foot. */
+    const footTop = y(0.050) + 0.086 * H * 0.5;
     if (g.detail < DETAIL.FAR) {
       g.lathe(FOOT, [
-        [0.058 * lw, y(0.192)],
-        [0.098 * lw, y(0.158)],
-        [0.062 * lw, y(0.104)]
+        [0.056 * lw, y(0.196)],
+        [0.100 * lw, y(0.162)],
+        [0.066 * lw, footTop]
       ], { seg: g.seg(-1), x: hipX * 1.02, squash: [1.0, 1.05], blend: SHIN });
     }
-    g.slab(FOOT, [hipX * 1.02, y(0.050), 0.048], [0.100 * lw, 0.086 * H, 0.235 * H]);
+    /* Heel behind the ankle, toe in front. A foot is 0.24 H long and the
+       ankle sits a third of the way back from the heel. */
+    const FOOT_LEN = 0.235 * H;
+    g.slab(FOOT, [hipX * 1.02, y(0.050), FOOT_LEN * 0.5 - FOOT_LEN * 0.34],
+      [0.100 * lw, 0.086 * H, FOOT_LEN]);
   }
 
   /* ---------- ARMS ----------
@@ -827,7 +867,7 @@ export function buildFaceDetail(g, m, opts = {}) {
     const by = headY + hr * 0.26;
     const bz = surfZ(by, 0);
     g.ellipsoid(B.HEAD, [0, by, bz - hr * 0.10],
-      [hr * 0.52, hr * 0.11, hr * 0.20], { sph: [5, 2] });
+      [hr * 0.52, hr * 0.11, hr * 0.20], { sph: opts.light ? [4, 2] : [5, 2] });
   }
 
   /* ---------- NOSE ----------
@@ -852,17 +892,25 @@ export function buildFaceDetail(g, m, opts = {}) {
      the whole point: the previous draft placed them on a flat plane and the
      skull is an ellipse, so the outer corner of each eye sank and the inner
      corner floated. */
+  /* `light` drops the socket ring and keeps only the dark iris.
+     An eye is read as a dark mark on a face at any distance past a metre:
+     the socket exists to give it a lid and a shadow, and both of those are
+     sub-pixel on a 200-pixel soldier. It costs 32 triangles per face and the
+     classes that wear an OPEN helm are the common ones, so they pay for it
+     five times over in an army. */
   for (const side of [-1, 1]) {
     const ex = side * hr * 0.34;
     const ey = headY + hr * 0.06;
     const ez = surfZ(ey, ex);
-    g.material(SKIN).color(0.40, 0.30, 0.24);
-    if (g.detail === DETAIL.NEAR) {
-      g.ellipsoid(B.HEAD, [ex, ey, ez - hr * 0.035],
-        [hr * 0.20, hr * 0.115, hr * 0.13], { sph: [4, 2] });
-    } else {
-      g.slab(B.HEAD, [ex, ey, ez - hr * 0.030],
-        [hr * 0.34, hr * 0.20, hr * 0.10]);
+    if (!opts.light) {
+      g.material(SKIN).color(0.40, 0.30, 0.24);
+      if (g.detail === DETAIL.NEAR) {
+        g.ellipsoid(B.HEAD, [ex, ey, ez - hr * 0.035],
+          [hr * 0.20, hr * 0.115, hr * 0.13], { sph: [4, 2] });
+      } else {
+        g.slab(B.HEAD, [ex, ey, ez - hr * 0.030],
+          [hr * 0.34, hr * 0.20, hr * 0.10]);
+      }
     }
     g.material(HAIR).color(0.09, 0.08, 0.08);
     if (g.detail === DETAIL.NEAR) {

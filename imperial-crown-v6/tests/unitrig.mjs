@@ -154,10 +154,22 @@ check('per-class triangle budget holds', () => {
        meant deleting the animal's face to satisfy a number, so the cap moves
        to 3% above the new measure instead, which is what the note above
        says the cap is for. */
-    const nearCap = mounted ? 2230 : 1450;
+    /* 1650, from 1450, for the OPEN-FACED HELMET.
+       The barbute used to be a closed shell with a painted-on sight, which
+       is cheap and which rendered as the big pale blob the user reported. A
+       real barbute is an open crown plus an open-arc cheekpiece, i.e. more
+       surface than the closed shell it replaced, and the face behind the
+       opening has to actually exist. That is 216 triangles of helmet and 144
+       of face on the man-at-arms, and there is no version of this fix that
+       costs less: the cheap alternative is the blob.
+       The cap moves instead, per the standing rule that the quality rules
+       win and caps are re-baselined rather than the art being weakened. */
+    const nearCap = mounted ? 2230 : 1650;
     /* Same reasoning as nearCap: the horse's head is the same head at every
        tier, so its cost lands on mid as well. */
-    const midCap = mounted ? 1520 : 940;
+    /* 1040, from 940: same helmet, one tier down. The barbute is 208 at mid
+       and the face 116. */
+    const midCap = mounted ? 1520 : 1040;
     const farCap = mounted ? 950 : 480;
     assert(near <= nearCap, `${key}: near ${near} over ${nearCap}`);
     assert(mid <= midCap, `${key}: mid ${mid} over ${midCap}`);
@@ -331,7 +343,17 @@ check('a realistic 300-unit army fits the 193k draw assertion', () => {
   /* The cap stays at 193k: cavalry is not allowed to buy its way out of the
      budget, it has to come out of the same frame. Villagers were trimmed to
      make room rather than raising the ceiling. */
-  assert(total <= 193000, `a realistic army needs ${(total / 1000).toFixed(1)}k tris`);
+  /* 199k, from 193k, and this ceiling is NOT going to move again for a
+     while. It moved once, for one reason: the open-faced barbute. That
+     helmet is worn by five of the most common classes in the game and in its
+     old form it rendered as a pale blob where the soldier's face should be,
+     so it was the most visible defect in the rig and it was worth 4% of the
+     frame to fix. Every triangle in the increase is on screen at gameplay
+     distance.
+     Anything further has to come OUT of this number rather than above it.
+     The obvious place to reclaim is the villager, which is 48k of the 196 --
+     a quarter of the whole army for a bare peasant with no armour. */
+  assert(total <= 199000, `a realistic army needs ${(total / 1000).toFixed(1)}k tris`);
 });
 
 check('every rig class is well formed', () => {
@@ -363,7 +385,13 @@ check('age progression adds ornament without breaking budget', () => {
   const a1 = buildRig('man_at_arms', DETAIL.MID, { age: 1 }).tris;
   const a4 = buildRig('man_at_arms', DETAIL.MID, { age: 4 }).tris;
   assert(a4 > a1, `age 4 (${a4}) should carry more detail than age 1 (${a1})`);
-  assert(a4 <= 940, `age 4 mid is ${a4}`);
+  /* 1060, from 940. The age ladder's top rung is a great helm plus a crest
+     plus pauldrons on a body that now also carries a face under the visor;
+     the old number was set before the barbute was opened up and it is the
+     helmet, not the ornament, that moved. The check that matters is the one
+     above it -- age 4 must still cost MORE than age 1 -- and the per-class
+     cap and the army cap are the ones that protect the frame. */
+  assert(a4 <= 1060, `age 4 mid is ${a4}`);
 });
 
 check('a call-site sphere refinement cannot exceed the tier', () => {
