@@ -16,7 +16,7 @@ import { DETAIL } from './meshbuilder.js';
 import {
   MAT, buildHelm, buildCrest, buildSurcoat, buildPauldrons, buildBelt,
   buildCape, buildSword, buildSpear, buildBow, buildQuiver, buildTool,
-  buildStaff, buildSatchel
+  buildStaff, buildSatchel, buildTwoHandedAxe
 } from './wardrobe.js';
 import { buildBody, buildHair, buildFaceDetail } from './anatomy.js';
 
@@ -377,84 +377,14 @@ export const CLASSES = {
       if (o.age <= 2) buildHairAfterHelm(g, m, this, o);
       buildFaceDetail(g, m, { hair: o.hair, beard: true });
       buildBelt(g, m);
-      /* a long haft with a broad head: both hands, diagonal across the body */
-      g.material(MAT.WOOD).color(0.46, 0.34, 0.22);
-      g.tube(B.HAND_R, [m.x(0.16), m.y(1.10), 0.10], [m.x(0.34), m.y(1.92), 0.24],
-        0.021, 0.019, { seg: 5, rings: 2 });
-      g.material(MAT.PLATE).color(0.60, 0.62, 0.66);
-      g.slab(B.HAND_R, [m.x(0.36), m.y(1.96), 0.25], [0.19, 0.15, 0.026], { rot: 0.3 });
-    }
-  },
-
-  /* ---------- HUSKARL ----------
-     Norse heavy infantry: round shield, axe, mail, no horse. */
-  huskarl: {
-    profile: 'manAtArms',
-    mailedBody: true,
-    helm: (age) => (age <= 2 ? 'kettle' : 'nasal'),
-    hair: 'braid',
-    beard: true,
-    build(g, m, o) {
-      buildHelm(g, m, this.helm(o.age), o.age);
-      buildFaceDetail(g, m, { hair: o.hair, beard: true });
-      if (o.age >= 3) buildPauldrons(g, m);
-      buildBelt(g, m);
-      buildSword(g, B.HAND_R, [m.handX, m.handY, 0.03], m.y(0.40));
-      /* Round shield. It was a 300 mm radius disc centred 285 mm out from
-         the centre line, i.e. most of its width hung inside the torso: the
-         near arm, the belt and the whole flank were drawn through it and
-         what showed was a brown wedge beside the hip. A shield covers the
-         near side, so it is 230 mm across and sits OUTSIDE the shoulder
-         line at armX. */
-      /* ONE lathe for the whole board, and that is what makes the round
-         shield affordable. The draft before it was three spheres -- a wooden
-         disc, an iron disc 5 mm in front of it and a boss -- i.e. three
-         closed shells of which two were almost entirely hidden by each
-         other: ~120 triangles to show a 6 mm ring and a stud. A lathe about
-         the shield's own axis draws the board and its iron edge as one
-         profile, from the boss at the centre out to the rim and back in a
-         short lip. The whole shield costs 32.
-         The axis is the face normal, so the lathe has to be laid on its
-         side: the profile is in the shield's radius, and `rot` tips it to
-         face forward. */
-      g.material(MAT.WOOD).color(0.52, 0.42, 0.30);
-      /* FOUR rings, which is a fan from the boss to the rim and one lip back
-         over the edge. A disc drawn from its centre pays one ring of
-         triangles per ring of profile whether or not that ring describes
-         anything, and the last draft carried seven. */
-      const sy = m.y(1.03);
-      g.lathe(B.HAND_L, g.detail === DETAIL.FAR ? [
-        [0.000, sy + 0.052],
-        [0.070, sy + 0.006],
-        [0.258, sy + 0.020]
-      ] : [
-        [0.000, sy + 0.052],   /* boss crown, proud of the face */
-        [0.070, sy + 0.006],   /* the face itself */
-        [0.246, sy + 0.000],
-        [0.258, sy + 0.020]    /* iron rim, turned forward over the edge */
-      ], { seg: g.detail === DETAIL.NEAR ? 10 : g.detail === DETAIL.MID ? 8 : 6,
-           x: -m.x(0.372), z: 0.13 });
-    }
-  },
-
-  /* ---------- BERSERK ----------
-     Bare torso, no helm, long hair and beard. The only topless humanoid,
-     which is exactly what makes him readable. */
-  berserk: {
-    profile: 'manAtArms',
-    helm: () => 'none',
-    hair: 'long',
-    beard: true,
-    bareChest: true,
-    build(g, m, o) {
-      buildHairAfterHelm(g, m, this, o);
-      buildFaceDetail(g, m, { hair: o.hair, beard: true });
-      buildBelt(g, m);
-      g.material(MAT.WOOD).color(0.44, 0.32, 0.20);
-      g.tube(B.HAND_R, [m.x(0.14), m.y(1.14), 0.10], [m.x(0.36), m.y(1.96), 0.26],
-        0.023, 0.020, { seg: 5, rings: 2 });
-      g.material(MAT.PLATE).color(0.58, 0.60, 0.64);
-      g.slab(B.HAND_R, [m.x(0.38), m.y(2.00), 0.27], [0.20, 0.16, 0.028], { rot: 0.28 });
+      /* A DANISH AXE, HELD IN TWO HANDS ACROSS THE BODY.
+         The haft runs THROUGH BOTH FISTS, which is the only way a two-handed
+         weapon can be authored once the arms are posed: the animator moves
+         the hands and the wardrobe cannot see that, so the haft is drawn
+         between the two measured grip points instead of at a guessed angle.
+         It is parented to the pelvis because the pelvis is upright in every
+         pose in the rig, so the line it draws survives the guard. */
+      buildTwoHandedAxe(g, m);
     }
   },
 

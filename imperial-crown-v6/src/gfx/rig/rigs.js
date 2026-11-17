@@ -22,6 +22,7 @@ import { DETAIL, SkinnedBuilder } from './meshbuilder.js';
 import { buildBody } from './anatomy.js';
 import { CLASSES, FALLBACK_CLASS } from './classes.js';
 import { buildMount, MOUNT_STANDARD, MOUNT_PONY } from './mount.js';
+import { guardGrips } from './animator.js';
 
 /* Material ids shared with unitShaders.js */
 export const MAT = {
@@ -142,10 +143,23 @@ export function buildHumanoid(g, prop, def, opts = {}) {
     bodyCol: def.bodyCol || (def.bareChest ? skin : (def.mailedBody ? [0.62, 0.61, 0.57] : [0.78, 0.76, 0.70]))
   };
   const m = buildBody(g, prop, bodyOpts);
+  /* opts carries the class key through from buildRig, so the guard lookup is
+     exact rather than a reverse search through CLASSES (which would be wrong
+     for the A/B variant of the man-at-arms, since both share one definition). */
   /* The class's wardrobe needs to know whether it is dressing a man on foot
      or a man in a saddle: a shield hangs differently in each, and this is
      the only place that knows. */
   m.mounted = !!prop.mount;
+  /* WHERE THE HANDS ARE IN THIS CLASS'S GUARD, in model space.
+     The wardrobe authors weapons in bind space and the animator poses the
+     arms afterwards, so a weapon placed at the bind-pose hand swings away
+     from the fist the moment the guard is applied -- which is why the
+     spearman's shaft stood beside him with nothing holding it and the
+     axeman's haft crossed his own face. These two points are the actual
+     fist positions under IDLE_GUARD[class], measured once by the animator.
+     Wardrobe code that needs a grip uses them instead of guessing. */
+  m.grip = guardGrips(prop, opts.classKey || 'man_at_arms');
+  m.profile = prop;
 
   /* Then the class dresses it. */
   def.build(g, m, { ...opts, age, skin, hair });

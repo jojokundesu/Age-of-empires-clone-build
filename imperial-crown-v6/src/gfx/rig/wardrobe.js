@@ -80,10 +80,36 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
     /* ONE arc, not two. A linen cap under a mail curtain was 70 triangles to
        render a surface the curtain already covers; the curtain alone does
        both jobs -- it darkens the rim and it hides the jaw under the steel. */
-    g.material(MAT.MAIL).color(0.40, 0.40, 0.38);
+    /* Lighter than it wants to be. A mail aventail lit by a single sun
+       reads as a black band unless its albedo is pushed up; at 0.40 the
+       curtain under a kettle hat was a hole between the helmet and the
+       shoulders, which is worse than the bare jaw it replaced. */
+    g.material(MAT.MAIL).color(0.74, 0.74, 0.70);
+    /* BOTTOM-UP. This arc was written crown-first for a long time, which
+       gives every quad an inward normal (nOut = dy/|d| < 0) and the whole
+       aventail was culled -- so the jaw and the nape showed bare under every
+       helmet in the file and three passes went looking for a geometry
+       collision that was never there. The mesh is a two-ring skirt: it has to
+       start at the hem and climb. */
+    /* AND IT FLARES. A two-ring cone at near-constant radius is a tube
+       round the neck; an aventail hangs off the helmet's rim and spreads
+       over the shoulders, so it is narrow at the top and wide at the hem.
+       The three rings also let it curve instead of running straight from
+       the rim to the collarbone. */
+    /* UP UNDER THE RIM, not below the ear.
+       It hung from headY - 0.44 hr, which is under the jaw -- so between the
+       helmet's rim at +0.15 hr and the top of the curtain there were 74 mm
+       of bare cheek on both sides, and a kettle hat read as a metal hat
+       floating over a naked head. The curtain's top ring is now at +0.10 hr,
+       inside the rim, and the FRONT is still open: the arc spans 1.55 PI
+       centred on the back, so the gap it leaves is the 81 degrees the face
+       occupies. Sides and nape covered from the steel down, face clear. */
     g.lathe(B.HEAD, [
-      [hr * 1.02, headY - hr * 0.52],
-      [hr * 1.06, headY - hr * 1.44]
+      [hr * 1.22, headY - hr * 1.50],
+      [hr * 1.16, headY - hr * 1.18],
+      [hr * 1.04, headY - hr * 0.70],
+      [hr * 1.00, headY - hr * 0.20],
+      [hr * 1.00, headY + hr * 0.10]
     ], { seg: g.seg(0), squash: [SQX, SQZ],
          arc: AVENTAIL_ARC, arcStart: AVENTAIL_START });
     g.material(kind === 'hood' || kind === 'turban' ? MAT.LINEN : MAT.PLATE);
@@ -129,21 +155,47 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
   }
 
   if (kind === 'kettle') {
-    /* A shallow brimmed war hat. The bowl has to sit ON the skull with
-       clearance and the brim has to be a brim: the old profile ran
-       1.12 -> 1.62 -> 1.14 -> 0 over a bare 56 mm of height, a disc rather
-       than a hat, and it was written bottom-up, so it drew inside-out and
-       the head showed through it. */
+    /* A KETTLE HAT IS A BOWL WITH A BRIM, AND IT COVERS THE SKULL.
+       The old profile rose from the brow to a brim at +0.40 hr, then closed
+       over the top at +1.40 -- but the skull's crown is at +1.14 and its
+       widest ring at +0.83, so the bowl was inside the head over its whole
+       top half and what rendered was a flat disc with the face hanging out
+       below it: a pork-pie hat.
+
+       The numbers that make a kettle hat read are the SKULL's, not the
+       helmet's. The skull's widest ring is 1.02 hr at +0.83 hr, and its
+       crown is at +1.14 hr, so:
+         - a rim at +0.15 hr passes below the brow ridge (+0.26) and above
+           the eyes (+0.06): the one band on the face that can be covered
+           without hiding the face;
+         - the bowl has to be clear of 1.02 hr at +0.83, and the clearance
+           is applied at every ring rather than at the rim alone;
+         - the brim is 1.65 hr, which is wider than the shoulders' inner
+           third, so it is the thing the silhouette reads. */
     coif();
+    const bowlTop = headY + hr * 1.16;
     g.lathe(B.HEAD, [
-      [hr * 1.02 * HELM_CLEAR, headY - hr * 0.30],
-      [hr * 1.06 * HELM_CLEAR, headY + hr * 0.30],
-      [hr * 1.60 * HELM_CLEAR, headY + hr * 0.40],
-      [hr * 1.64 * HELM_CLEAR, headY + hr * 0.50],
-      [hr * 1.08 * HELM_CLEAR, headY + hr * 0.62],
-      [hr * 1.02 * HELM_CLEAR, headY + hr * 1.02],
-      [hr * 0.58 * HELM_CLEAR, headY + hr * 1.30],
-      [0.0, headY + hr * 1.40]
+      /* rim, low and clear of the brow ridge */
+      [hr * 1.14 * HELM_CLEAR, headY + hr * 0.15],
+      /* the bowl proper: a ROUND dome. Four rings, because three made the
+         crown a straight cone -- the eye reads curvature from the second
+         derivative and two chords have none. */
+      [hr * 1.20 * HELM_CLEAR, headY + hr * 0.52],
+      [hr * 1.16 * HELM_CLEAR, headY + hr * 0.86],
+      [hr * 0.84 * HELM_CLEAR, bowlTop - hr * 0.14],
+      [hr * 0.42 * HELM_CLEAR, bowlTop],
+      [0.0, headY + hr * 1.22]
+    ], { seg: g.seg(1), squash: [SQX, SQZ] });
+    /* THE BRIM, as its own surface, written separately and sloping DOWN and
+       OUT. A flat annulus seen from anywhere near the head's own height is a
+       line; a brim that drops 0.10 hr over its 0.5 hr of reach catches light
+       along its top face and throws a shadow under itself, which is what
+       makes a kettle hat a kettle hat. */
+    g.lathe(B.HEAD, [
+      [hr * 1.12 * HELM_CLEAR, headY + hr * 0.18],
+      [hr * 1.18 * HELM_CLEAR, headY + hr * 0.13],
+      [hr * 1.65 * HELM_CLEAR, headY + hr * 0.00],
+      [hr * 1.66 * HELM_CLEAR, headY - hr * 0.06]
     ], { seg: g.seg(1), squash: [SQX, SQZ] });
     return;
   }
@@ -550,6 +602,70 @@ export function buildCape(g, m, colour) {
    ------------------------------------------------------------ */
 
 /** A straight blade held in a hand. */
+/* ------------------------------------------------------------------
+   A TWO-HANDED AXE, AUTHORED BETWEEN THE FISTS.
+
+   `grip` is the pair of guard-pose hand positions from rigs.js. The haft
+   runs from below the lower fist to above the upper one, so it passes
+   through both hands however the guard is tuned; the head hangs off the
+   end that points up and forward. Everything is parented to the pelvis,
+   which is upright in every pose, so the whole weapon keeps the line it is
+   drawn on.
+   ------------------------------------------------------------------ */
+export function buildTwoHandedAxe(g, m, opts = {}) {
+  const grip = m.grip;
+  if (!grip) return;
+  const UPRIGHT = B.SKIRT;
+  /* which fist is lower on the haft decides which way the blade points */
+  const lo = grip.R[1] <= grip.L[1] ? grip.R : grip.L;
+  const hi = grip.R[1] <= grip.L[1] ? grip.L : grip.R;
+  /* the shaft runs through both, extended past the top fist by the length of
+     the head's neck and below the bottom fist by a hand's width of butt */
+  const dir = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
+  const dl = Math.hypot(dir[0], dir[1], dir[2]) || 1;
+  const u = [dir[0] / dl, dir[1] / dl, dir[2] / dl];
+  const butt = [lo[0] - u[0] * 0.20, lo[1] - u[1] * 0.20, lo[2] - u[2] * 0.20];
+  const top = [hi[0] + u[0] * 0.20, hi[1] + u[1] * 0.20, hi[2] + u[2] * 0.20];
+
+  g.material(MAT.WOOD).color(0.46, 0.34, 0.22);
+  g.tube(UPRIGHT, butt, top, 0.016, 0.018,
+    { seg: g.detail === 0 ? 5 : 4, rings: 1 });
+  /* the butt spike: a haft that ends in an open pipe reads as a broken prop */
+  g.material(MAT.PLATE).color(0.44, 0.46, 0.50);
+  g.tube(UPRIGHT, butt, [butt[0] - u[0] * 0.05, butt[1] - u[1] * 0.05, butt[2] - u[2] * 0.05],
+    0.020, 0.011, { seg: 4, rings: 1 });
+
+  /* THE HEAD: a bearded axe, hung off the top of the haft and offset to
+     whichever side the upper fist does not occupy (the blade sits outside
+     the hands on a real axe, never between them). A blade built along the
+     haft instead of across it is a spike, not an axe. */
+  const side = hi[0] >= 0 ? 1 : -1;
+  const hx = top[0] + side * 0.085;
+  const socketTop = [top[0], top[1] - 0.05, top[2]];
+  g.material(MAT.PLATE).color(0.66, 0.68, 0.72);
+  g.tube(UPRIGHT, [socketTop[0], socketTop[1] + 0.045, socketTop[2]],
+    [socketTop[0], socketTop[1] - 0.045, socketTop[2]], 0.031, 0.027,
+    { seg: 4, rings: 1 });
+  /* THE BLADE: a broad crescent, so it is NARROW at the socket and widest at
+     the cutting edge. `blade`'s default section list tapers toward the far
+     end, which is right for a sword pointing at the target and exactly wrong
+     for an axe -- it made the head a spear point growing sideways out of the
+     haft. Sections are stated here, widening from the eye to the edge. */
+  g.blade(UPRIGHT, socketTop, [hx, socketTop[1] - 0.015, socketTop[2]],
+    0.080, {
+      thick: 0.016,
+      sections: [
+        { t: 0, w: 0.038, th: 0.016 },
+        { t: 0.45, w: 0.070, th: 0.014 },
+        { t: 0.80, w: 0.086, th: 0.011 },
+        { t: 1, w: 0.074, th: 0.007 }
+      ]
+    });
+  /* the beard, hooked back down under the eye */
+  g.slab(UPRIGHT, [socketTop[0] + side * 0.036, socketTop[1] - 0.085, socketTop[2]],
+    [0.090, 0.150, 0.020], { rot: side * 0.20 });
+}
+
 export function buildSword(g, hand, pos, len, opts = {}) {
   /* Grip, guard, blade. The blade used to start at the hand and taper all
      the way down, so a swordsman was holding a spike: there was no hilt to

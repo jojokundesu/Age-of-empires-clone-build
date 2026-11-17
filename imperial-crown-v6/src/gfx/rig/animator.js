@@ -31,7 +31,7 @@
    between a cape and a jelly.
    ============================================================ */
 
-import { B, BONE_COUNT } from './skeleton.js';
+import { B, BONE_COUNT, Pose, buildPalette } from './skeleton.js';
 
 /* ------------------------------------------------------------
    Easing. Named because the strike curve is a design decision,
@@ -648,3 +648,47 @@ export const WEAPONS = {
   villager: { thrust: false, shield: false },
   knight: { thrust: false, shield: true }
 };
+
+/* ------------------------------------------------------------------
+   WHERE THE GUARD ACTUALLY PUTS THE HANDS
+
+   "The hand is at the hip" is not a usable statement for authoring a
+   weapon, and guessing it is how the spear ended up planted next to a
+   soldier whose hands were nowhere near it. This solves the guard pose
+   once, per (profile, class), and hands back the two grip points in
+   MODEL space -- feet at y = 0, the same space the wardrobe authors in.
+
+   `skeleton.buildPalette` already produces exactly that: the world matrix
+   of each bone in bind-pose model space, guard applied, seat ignored (the
+   rider's pelvis lift is applied at draw time, not here). The hand's rest
+   position is its bone's own origin, so the translation column of that
+   matrix IS where the fist is.
+
+   Cached: this is one 32-bone solve per class, and it is called from the
+   wardrobe at build time for every variant.
+   ------------------------------------------------------------------ */
+const GRIP_CACHE = new Map();
+
+export function guardGrips(profile, cls) {
+  const key = cls + '|' + (profile.name || '');
+  const hit = GRIP_CACHE.get(key);
+  if (hit) return hit;
+  const pose = new Pose();
+  const st = new AnimState(0.37);
+  const prop = profile;
+  /* Settle: the breathing spring and the idle sway need a moment of
+     simulated time to reach the value the unit actually stands at. 90
+     fixed steps is 1.5 s, which is past the slowest spring in the file. */
+  for (let i = 0; i < 90; i++) {
+    evaluate(pose, st, {
+      dt: 1 / 60, speed: 0, phase: 0, attack: 0, moving: false, classKey: cls
+    });
+  }
+  pose.seat = 0;
+  const pal = new Float32Array(BONE_COUNT * 16);
+  buildPalette(pal, pose, prop);
+  const at = (bone) => [pal[bone * 16 + 12], pal[bone * 16 + 13], pal[bone * 16 + 14]];
+  const out = { R: at(B.HAND_R), L: at(B.HAND_L), head: at(B.HEAD) };
+  GRIP_CACHE.set(key, out);
+  return out;
+}
