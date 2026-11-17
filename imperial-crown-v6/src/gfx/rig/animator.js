@@ -289,6 +289,11 @@ export function evaluate(pose, st, inp) {
   pose.off[B.PELVIS * 3] = weight * 0.018;
   pose.set(B.PELVIS, pose.rot[B.PELVIS * 3], pose.rot[B.PELVIS * 3 + 1], weight * 0.05);
 
+  /* --- guard: the posture the weapon forces on the body --- */
+  /* Full at rest, gone by a run. `speed` is normalised 0..1, so a man
+     walking at 1 m/s still keeps most of his guard and a sprint does not. */
+  applyGuard(pose, cls, clamp01(1 - speed * 1.25));
+
   /* --- combat: the four-phase strike ---------------------- */
   if (attack > 0.001) {
     applyStrike(pose, cls, attack, inp);
@@ -469,6 +474,98 @@ function applyFidget(pose, st, kind, amt) {
  * man-at-arms chops, an archer releases. The curve is shared; the
  * joints it drives are not.
  */
+/* ------------------------------------------------------------
+   Guard poses
+
+   A unit at rest is not a T-pose with the arms lowered. Every reference
+   soldier -- and every unit in Age of Empires IV -- stands in the posture
+   its weapon forces on it: a spearman has one arm up on a planted shaft, a
+   man-at-arms has his shield across his body and his sword live, an archer
+   has the bow across his chest, a hand-cannoneer carries a two-handed
+   weapon in both hands. The old rig dropped both arms and rotated the
+   elbows a few degrees, which is a mannequin standing in a queue.
+
+   These are ADDITIVE offsets applied after the walk swing and before the
+   strike, scaled by `guard` (1 at rest, fading to 0 at full speed so a
+   running soldier pumps his arms like a runner rather than holding a
+   shield at a sprint).
+
+   rx is forward/back swing, rz is out from the body. A negative rx swings
+   the bone BACKWARD when the arm hangs: the shoulder's local axes follow
+   the arm down, so -rx is "forward" for the arm and +rx for the forearm
+   bends the elbow.
+   ------------------------------------------------------------ */
+export const IDLE_GUARD = {
+  man_at_arms: {
+    armL: [-0.45, 0.00, 0.22], foreL: [-0.95, 0.00, 0.35],
+    armR: [-0.35, 0.00, -0.18], foreR: [-0.75, 0.00, 0.00],
+    chest: [0, 0.10, 0], shoulderL: [0, 0, 0.10]
+  },
+  knight: {
+    armL: [-0.42, 0.00, 0.24], foreL: [-1.00, 0.00, 0.30],
+    armR: [-0.30, 0.00, -0.20], foreR: [-0.70, 0.00, 0.00],
+    chest: [0, 0.08, 0], shoulderL: [0, 0, 0.10]
+  },
+  huskarl: {
+    /* axe over the shoulder, round shield out */
+    armL: [-0.40, 0.00, 0.26], foreL: [-0.90, 0.00, 0.30],
+    armR: [-0.55, 0.00, -0.30], foreR: [-1.15, 0.00, 0.00],
+    chest: [0, -0.12, 0], shoulderL: [0, 0, 0.12]
+  },
+  spearman: {
+    /* the shaft is planted: the top hand high, the bottom hand at the hip */
+    armL: [-0.55, 0.00, 0.16], foreL: [-0.85, 0.00, 0.20],
+    armR: [-0.20, 0.00, -0.12], foreR: [-0.55, 0.00, 0.00],
+    chest: [0, 0.06, 0], shoulderL: [0, 0, 0.08]
+  },
+  archer: {
+    /* bow carried across the body, string hand at the hip */
+    armL: [-0.65, 0.25, 0.30], foreL: [-0.55, 0.00, 0.20],
+    armR: [-0.30, 0.00, -0.10], foreR: [-0.65, 0.00, 0.00],
+    chest: [0, -0.14, 0], shoulderL: [0, 0, 0.06]
+  },
+  monk: {
+    /* both hands to the crozier, at chest height */
+    armL: [-0.30, 0.00, 0.10], foreL: [-0.80, 0.00, 0.10],
+    armR: [-0.32, 0.00, -0.10], foreR: [-0.85, 0.00, 0.00],
+    chest: [0.04, 0, 0], shoulderL: [0, 0, 0.04]
+  },
+  villager: {
+    /* both hands on a tool carried across the body */
+    armL: [-0.25, 0.00, 0.08], foreL: [-0.55, 0.00, 0.10],
+    armR: [-0.28, 0.00, -0.08], foreR: [-0.70, 0.00, 0.00],
+    chest: [0.03, 0, 0], shoulderL: [0, 0, 0.03]
+  }
+};
+
+/* Two-handed carry: both arms come across the chest and meet in front of
+   the sternum, which is the only way a crossbow or a hand-cannon reads as
+   held rather than as hanging off one wrist. */
+const TWO_HANDED = {
+  armL: [-0.62, 0.00, 0.20], foreL: [-1.10, 0.30, 0.10],
+  armR: [-0.58, 0.00, -0.22], foreR: [-1.05, -0.30, 0.00],
+  chest: [0.02, -0.10, 0], shoulderL: [0, 0, 0.08]
+};
+for (const k of ['hand_cannoneer', 'crossbowman', 'mangudai', 'samurai',
+  'longbowman', 'axeman', 'berserk', 'swordsman', 'claimant_knight',
+  'scout_cavalry', 'cataphract', 'hero_general']) {
+  if (!IDLE_GUARD[k]) IDLE_GUARD[k] = IDLE_GUARD[k.includes('knight') ||
+    k === 'cataphract' || k === 'scout_cavalry' || k === 'hero_general'
+    ? 'knight' : 'man_at_arms'];
+}
+
+/** Apply a guard pose additively, weighted by `w` (0..1). */
+function applyGuard(pose, cls, w) {
+  if (w <= 0.001) return;
+  const g = IDLE_GUARD[cls] || IDLE_GUARD.man_at_arms;
+  pose.add(B.UPPER_ARM_L, g.armL[0] * w, g.armL[1] * w, g.armL[2] * w);
+  pose.add(B.FOREARM_L, g.foreL[0] * w, g.foreL[1] * w, g.foreL[2] * w);
+  pose.add(B.UPPER_ARM_R, g.armR[0] * w, g.armR[1] * w, g.armR[2] * w);
+  pose.add(B.FOREARM_R, g.foreR[0] * w, g.foreR[1] * w, g.foreR[2] * w);
+  if (g.chest) pose.add(B.CHEST, g.chest[0] * w, g.chest[1] * w, g.chest[2] * w);
+  if (g.shoulderL) pose.add(B.SHOULDER_L, g.shoulderL[0] * w, g.shoulderL[1] * w, g.shoulderL[2] * w);
+}
+
 function applyStrike(pose, cls, attack, inp) {
   /* attack counts *down* from 1, so invert to get 0..1 elapsed */
   const t = 1 - attack;

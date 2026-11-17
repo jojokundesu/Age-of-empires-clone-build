@@ -146,6 +146,7 @@ uniform float uTexWidth;
 #define MAT_HAIR     5
 #define MAT_LEATHER  6
 #define MAT_WOOD     7
+#define MAT_TRIM     8   /* undyed cloth: hems, borders, sashes, trim */
 
 /* hash12 comes from COMMON: redeclaring it is a link error on a real
    driver even though the two bodies are identical. */
@@ -320,6 +321,15 @@ void main() {
     albedo *= 0.82 + g * 0.34;
     roughness = 0.58;
     metalness = 0.05;
+  } else if (mat == MAT_TRIM) {
+    /* UNDYED CLOTH -- the cream that frames every AoE4 team colour.
+       Its whole point is that the team tint does NOT reach it, so a blue
+       soldier has royal blue panels and cream borders rather than a uniform
+       blue blob. Slightly coarse linen weave, a warm off-white, and a shallow
+       value gradient so a border on a curved surface still turns over. */
+    float w = weave(wp + y * 0.7, 34.0, 0.4);
+    albedo *= 0.90 + w * 0.20;
+    roughness = 0.90;
   } else if (mat == MAT_WOOD) {
     float grain = sin(y * 52.0 + hash12(floor(wp * 30.0)) * 2.0) * 0.5 + 0.5;
     albedo *= 0.78 + grain * 0.36;
@@ -381,7 +391,14 @@ void main() {
        rebuilt the garment out of its own luminance, so white tint in meant
        flat grey out, and the authored cream trim and tan leather on every
        tunic never appeared in a single screenshot. */
-    vec3 dye = pow(tintMax, vec3(2.1)) * shade * (1.0 - 0.55 * sat);
+    /* 1.7, not 0.45. The dye bath should recolour the cloth, not extinguish
+       it: at 0.55 a deep navy crushed every garment -- the tunic, both
+       sleeves and the skirt -- to within a few per cent of one another and
+       to near-black, so a soldier was one flat silhouette. Keeping more of
+       the authored value means two different cloth values stay two
+       different values after dyeing, which is what gives a uniform its
+       panels. */
+    vec3 dye = pow(tintMax, vec3(1.8)) * shade * 1.25;
     vec3 teamAlb = mix(albedo, dye, sat);
     color = mix(color, teamAlb * (uSunColor * ndl * sh * cl * 1.25 + ambient), 0.82);
   }

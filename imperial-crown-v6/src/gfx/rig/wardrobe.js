@@ -23,7 +23,7 @@ import { HEAD_X } from './anatomy.js';
 /* Material ids, shared with unitShaders.js. */
 export const MAT = {
   LINEN: 0, MAIL: 1, PLATE: 2, GAMBESON: 3,
-  SKIN: 4, HAIR: 5, LEATHER: 6, WOOD: 7
+  SKIN: 4, HAIR: 5, LEATHER: 6, WOOD: 7, TRIM: 8
 };
 
 /* ------------------------------------------------------------
@@ -86,6 +86,27 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
       [hr * 1.06, headY - hr * 1.44]
     ], { seg: g.seg(0), squash: [SQX, SQZ],
          arc: AVENTAIL_ARC, arcStart: AVENTAIL_START });
+    g.material(kind === 'hood' || kind === 'turban' ? MAT.LINEN : MAT.PLATE);
+    g.color(kind === 'hood' ? 0.55 : 0.70, kind === 'hood' ? 0.50 : 0.72,
+      kind === 'hood' ? 0.44 : 0.76);
+  };
+
+  /* A mail curtain over the JAW, for the open-faced steel helms.
+     An aventail is a full sweep round the back and sides and it leaves the
+     face open -- which is right for the nape and wrong for the chin, because
+     below a barbute's brow the skull lathe stops and what is left is a bare
+     jaw under a steel crown. That reads as a man wearing half a helmet.
+     This is the other half: an arc across the FRONT, from just under the
+     sight down below the chin, in mail. The barbute thus opens on the eyes
+     and the nose only, which is what the armour actually does. */
+  const chinCurtain = (fromY, toY) => {
+    g.material(MAT.MAIL).color(0.40, 0.41, 0.42);
+    g.lathe(B.HEAD, [
+      [hr * 1.13, fromY],
+      [hr * 1.16, headY - hr * 0.90],
+      [hr * 1.06, toY]
+    ], { seg: g.seg(1), squash: [SQX, SQZ],
+         arc: Math.PI * 0.92, arcStart: Math.PI * 0.5 - Math.PI * 0.46 });
     g.material(kind === 'hood' || kind === 'turban' ? MAT.LINEN : MAT.PLATE);
     g.color(kind === 'hood' ? 0.55 : 0.70, kind === 'hood' ? 0.50 : 0.72,
       kind === 'hood' ? 0.44 : 0.76);
@@ -227,12 +248,30 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
      A closed lathe plus a dark slab for the sight and the mouth is both
      cleaner and closer to the actual armour. */
   coif();
+  /* IT COVERS THE WHOLE FACE. The lower rim used to stop at headY - 0.62 hr,
+     which is 56 mm ABOVE the chin -- so a closed steel crown sat on a bare
+     jaw and a bare nose, and the "helmet" read as a bowl worn on top of a
+     head. A barbute is a full enclosure: it comes down over the chin, and
+     the face is visible only through the sights.
+     The bottom ring turns inward and closes on the axis, so there is no open
+     mouth to see up into where the neck goes. */
+  /* The shell has to clear the TEMPLES, which is where the skull is widest,
+     not merely the crown. At 1.10 * HELM_CLEAR on a 1.06 squash the front of
+     the shell at eye height came out at 0.185 z against a skull at 0.137 --
+     only 48 mm of steel -- and with eight segments the flat chords in
+     between sag by cos(22.5 deg) = 8%, which is 15 mm of the 48. Add the
+     brow's own 12 mm of projection and the skull's forehead is level with
+     the steel. That is why the sights seemed to vanish: they were competing
+     with a face pressed against them.
+     Widening to 1.18 gives the sights real dark, and a great helm is
+     supposed to be bigger than the head inside it anyway. */
   g.lathe(B.HEAD, [
-    [hr * 1.00 * HELM_CLEAR, headY - hr * 0.62],
-    [hr * 1.10 * HELM_CLEAR, headY - hr * 0.18],
-    [hr * 1.08 * HELM_CLEAR, headY + hr * 0.50],
-    [hr * 0.66 * HELM_CLEAR, headY + hr * 1.18],
-    [0.0, headY + hr * 1.32]
+    [hr * 0.30, headY - hr * 1.44],
+    [hr * 1.06 * HELM_CLEAR, headY - hr * 1.24],
+    [hr * 1.18 * HELM_CLEAR, headY - hr * 0.18],
+    [hr * 1.16 * HELM_CLEAR, headY + hr * 0.50],
+    [hr * 0.70 * HELM_CLEAR, headY + hr * 1.20],
+    [0.0, headY + hr * 1.34]
   ], { seg: g.seg(1), squash: [SQX, SQZ] });
   if (g.detail <= DETAIL.MID) {
     /* The sight, as a BAND, not a slab.
@@ -249,20 +288,54 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
        still INSIDE it over most of each segment and the steel comes through
        in a periodic row of fragments. Five per cent clears the sag by a
        factor of three and still reads as a slit cut in the surface. */
-    const sightR = 1.10 * HELM_CLEAR * 1.05;
-    g.material(MAT.LEATHER).color(0.09, 0.09, 0.10);
-    g.lathe(B.HEAD, [
-      [hr * sightR, headY + hr * 0.30],
-      [hr * sightR, headY + hr * 0.04]
-    ], { seg: 10, squash: [SQX, SQZ],
-         arc: Math.PI * 0.52, arcStart: Math.PI * 0.5 - Math.PI * 0.26 });
-    /* the breath channel down the nose and mouth */
+    const sightR = 1.18 * HELM_CLEAR * 1.05;
+    g.material(MAT.LEATHER).color(0.075, 0.075, 0.085);
+    /* A NARROW slit, not a visor band. At 0.52 pi the opening was 94 degrees
+       of the helmet's circumference, i.e. the whole front of the face, and
+       it read as a black censor bar across a steel egg rather than as a
+       place to see out of. A barbute's sight is a slot about a third of the
+       face wide, and it is the STEEL either side of it that makes it a
+       helmet. 0.30 pi, and 0.18 hr tall rather than 0.26. */
+    /* ASCENDING, and that is not cosmetic. `lathe()` derives each vertex's
+       normal from the profile's slope as (-dr, dy) normalised, so a profile
+       written top-down gets nOut = dy/|d| < 0: its normals point INWARD and
+       its triangles are wound inward with them, and it is culled. That is
+       why every face opening in this file has been the single thing that
+       would not render -- the slit, the breath slot, the great helm's sight
+       -- while the steel around them was fine. Writing the band bottom-up
+       makes nOut positive and it draws. */
     g.lathe(B.HEAD, [
       [hr * sightR, headY + hr * 0.02],
-      [hr * sightR * 0.98, headY - hr * 0.46]
-    ], { seg: 5, squash: [SQX, SQZ],
-         arc: Math.PI * 0.24, arcStart: Math.PI * 0.5 - Math.PI * 0.12 });
+      [hr * sightR, headY + hr * 0.20]
+    /* 0.22 pi, centred on the face. The previous arc started at 0.35 pi and
+       swept past the nose, so the sight sat off to one side of the helmet --
+       which is what made it read as a slot bolted on rather than cut in. */
+    ], { seg: 7, squash: [SQX, SQZ],
+         arc: Math.PI * 0.22, arcStart: Math.PI * 0.5 - Math.PI * 0.11 });
+    /* The breath channel is a short vertical slot under the nose, not a
+       second horizontal bar: two parallel bars read as punctuation. */
+    g.lathe(B.HEAD, [
+      [hr * sightR * 0.99, headY - hr * 0.34],
+      [hr * sightR, headY - hr * 0.12]
+    ], { seg: 4, squash: [SQX, SQZ],
+         arc: Math.PI * 0.10, arcStart: Math.PI * 0.5 - Math.PI * 0.05 });
     g.material(MAT.PLATE).color(0.70, 0.72, 0.76);
+    /* THE NASAL RIDGE between them. It is what turns two holes in a shell
+       into a T-shaped opening: a raised steel bar from the brow down over
+       the nose, flush with the helm at its ends and standing 6% proud in
+       the middle, so it catches a highlight and separates the slit from the
+       breath slot. Every closed helm in the reference art has one. */
+    /* Only 2% proud, and 0.09 pi wide. At 7% and 0.13 pi it was a steel box
+       with a visible side face, not a ridge; a raised bar on a curved helmet
+       is read almost entirely from its highlight, and the highlight needs a
+       slope, not a wall. */
+    g.lathe(B.HEAD, [
+      [hr * sightR * 1.005, headY - hr * 0.34],
+      [hr * sightR * 1.03, headY - hr * 0.18],
+      [hr * sightR * 1.03, headY + hr * 0.06],
+      [hr * sightR * 1.005, headY + hr * 0.40]
+    ], { seg: 3, squash: [SQX, SQZ],
+         arc: Math.PI * 0.09, arcStart: Math.PI * 0.5 - Math.PI * 0.045 });
   }
 }
 

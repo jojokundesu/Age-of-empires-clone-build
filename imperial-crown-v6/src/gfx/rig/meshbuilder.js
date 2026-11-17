@@ -316,19 +316,43 @@ export class SkinnedBuilder {
        while every garment in the file is written top-down.
        So detect it instead of remembering it. A profile that ascends has to
        be wound the other way; there is no call site that wants to choose. */
-    /* The rule is whether the radius GROWS as the profile runs, not which
-       way Y runs. Wound the standard way, a sweep whose radius decreases is
-       an outward-facing surface and one whose radius increases is a funnel
-       you are looking down the inside of. The monk's sleeves start at a pole
-       and open downward -- ascending Y with a growing radius -- which is the
-       same shape as a descending profile with a shrinking radius, so keying
-       off the Y direction alone sent them inward-facing and they vanished.
-       Ascending AND growing radius is the one combination that inverts; the
-       great helm and the kettle hat ascend while closing, so they are fine. */
-    const ascend = profile[profile.length - 1][1] > profile[0][1];
-    const grows = Math.abs(profile[profile.length - 1][0]) >
-                  Math.abs(profile[0][0]) + 1e-6;
-    const flip = opts.flip !== undefined ? opts.flip : (ascend && grows);
+    /* COMPUTE THE WINDING FROM THE GEOMETRY. Do not guess it from the
+       profile's direction.
+
+       Every previous rule here -- "ascending profiles are flipped", then
+       "ascending AND growing radius are flipped" -- was a heuristic fitted
+       to the handful of call sites that happened to be broken at the time.
+       All of them are wrong for some real profile, and the failure mode is
+       the nastiest kind: the surface is present, its normals point the right
+       way, and it simply is not drawn, so a closed helmet reads as a
+       transparent shell with the face showing through the steel.
+
+       The rule that is actually correct is arithmetic. A quad is wound the
+       way that agrees with the NORMALS this function has just computed --
+       those normals are (outward radial, profile slope), and every caller
+       relies on them, so the triangles are the only thing that can be
+       wrong. Take the first quad, build its two cross products, and pick
+       whichever ordering agrees with the normal it was given. That is
+       correct for every profile, closed or open, ascending or descending,
+       any arc, any fold. */
+    let flip = !!opts.flip;
+    if (opts.flip === undefined && seg >= 1 && this.count - base > 1) {
+      const S = 20;
+      const P = (i) => [this.v[i * S], this.v[i * S + 1], this.v[i * S + 2]];
+      const A = P(base), Bq = P(base + 1), Cq = P(base + seg + 1);
+      const e1 = [Bq[0] - A[0], Bq[1] - A[1], Bq[2] - A[2]];
+      const e2 = [Cq[0] - A[0], Cq[1] - A[1], Cq[2] - A[2]];
+      const cx = e1[1] * e2[2] - e1[2] * e2[1];
+      const cy = e1[2] * e2[0] - e1[0] * e2[2];
+      const cz = e1[0] * e2[1] - e1[1] * e2[0];
+      const nAt = (i) => [this.v[i * S + 3], this.v[i * S + 4], this.v[i * S + 5]];
+      const nA = nAt(base), nB = nAt(base + 1), nC = nAt(base + seg + 1);
+      const nrx = nA[0] + nB[0] + nC[0];
+      const nry = nA[1] + nB[1] + nC[1];
+      const nrz = nA[2] + nB[2] + nC[2];
+      /* the ordering below is (i0, i2, i1), so its face normal is -cross */
+      flip = (cx * nrx + cy * nry + cz * nrz) > 0;
+    }
     for (let p = 0; p < profile.length - 1; p++) {
       for (let s = 0; s < seg; s++) {
         const i0 = base + p * (seg + 1) + s;

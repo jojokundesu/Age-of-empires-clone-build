@@ -26,7 +26,9 @@ import { buildMount, MOUNT_STANDARD, MOUNT_PONY } from './mount.js';
 /* Material ids shared with unitShaders.js */
 export const MAT = {
   LINEN: 0, MAIL: 1, PLATE: 2, GAMBESON: 3,
-  SKIN: 4, HAIR: 5, LEATHER: 6, WOOD: 7
+  SKIN: 4, HAIR: 5, LEATHER: 6, WOOD: 7,
+  /* Undyed cloth. Not team-dyed, so it can frame the team colour. */
+  TRIM: 8
 };
 
 /**

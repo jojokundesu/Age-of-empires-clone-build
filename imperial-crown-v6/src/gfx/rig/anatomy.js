@@ -69,6 +69,8 @@ export function buildBody(g, prop, opts = {}) {
 
   const skin = opts.skin || [0.72, 0.55, 0.42];
   const fabric = opts.bodyMat !== undefined ? opts.bodyMat : 3;   // GAMBESON
+  /* Is the outer garment mail? Then the arm below the elbow is mail too. */
+  const outMailed = fabric === 1;
   const legMat = opts.legMat !== undefined ? opts.legMat : 3;
 
   /* ---------- TORSO ----------
@@ -360,21 +362,55 @@ export function buildBody(g, prop, opts = {}) {
      already runs down to y(0.90) and the hem is inside its own silhouette.
      24 triangles on 130 of the 300 units in the army, for nothing. */
   if (g.detail < DETAIL.FAR) {
+    /* A HEM AT MID-THIGH, and a flare that actually covers the crotch.
+       The old hem was at y(0.76) with a radius of 0.208 sw -- narrower than
+       the two thighs side by side -- so the legs came out from under it and
+       met at a point, and the visible join was a gap. A tunic is wider than
+       the man inside it: the hem flares to 0.245, which clears the outer
+       edge of both thighs, and it hangs to y(0.62), which is below the
+       crotch at y(0.88) by a good hand's breadth.
+       The bottom ring turns BACK IN before it closes, so the hem has a
+       thickness and reads as cloth rather than as the open mouth of a cone. */
     g.lathe(B.SKIRT, [
-      [x(0.208), y(0.76)],   /* hem, mid-thigh */
-      [x(0.216), y(0.84)],
-      [x(0.196), y(0.94)],   /* over the hips */
+      [x(0.212), y(0.60)],   /* hem underside, inside the flare above it */
+      [x(0.248), y(0.625)],  /* hem edge */
+      [x(0.240), y(0.80)],   /* over the hips */
+      [x(0.196), y(0.94)],
       [x(0.152), y(1.08)]    /* tucked under the belt, inside the torso */
     ], { seg: g.seg(0), squash: [1.0, cd / sw * 1.02] });
+    /* THE HEM BAND. An undyed strip at the bottom edge is what turns a
+       dyed cone into a garment: it frames the team colour, it draws the
+       eye along the hem, and because MAT.TRIM is not team-dyed it stays
+       cream on every player's colour. Two rings, four segments a band. */
+    if (g.detail === DETAIL.NEAR) {
+      g.material(8).color(0.92, 0.90, 0.83);
+      g.lathe(B.SKIRT, [
+        [x(0.250), y(0.628)],
+        [x(0.246), y(0.680)],
+        [x(0.244), y(0.688)]
+      ], { seg: g.seg(0), squash: [1.0, cd / sw * 1.02] });
+      g.material(fabric);
+      if (opts.bodyCol) g.color(opts.bodyCol[0] * 0.92, opts.bodyCol[1] * 0.92, opts.bodyCol[2] * 0.92);
+      else g.color(0.70, 0.67, 0.60);
+    }
   }
 
   /* ---------- LEGS ----------
      Thigh, shin, boot. The knee blend is what stops the joint pinching. */
+  /* HOSE, BINDINGS AND BOOTS -- three values down the leg, because one
+     material from hip to ankle is the single strongest "untextured tube"
+     cue in the rig. Age of Empires IV never shows one: every leg is hose,
+     then a wrapped or plated shin, then a boot with a cuff, and the three
+     values break the cylinder's outline at exactly the heights the eye
+     needs to read a knee and an ankle. */
+  const hoseCol = opts.bodyCol
+    ? [opts.bodyCol[0] * 0.62 + 0.30, opts.bodyCol[1] * 0.62 + 0.28, opts.bodyCol[2] * 0.62 + 0.26]
+    : [0.56, 0.52, 0.44];
   for (const side of [-1, 1]) {
     /* Same trap as the arms: the boot at the end of the iteration switches
        the builder to LEATHER, so the second leg was being built in boot
        leather. One trouser leg brown, one grey. */
-    g.material(legMat).color(0.62, 0.58, 0.50);
+    g.material(legMat).color(hoseCol[0], hoseCol[1], hoseCol[2]);
     const HIP = side < 0 ? B.HIP_L : B.HIP_R;
     const THIGH = side < 0 ? B.THIGH_L : B.THIGH_R;
     const SHIN = side < 0 ? B.SHIN_L : B.SHIN_R;
@@ -389,11 +425,27 @@ export function buildBody(g, prop, opts = {}) {
       0.092 * lw, 0.070 * lw, { seg: g.seg(1), rings: g.detail === DETAIL.FAR ? 1 : g.detail === DETAIL.MID ? 2 : 3, blend: HIP });
     /* A shin is nearly a straight taper: one fewer segment each way is
        invisible and worth 30 triangles per leg. */
-    g.tube(SHIN, [hipX * 1.06, y(0.52), 0], [hipX * 1.02, y(0.09), 0],
-      0.072 * lw, 0.048 * lw, { seg: g.seg(0), rings: g.detail === DETAIL.FAR ? 1 : 2, blend: THIGH });
+    /* Shin: leather bindings or a greave, darker or lighter than the hose
+       above it. This is the contrast band that reads as a boot even at mid
+       range, and it costs nothing -- it is the same tube in another colour. */
+    g.material(6).color(0.34, 0.27, 0.20);
+    g.tube(SHIN, [hipX * 1.06, y(0.52), 0], [hipX * 1.02, y(0.13), 0],
+      0.074 * lw, 0.050 * lw, { seg: g.seg(0), rings: g.detail === DETAIL.FAR ? 1 : 2, blend: THIGH });
+    /* BOOT CUFF. A flared ring at the ankle, which is what stops the shin
+       being a cylinder pushed into a box: the last two drafts of this rig
+       had a hard step from a taper straight into a slab and it read as a
+       peg leg. Closed at both ends, so there is nothing to see inside. */
+    if (g.detail < DETAIL.FAR) {
+      g.lathe(FOOT, [
+        [0.062 * lw, y(0.185)],
+        [0.082 * lw, y(0.155)],
+        [0.080 * lw, y(0.105)],
+        [0.058 * lw, y(0.090)]
+      ], { seg: g.seg(0), x: hipX * 1.02, squash: [1.0, 1.06], blend: SHIN });
+    }
     /* the boot: a slab is correct here, feet are boxy */
-    g.material(6).color(0.32, 0.24, 0.17);
-    g.slab(FOOT, [hipX * 1.02, y(0.055), 0.045], [0.098 * lw, 0.095 * H, 0.235 * H]);
+    g.material(6).color(0.26, 0.19, 0.13);
+    g.slab(FOOT, [hipX * 1.02, y(0.052), 0.050], [0.104 * lw, 0.090 * H, 0.245 * H]);
   }
 
   /* ---------- ARMS ----------
@@ -448,12 +500,51 @@ export function buildBody(g, prop, opts = {}) {
     const armRings = g.detail === DETAIL.NEAR ? 3 : g.rings(0);
     g.tube(UP, [sx, y(1.432), 0], [sx * 0.98, y(1.13), 0],
       0.080 * lw, 0.058 * lw, { seg: g.seg(0), rings: armRings, blend: SHO });
+    /* THE FOREARM IS A DIFFERENT GARMENT FROM THE UPPER ARM.
+       One material from shoulder to wrist is why the whole cast reads as
+       navy tubes: the torso, both sleeves and the skirt were the same dyed
+       cloth at the same value, so a soldier was one silhouette in one
+       colour. Age of Empires IV never does this -- the upper arm carries the
+       padded or mailed sleeve and the forearm carries a contrasting
+       undertunic cuff, a leather vambrace or a steel rerebrace -- and that
+       break at the elbow is most of what makes an arm read as an arm.
+
+       Cloth bodies get the cream undertunic; mailed bodies get mail. */
+    if (opts.foreMat !== undefined) g.material(opts.foreMat);
+    else g.material(outMailed ? 1 : 8);
+    if (outMailed) g.color(0.50, 0.51, 0.52);
+    else g.color(0.90, 0.88, 0.81);
     g.tube(FORE, [sx * 0.98, y(1.13), 0], [sx * 0.96, y(0.86), 0],
       0.058 * lw, 0.044 * lw, { seg: g.seg(0), rings: armRings, blend: UP });
-    /* hand: a small tapered block, not a sphere */
-    g.material(4).color(skin);
-    g.tube(HAND, [sx * 0.96, y(0.86), 0], [sx * 0.95, y(0.78), 0],
-      0.045 * lw, 0.038 * lw, { seg: 4, rings: 1, blend: FORE });
+    /* and the elbow joint itself is cloth of the upper sleeve, so the two
+       garments meet at a seam rather than at a step */
+    g.material(fabric);
+    if (opts.bodyCol) g.color(opts.bodyCol[0], opts.bodyCol[1], opts.bodyCol[2]);
+    else g.color(0.66, 0.62, 0.55);
+    g.tube(UP, [sx * 0.985, y(1.19), 0], [sx * 0.982, y(1.08), 0],
+      0.062 * lw, 0.058 * lw, { seg: g.seg(0), rings: 1, blend: UP });
+    /* GLOVES. A bare skin tube at the end of a coloured sleeve is the last
+       mannequin cue on the arm, and every class in every reference has
+       something on its hands -- gauntlets, gloves, or a wrapped cuff. It is
+       the same tube in leather with a trim cuff where it meets the sleeve,
+       which also gives the wrist a visible joint. */
+    if (opts.gloves !== false) {
+      g.material(6).color(0.40, 0.29, 0.20);
+      /* the flared cuff, on the forearm bone so it does not swing with the
+         hand */
+      g.lathe(FORE, [
+        [0.042 * lw, y(0.885)],
+        [0.056 * lw, y(0.868)],
+        [0.050 * lw, y(0.845)],
+        [0.040 * lw, y(0.840)]
+      ], { seg: g.seg(-2), x: sx * 0.96, squash: [1.0, 1.06], blend: FORE });
+      g.tube(HAND, [sx * 0.96, y(0.86), 0], [sx * 0.95, y(0.78), 0],
+        0.046 * lw, 0.039 * lw, { seg: 4, rings: 1, blend: FORE });
+    } else {
+      g.material(4).color(skin);
+      g.tube(HAND, [sx * 0.96, y(0.86), 0], [sx * 0.95, y(0.78), 0],
+        0.045 * lw, 0.038 * lw, { seg: 4, rings: 1, blend: FORE });
+    }
   }
 
   return {

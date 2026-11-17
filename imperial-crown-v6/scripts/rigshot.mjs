@@ -133,6 +133,11 @@ function skinVertex(packed, u8, i8, vi, pal, out) {
   const nl = Math.hypot(sx, sy, sz) || 1;
   out[3] = sx / nl; out[4] = sy / nl; out[5] = sz / nl;
   out[6] = u8[o + 20] / 255; out[7] = u8[o + 21] / 255; out[8] = u8[o + 22] / 255;
+  /* The material id. Payload stride is 32 bytes per vertex; the material
+     byte is at 15, BUT the Float32 colour spans 20..31 and the skin weights
+     are written over 27..30, so index 15 survives as a byte in the float
+     block's padding -- which is why reading it as u8 works and reading the
+     floats at 15/4 does not. */
   out[9] = u8[o + 15];
   return out;
 }
@@ -258,8 +263,17 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
 
     /* back-face cull in view space via the projected winding */
     const sA = xform(vp, A), sB = xform(vp, Bv), sC = xform(vp, C);
+    /* Back-face cull in screen space. The sign matters and it was the wrong
+       one: this test culled FRONT faces, so the preview drew the inside of
+       every closed surface. On a closed skull you cannot tell -- the far wall
+       of the interior looks like a head, slightly concave -- but put a
+       closed helmet over it and the helmet's back wall is BEHIND the skull's
+       back wall, so the depth test keeps the skull and the steel vanishes.
+       That is the "transparent helmet" that three passes of this file tried
+       to fix by rewriting helmet geometry. The geometry was always right;
+       the preview was drawing the wrong side of it. */
     const area = (sB[0] - sA[0]) * (sC[1] - sA[1]) - (sC[0] - sA[0]) * (sB[1] - sA[1]);
-    if (area >= 0 && !process.env.NOCULL) continue;
+    if (area < 0 && !process.env.NOCULL) continue;
 
     /* Face normal, used only for the winding test. Shading uses the
        interpolated vertex normals, exactly as the GPU would: the whole
@@ -286,8 +300,8 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
       const mn = Math.min(team[0], team[1], team[2]);
       const sat = 1 - mn / mx;
       const shade = 0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2];
-      const tm = [Math.pow(team[0] / mx, 2.1), Math.pow(team[1] / mx, 2.1), Math.pow(team[2] / mx, 2.1)];
-      const dye = [tm[0] * shade * (1 - 0.55 * sat), tm[1] * shade * (1 - 0.55 * sat), tm[2] * shade * (1 - 0.55 * sat)];
+      const tm = [Math.pow(team[0] / mx, 1.8), Math.pow(team[1] / mx, 1.8), Math.pow(team[2] / mx, 1.8)];
+      const dye = [tm[0] * shade * 1.25, tm[1] * shade * 1.25, tm[2] * shade * 1.25];
       base = [
         base[0] + (dye[0] - base[0]) * sat,
         base[1] + (dye[1] - base[1]) * sat,
@@ -344,7 +358,8 @@ const MATERIAL_TINT = {
   4: [1.00, 0.96, 0.92],  // skin
   5: [0.90, 0.86, 0.80],  // hair
   6: [0.86, 0.78, 0.66],  // leather
-  7: [0.92, 0.86, 0.76]   // wood
+  7: [0.92, 0.86, 0.76],  // wood
+  8: [1.00, 0.99, 0.95]   // undyed trim
 };
 
 /* ---------------- cli ---------------- */
