@@ -747,13 +747,20 @@ export function buildBelt(g, m) {
 export function buildCape(g, m, colour) {
   if (g.detail > DETAIL.MID) return;
   const { x, y } = m;
-  /* Lifted toward mid grey: a saturated near-black cape reads as a hole in
-     the silhouette rather than as cloth, especially at the shading angles
-     the game's sun actually produces. */
-  g.material(MAT.LINEN).color(
-    colour[0] * 0.75 + 0.18,
-    colour[1] * 0.75 + 0.16,
-    colour[2] * 0.75 + 0.16);
+  /* WOOL, NOT THE TEAM DYE.
+     The cape was MAT_LINEN, which is one of the two team-dyed materials, so
+     the authored crimson was replaced by the player's blue -- the knight's
+     cape, his surcoat and his mailed body were then three nearly identical
+     blues stacked front to back, and from abeam the class read as one blue
+     cone with a helmet on top. A cloak is its own garment in its own cloth;
+     it keeps the colour it was authored with, which is also the thing that
+     tells a lord from his household at a glance.
+     Lifted toward mid value first: a saturated near-black cape reads as a
+     hole in the silhouette rather than as cloth. */
+  g.material(MAT.WOOL).color(
+    colour[0] * 0.85 + 0.10,
+    colour[1] * 0.85 + 0.09,
+    colour[2] * 0.85 + 0.09);
   /* A cape is a lathe cut off at the front: two thirds of a cone. */
   /* Two thirds of a circle, centred on the back: a cape is open at the
      front. A full lathe here wraps the knight in a closed cone. */
