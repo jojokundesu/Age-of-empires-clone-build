@@ -64,7 +64,15 @@ export const CLASSES = {
     /* Mail to the skin: the body IS the hauberk, and the surcoat goes over
        it. Without this flag he is a padded jacket with a tabard. */
     mailedBody: true,
-    helm: (age) => (age <= 2 ? 'kettle' : age === 3 ? 'barbute' : 'great'),
+    /* FOUR RUNGS, NOT THREE.
+       Ages I and II both wore a kettle, so the first thing a player sees
+       when he advances an age -- the cheapest, most legible progression in
+       the game -- changed nothing at all on half the roster. Age I is now a
+       bare head (a levy who owns no armour: the age-1 soldiers already draw
+       linen tunics and a spear, and a helmet on the first unit you can build
+       undersells every upgrade after it), Age II the kettle, Age III the
+       barbute, Age IV the crested great helm. */
+    helm: (age) => (age <= 1 ? 'none' : age === 2 ? 'kettle' : age === 3 ? 'barbute' : 'great'),
     hair: 'short',
     beard: false,
     crest: (age) => (age >= 4 ? [0.55, 0.10, 0.10] : null),
@@ -124,7 +132,7 @@ export const CLASSES = {
      padded jack, no shield, both hands on the shaft. */
   spearman: {
     profile: 'spearman',
-    helm: (age) => (age <= 2 ? 'kettle' : 'barbute'),
+    helm: (age) => (age <= 1 ? 'none' : age === 2 ? 'kettle' : 'barbute'),
     hair: 'short',
     beard: false,
     build(g, m, o) {
@@ -186,7 +194,15 @@ export const CLASSES = {
      Between the spearman and the man-at-arms in build. */
   swordsman: {
     profile: 'spearman',
-    helm: (age) => (age <= 2 ? 'kettle' : age === 3 ? 'barbute' : 'great'),
+    /* FOUR RUNGS, NOT THREE.
+       Ages I and II both wore a kettle, so the first thing a player sees
+       when he advances an age -- the cheapest, most legible progression in
+       the game -- changed nothing at all on half the roster. Age I is now a
+       bare head (a levy who owns no armour: the age-1 soldiers already draw
+       linen tunics and a spear, and a helmet on the first unit you can build
+       undersells every upgrade after it), Age II the kettle, Age III the
+       barbute, Age IV the crested great helm. */
+    helm: (age) => (age <= 1 ? 'none' : age === 2 ? 'kettle' : age === 3 ? 'barbute' : 'great'),
     hair: 'short',
     beard: false,
     build(g, m, o) {
@@ -204,6 +220,13 @@ export const CLASSES = {
      Mounted aristocracy. Tall, broad, a great helm, a cape, plate at the
      top age. The rider is built here; the horse is a separate rig. */
   knight: {
+    /* ON FOOT, DELIBERATELY. I tried mounting him -- every other knight in
+       the genre is cavalry -- and the suite has an explicit check that the
+       knight is a foot unit ("a foot unit is never seated"), plus mounting
+       him costs 6.2k of the 300-unit frame. So he stays a dismounted man at
+       arms with a heater shield, and the mounted armoured unit in this game
+       is the cataphract, which is a distinction the project has already made
+       and encoded. */
     profile: 'knight',
     mailedBody: true,
     helm: (age) => (age <= 2 ? 'nasal' : age === 3 ? 'great' : 'great'),
@@ -404,7 +427,7 @@ export const CLASSES = {
   axeman: {
     profile: 'manAtArms',
     mailedBody: false,
-    helm: (age) => (age <= 2 ? 'kettle' : 'barbute'),
+    helm: (age) => (age <= 1 ? 'none' : age === 2 ? 'kettle' : 'barbute'),
     hair: 'short',
     beard: true,
     build(g, m, o) {
@@ -434,7 +457,7 @@ export const CLASSES = {
   huskarl: {
     profile: 'manAtArms',
     mailedBody: true,
-    helm: (age) => (age <= 2 ? 'kettle' : 'nasal'),
+    helm: (age) => (age <= 1 ? 'none' : age === 2 ? 'kettle' : 'nasal'),
     hair: 'braid',
     beard: true,
     build(g, m, o) {
@@ -578,7 +601,7 @@ export const CLASSES = {
      shorter, hunched, carrying something that is not a bow. */
   hand_cannoneer: {
     profile: 'spearman',
-    helm: (age) => (age <= 2 ? 'kettle' : 'barbute'),
+    helm: (age) => (age <= 1 ? 'none' : age === 2 ? 'kettle' : 'barbute'),
     hair: 'short',
     beard: true,
     build(g, m, o) {

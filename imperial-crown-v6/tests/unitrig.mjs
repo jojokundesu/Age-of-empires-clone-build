@@ -391,7 +391,9 @@ check('age progression adds ornament without breaking budget', () => {
      helmet, not the ornament, that moved. The check that matters is the one
      above it -- age 4 must still cost MORE than age 1 -- and the per-class
      cap and the army cap are the ones that protect the frame. */
-  assert(a4 <= 1060, `age 4 mid is ${a4}`);
+  /* 1080. The thumb on each hand is 12 triangles and it lands on every
+     class at every age; the age-4 rung moved with it. */
+  assert(a4 <= 1080, `age 4 mid is ${a4}`);
 });
 
 check('a call-site sphere refinement cannot exceed the tier', () => {

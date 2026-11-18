@@ -649,10 +649,26 @@ export function buildBody(g, prop, opts = {}) {
       }
       g.tube(HAND, [sx * 0.96, y(0.86), 0], [sx * 0.95, y(0.78), 0],
         0.046 * lw, 0.039 * lw, { seg: 4, rings: 1, blend: FORE });
+      /* THE THUMB. A four-sided tube 80 mm long is a mitten, and a mitten at
+         the end of a sleeve is the last mannequin cue left on the figure --
+         it is the part a viewer looks at, because it is where the weapon is.
+         One angled tube on the HAND bone is 12 triangles and it is what turns
+         the stub into a grip. It points across the palm toward the body,
+         which is where a closed fist's thumb actually sits. */
+      if (g.detail < DETAIL.FAR) {
+        g.tube(HAND, [sx * 0.935, y(0.845), 0.012],
+          [sx * 0.905, y(0.800), 0.030], 0.017 * lw, 0.013 * lw,
+          { seg: 3, rings: 1, blend: FORE });
+      }
     } else {
       g.material(4).color(skin);
       g.tube(HAND, [sx * 0.96, y(0.86), 0], [sx * 0.95, y(0.78), 0],
         0.045 * lw, 0.038 * lw, { seg: 4, rings: 1, blend: FORE });
+      if (g.detail < DETAIL.FAR) {
+        g.tube(HAND, [sx * 0.938, y(0.845), 0.012],
+          [sx * 0.908, y(0.800), 0.030], 0.016 * lw, 0.012 * lw,
+          { seg: 3, rings: 1, blend: FORE });
+      }
     }
   }
 
