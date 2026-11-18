@@ -216,6 +216,10 @@ void main() {
   float metalness = 0.0;
   float roughness = 0.85;
   float ao = 1.0;
+  /* Specular is tinted by the surface by default; the plate branch lowers
+     the gain and lets the metal tint its own reflection. */
+  vec3 specTint = vec3(1.0);
+  float specGain = 1.0;
   /* wp is the pattern plane. It must follow the surface, not the ground. */
   vec3 nrm = normalize(vNormal);
   vec2 wp = triUV(vWorld, nrm);
@@ -301,13 +305,50 @@ void main() {
     float p = mix(brush, 0.18, border);
     /* age tier lives in the packed word: bits 12+ are the age (1..4) */
     float ageTier = floor(fract(vPack.y / 4096.0) * 16.0);
-    vec3 steel = vec3(0.62, 0.64, 0.68) * (0.70 + p * 0.55);
+    /* THE AUTHORED COLOUR IS THE STEEL.
+       This block used to build the albedo out of a hard-coded
+       vec3(0.62, 0.64, 0.68) and throw away whatever the wardrobe had
+       written -- so every helmet, every pauldron and every shield boss in the
+       game was the same bright laboratory steel, which is why they read as
+       white plastic against a dark figure. Real armour of the period is
+       largely iron: dark, warm, and mostly not shiny. The authored colour now
+       drives the metal, so a class can ask for bright polished plate or for
+       blackened iron and get it.
+       The value is normalised to the metal's own luminance and the enamel is
+       rebuilt from HUE with a fixed, believable saturation ceiling -- a
+       brown-grey iron must not come out as brown paint. */
+    float steelL = dot(albedo, vec3(0.299, 0.587, 0.114));
+    /* A little warmth is added to the hue and the saturation is clamped, so
+       an authored colour that is nearly neutral still reads as metal rather
+       than as flat clay, while a deliberately dark one stays dark. */
+    vec3 tint = mix(vec3(steelL), albedo, 0.55);
+    vec3 steel = tint * (0.70 + p * 0.55);
     albedo = mix(steel, vec3(0.92, 0.72, 0.30), rivet * 0.85);
     /* Imperial gold trim: gilded panel borders from Age III up. */
     float gild = smoothstep(2.5, 3.5, ageTier) * border;
     albedo = mix(albedo, vec3(0.95, 0.76, 0.34) * (0.8 + brush * 0.5), gild * 0.8);
-    metalness = 0.85;
-    roughness = mix(0.30, 0.16, rivet);
+    /* FINISH FOLLOWS THE AUTHORED VALUE: bright plate is polished, dark
+       iron is dull and rough. That single coupling is what makes a helmet
+       look forged rather than moulded, and it costs nothing -- the numbers
+       are already in the vertex.
+       NOTE: the rig shots pass a white team tint, and this material is not
+       team-dyed, so the authored colour is what a viewer sees. */
+    float plish = smoothstep(0.30, 0.80, steelL);
+    metalness = mix(0.45, 0.92, plish);
+    roughness = mix(0.62, 0.22, plish) - rivet * 0.10;
+    /* THE SPECULAR WAS THE WHITE, NOT THE ALBEDO.
+       With the authored colour respected, a bright-polished helm (0.66)
+       still rendered as a white blob -- because the specular term is
+       uSunColor * spec * sh * cl * 1.3, ADDED to a metal already at 0.66,
+       at 1.5x metalness weight and with a roughness that a smooth dome walks
+       straight through. Every convex surface facing the key light clips to
+       white, and a helmet is the most convex thing on the figure.
+       Metal does not add a broad white highlight on top of its own colour;
+       its reflection is TINTED by the metal. So the specular is now
+       multiplied by the albedo and its weight is cut, which is both more
+       physical and the actual fix. */
+    specTint = albedo / max(steelL, 0.12);
+    specGain = mix(0.30, 0.62, plish);
   } else if (mat == MAT_SKIN) {
     float v = hash12(floor(wp * 220.0));
     albedo *= 0.94 + v * 0.12;
@@ -360,7 +401,9 @@ void main() {
   float spec = pow(nh, mix(8.0, 96.0, 1.0 - roughness)) * mix(0.06, 1.5, metalness);
 
   vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
-  color += uSunColor * spec * sh * cl * 1.3;
+  /* specTint and specGain are set by the plate branch; everything else gets
+     the old untinted highlight at its old weight. */
+  color += uSunColor * spec * sh * cl * 1.3 * specGain * specTint;
 
   /* Team colour on cloth: take the HUE from the team, the VALUE from the
      garment, and the weave's luminance variation from the cloth itself, so a

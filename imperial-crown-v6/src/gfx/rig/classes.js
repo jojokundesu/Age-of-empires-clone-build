@@ -390,12 +390,41 @@ export const CLASSES = {
       /* Two fold ridges down the front of the robe. A lathe can only shade
          by its own slope, and a near-vertical profile has almost none, so
          without something breaking the face the front is one flat tone.
-         Off-centre and unequal: a symmetric pair reads as armour. */
+         Off-centre and unequal: a symmetric pair reads as armour.
+
+         THEY STOP AT THE HEM, AND THEY SIT ON THE ROBE'S SURFACE.
+         They ran from y 1.16 all the way to y 0.24, which is BELOW the
+         robe's own hem at y 0.13 -- so the lower third of each ridge was
+         outside the garment, and what a viewer saw was two brown sticks
+         hanging out of the monk's waist down past his knees. The z was also
+         a flat 0.255 against a robe whose front surface at that height is
+         nearer 0.19, i.e. the ridges stood proud of the cloth by a third of
+         their own radius for their whole length.
+         So: end them 60 mm above the hem where the robe is still wide
+         enough to carry them, and derive the z from the robe's own radius at
+         each end rather than pinning it. */
       if (g.detail < DETAIL.FAR) {
-        for (const [fx, fz, r] of [[-0.085, 0.255, 0.028], [0.115, 0.235, 0.019]]) {
-          g.tube(B.SKIRT, [m.x(fx), m.y(1.16), fz * m.cd / m.sw],
-            [m.x(fx * 1.30), m.y(0.24), fz * m.cd / m.sw * 1.25], r, r * 0.85,
-            { seg: 4, rings: 1 });
+        /* the robe's profile, as (height, radius) -- see the lathe above */
+        const robeR = (yy) => {
+          if (yy >= m.y(1.26)) return 0.232 + (0.244 - 0.232) * (yy - m.y(1.26)) / (m.y(1.466) - m.y(1.26));
+          if (yy >= m.y(0.92)) return 0.246 + (0.232 - 0.246) * (yy - m.y(0.92)) / (m.y(1.26) - m.y(0.92));
+          return 0.278 + (0.246 - 0.278) * (yy - m.y(0.52)) / (m.y(0.92) - m.y(0.52));
+        };
+        for (const [fx, r] of [[-0.42, 0.026], [0.55, 0.017]]) {
+          const yTop = m.y(1.14);
+          const yBot = m.y(0.30);
+          /* x is a FRACTION of the robe's radius, so the ridge follows the
+             garment's taper instead of running straight past it */
+          const px = (yy) => m.x(fx * robeR(yy) / m.sw);
+          /* 0.94 was still proud of the cloth. `cd/sw` scales the lathe's
+             Z radius, so the robe's front surface at height yy is
+             robeR(yy) * cd/sw, and a ridge centred there has HALF its own
+             radius outside the garment -- which renders as a rod lying on
+             the robe, not a fold in it. Sunk to 0.80 the ridge's outer edge
+             clears the surface by about a centimetre, which is a fold. */
+          const pz = (yy) => robeR(yy) * m.cd / m.sw * 0.80;
+          g.tube(B.SKIRT, [px(yTop), yTop, pz(yTop)], [px(yBot), yBot, pz(yBot)],
+            r, r * 0.8, { seg: 4, rings: 1 });
         }
       }
 

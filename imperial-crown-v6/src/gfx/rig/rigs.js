@@ -149,7 +149,13 @@ export function buildHumanoid(g, prop, def, opts = {}) {
        at any distance -- the cataphract's chest was indistinguishable from
        the man-at-arms' padded jacket. */
     bodyCol: def.bodyCol || (def.bareChest ? skin
-      : (def.mailedBody ? [0.62, 0.61, 0.57]
+      /* MAIL IS DARK. This was 0.62/0.61/0.57 -- a light warm grey -- and
+         the mail material then adds its own ring pattern on top at up to
+         full luminance, so every mailed torso, arm and leg clipped to a pale
+         near-white that read as a white plastic cuirass. Mail in the period
+         is blackened or blued iron with a dark sheen; the rings catch light,
+         the garment does not. */
+      : (def.mailedBody ? [0.34, 0.34, 0.33]
         : (def.woolBody || [0.78, 0.76, 0.70])))
   };
   const m = buildBody(g, prop, bodyOpts);

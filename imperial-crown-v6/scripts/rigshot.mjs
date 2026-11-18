@@ -283,7 +283,20 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
     const px = (v) => [(v[0] * 0.5 + 0.5) * width, (1 - (v[1] * 0.5 + 0.5)) * height, v[2]];
     const P = [px(sA), px(sB), px(sC)];
 
-    /* material tint, approximating the shader's per-material colour */
+    /* MATERIAL TINT IS NOT A SECOND ALBEDO.
+       It never was one: the real fragment shader builds its albedo from the
+       authored colour plus a per-material TEXTURE (weave, rings, brushed
+       steel) and only *then* applies lighting. This previewer was
+       multiplying the authored colour by a hand-written tint table, and then
+       multiplying by it AGAIN at the end ("base = base * tint"), so every
+       surface got its tint squared -- and plate, at [1.05, 1.07, 1.12], came
+       out at 1.10/1.14/1.25 of the authored value before a single light ray
+       touched it. That is why every helmet in every render was white even
+       after the authored colours were darkened to iron.
+       So: the tint is applied ONCE, as a deliberate preview of the material
+       texture the shader adds, and plate is no longer brightened by it --
+       the authored colour of plate IS the steel now, and the shader derives
+       its finish from that value. */
     const mat = pa[9];
     const tint = MATERIAL_TINT[mat] || [1, 1, 1];
     /* THE TEAM DYE, applied exactly as UNIT_FS applies it.
@@ -308,7 +321,7 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
         base[2] + (dye[2] - base[2]) * sat
       ];
     }
-    base = [base[0] * tint[0], base[1] * tint[1], base[2] * tint[2]];
+    /* (tint was applied once, above; it must not be applied again here) */
     /* rasterise */
     const minX = Math.max(0, Math.floor(Math.min(P[0][0], P[1][0], P[2][0])));
     const maxX = Math.min(width - 1, Math.ceil(Math.max(P[0][0], P[1][0], P[2][0])));
@@ -353,7 +366,7 @@ function render({ out, pose: poseName = 'idle', tier = DETAIL.MID, age = 3, scal
 const MATERIAL_TINT = {
   0: [1.00, 0.98, 0.94],  // linen
   1: [0.86, 0.88, 0.92],  // mail
-  2: [1.05, 1.07, 1.12],  // plate
+  2: [1.00, 1.00, 1.00],  // plate: the authored colour IS the steel
   3: [0.94, 0.90, 0.82],  // gambeson
   4: [1.00, 0.96, 0.92],  // skin
   5: [0.90, 0.86, 0.80],  // hair

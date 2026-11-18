@@ -37,6 +37,19 @@ export const MAT = {
   WOOL: 9
 };
 
+/* ---------------- IRON, THE SHARED PALETTE ----------------------
+   Plate was authored at 0.62-0.86 in a dozen places, and the plate shader
+   used to discard the value anyway -- so every rivet, pauldron, shield boss
+   and helmet in the rig was the same bright laboratory steel. Now that the
+   shader derives metalness and roughness FROM the authored value, these
+   numbers decide the whole look of the armour, so they live in one place and
+   run from blackened iron to polished plate. Nothing in this file should
+   write a raw plate colour again. */
+export const IRON = [0.21, 0.20, 0.19];      /* blackened, mass-issue */
+export const STEEL = [0.36, 0.36, 0.37];     /* milled, the usual */
+export const BRIGHT = [0.52, 0.53, 0.56];    /* polished, for the elite */
+export const WEAPON = [0.44, 0.44, 0.46];    /* blade and haft fittings */
+
 /* ------------------------------------------------------------
    Heads
    ------------------------------------------------------------ */
@@ -70,6 +83,46 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
      on Z, so they were narrower front-to-back than the head inside them.
      --------------------------------------------------------------- */
   const HELM_CLEAR = 1.16;
+  /* ---------------- IRON, NOT WHITE --------------------------------
+     Every helmet in this file was authored at 0.66-0.72 in all three
+     channels, and the plate shader then ignored the authored colour anyway
+     and drew a hard-coded 0.62/0.64/0.68. The result was a rig full of
+     identical bright white helmets that read as plastic against a dark
+     figure, which is the single most-cited criticism of these renders.
+
+     Real armour of the period is mostly IRON: dark, warm, and dull, with
+     polished plate reserved for the money. These are the three finishes:
+       IRON    blackened, rough, the cheap foot soldier's helmet
+       STEEL   milled and middling -- what most of the roster wears
+       BRIGHT  polished, for the elite and the ceremony
+     The plate shader derives metalness and roughness from the authored
+     value, so these are the only numbers that need to change to change a
+     finish. */
+  /* These three are the MODULE-SCOPE values at the top of this file. They
+     were re-declared here as local consts with the old bright numbers still
+     in them, which shadowed the shared palette: the whole file went dark
+     except the great helm, whose shell is the one surface that reads its
+     tone through this table. Two copies of a named constant is one copy too
+     many. */
+  /* Which finish a helm gets, by kind. Anything not listed wears STEEL. */
+  const HELM_TONE = {
+    kettle: IRON,      /* mass-issue: the cheapest helmet there is */
+    nasal: IRON,
+    cone: STEEL,
+    barbute: STEEL,
+    great: BRIGHT,     /* the lord's own, and it is the age-IV silhouette */
+    turban: IRON,
+    hood: IRON
+  };
+  /* The finish for this helm. Falls back to steel for anything unlisted. */
+  const tone = HELM_TONE[kind] || STEEL;
+  /** Set the plate material to this helm's iron. Every MAT.PLATE call in
+   *  buildHelm goes through here, so a helm cannot be half white. */
+  const plate = (k = 1) => g.material(MAT.PLATE).color(
+    tone[0] * k, tone[1] * k, tone[2] * k);
+  /* Start every helm on its own finish. */
+  if (kind === 'hood' || kind === 'turban') g.material(MAT.LINEN).color(0.55, 0.50, 0.44);
+  else plate();
   const SQX = HEAD_X * 1.06;
   const SQZ = 1.10 * 1.06;
 
@@ -132,9 +185,8 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
       ], { seg: g.seg(0), squash: [SQX, SQZ],
            arc: AVENTAIL_ARC, arcStart: AVENTAIL_START });
     }
-    g.material(kind === 'hood' || kind === 'turban' ? MAT.LINEN : MAT.PLATE);
-    g.color(kind === 'hood' ? 0.55 : 0.70, kind === 'hood' ? 0.50 : 0.72,
-      kind === 'hood' ? 0.44 : 0.76);
+    if (kind === 'hood' || kind === 'turban') g.material(MAT.LINEN).color(0.55, 0.50, 0.44);
+    else plate();
   };
 
   /* A mail curtain over the JAW, for the open-faced steel helms.
@@ -153,9 +205,8 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
       [hr * 1.06, toY]
     ], { seg: g.seg(1), squash: [SQX, SQZ],
          arc: Math.PI * 0.92, arcStart: Math.PI * 0.5 - Math.PI * 0.46 });
-    g.material(kind === 'hood' || kind === 'turban' ? MAT.LINEN : MAT.PLATE);
-    g.color(kind === 'hood' ? 0.55 : 0.70, kind === 'hood' ? 0.50 : 0.72,
-      kind === 'hood' ? 0.44 : 0.76);
+    if (kind === 'hood' || kind === 'turban') g.material(MAT.LINEN).color(0.55, 0.50, 0.44);
+    else plate();
   };
 
   if (kind === 'hood') {
@@ -371,7 +422,7 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
         [hr * 1.18 * HELM_CLEAR * 0.78, SIGHT_HI],
         [hr * 1.06 * HELM_CLEAR * 0.74, SIGHT_HI + hr * 0.30]
       ], { seg: g.seg(0), squash: [SQX + 0.02, SQZ * 1.06] });
-      g.material(MAT.PLATE).color(0.70, 0.72, 0.76);
+      plate();
       /* A brow ridge over the slit, so it is shadowed and so the steel above
          it does not read as a smooth continuation of the steel below. */
       g.lathe(B.HEAD, [
@@ -414,7 +465,7 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
                arc: bw, arcStart: ba - bw * 0.5 });
         }
       }
-      g.material(MAT.PLATE).color(0.70, 0.72, 0.76);
+      plate();
     }
     return;
   }
@@ -620,7 +671,7 @@ export function buildPauldrons(g, m) {
   for (const side of [-1, 1]) {
     const SHO = side < 0 ? B.SHOULDER_L : B.SHOULDER_R;
     const sx = side * x(m.armX);
-    g.material(MAT.PLATE).color(0.68, 0.70, 0.74);
+    g.material(MAT.PLATE).color(STEEL[0], STEEL[1], STEEL[2]);
     /* A LATHE, not a cut sphere, and that is the whole fix for the jagged
        grey-and-brown shards on every armoured shoulder.
 
@@ -688,7 +739,7 @@ export function buildBelt(g, m) {
   ], { seg: g.seg(2), squash: [1.0, cd / sw] });
   /* buckle: a small plate on the front, which is what stops the band
      reading as a painted stripe */
-  g.material(MAT.PLATE).color(0.62, 0.62, 0.64);
+  g.material(MAT.PLATE).color(STEEL[0], STEEL[1], STEEL[2]);
   g.slab(B.SKIRT, [0, y(1.005), x(0.196) * cd / sw], [0.052, 0.048, 0.012]);
 }
 
@@ -790,7 +841,7 @@ export function buildTwoHandedAxe(g, m, opts = {}) {
   g.tube(UPRIGHT, butt, top, 0.016, 0.018,
     { seg: g.detail === 0 ? 5 : 4, rings: 1 });
   /* the butt spike: a haft that ends in an open pipe reads as a broken prop */
-  g.material(MAT.PLATE).color(0.44, 0.46, 0.50);
+  g.material(MAT.PLATE).color(IRON[0], IRON[1], IRON[2]);
   g.tube(UPRIGHT, butt, [butt[0] - u[0] * 0.05, butt[1] - u[1] * 0.05, butt[2] - u[2] * 0.05],
     0.020, 0.011, { seg: 4, rings: 1 });
 
@@ -801,7 +852,7 @@ export function buildTwoHandedAxe(g, m, opts = {}) {
   const side = hi[0] >= 0 ? 1 : -1;
   const hx = top[0] + side * 0.085;
   const socketTop = [top[0], top[1] + 0.02, top[2]];
-  g.material(MAT.PLATE).color(0.66, 0.68, 0.72);
+  g.material(MAT.PLATE).color(BRIGHT[0], BRIGHT[1], BRIGHT[2]);
   g.tube(UPRIGHT, [socketTop[0], socketTop[1] + 0.055, socketTop[2]],
     [socketTop[0], socketTop[1] - 0.055, socketTop[2]], 0.034, 0.030,
     { seg: 4, rings: 1 });
@@ -820,18 +871,18 @@ export function buildTwoHandedAxe(g, m, opts = {}) {
      So: a slab with its height on Y and its thin axis on Z, plus a second
      slab raked back to make the bearded lower horn. Two boxes, 24
      triangles, and the silhouette is an axe from every side. */
-  g.material(MAT.PLATE).color(0.66, 0.68, 0.72);
+  g.material(MAT.PLATE).color(BRIGHT[0], BRIGHT[1], BRIGHT[2]);
   const bladeX = socketTop[0] + side * 0.105;
   /* the main plate: 210 mm tall, 105 mm out, 18 mm thick */
   g.slab(UPRIGHT, [socketTop[0] + side * 0.052, socketTop[1] - 0.01, socketTop[2]],
     [0.105, 0.210, 0.018], { rot: 0 });
   /* the cutting edge: a thinner plate standing proud of the main one, at the
      outer end, so the edge catches light separately from the cheek */
-  g.material(MAT.PLATE).color(0.86, 0.88, 0.91);
+  g.material(MAT.PLATE).color(BRIGHT[0] * 1.15, BRIGHT[1] * 1.15, BRIGHT[2] * 1.15);
   g.slab(UPRIGHT, [bladeX, socketTop[1] - 0.01, socketTop[2]],
     [0.026, 0.225, 0.010], { rot: 0 });
   /* the beard: the lower horn, raked back toward the haft */
-  g.material(MAT.PLATE).color(0.66, 0.68, 0.72);
+  g.material(MAT.PLATE).color(BRIGHT[0], BRIGHT[1], BRIGHT[2]);
   g.slab(UPRIGHT, [socketTop[0] + side * 0.058, socketTop[1] - 0.145, socketTop[2]],
     [0.098, 0.130, 0.017], { rot: side * 0.30 });
 }
@@ -861,7 +912,7 @@ export function buildSword(g, hand, pos, len, opts = {}) {
        is less than one. */
     g.tube(UPRIGHT, [pos[0], pos[1] + grip * 0.55, pos[2]],
       [pos[0], pos[1] - grip * 0.55, pos[2]], 0.020, 0.019, { seg: 4, rings: 1 });
-    g.material(MAT.PLATE).color(0.62, 0.64, 0.68);
+    g.material(MAT.PLATE).color(STEEL[0], STEEL[1], STEEL[2]);
     g.ellipsoid(UPRIGHT, [pos[0], pos[1] + grip * 0.58, pos[2]],
       [0.030, 0.026, 0.030], { sph: [4, 3] });
   }
@@ -880,7 +931,7 @@ export function buildSword(g, hand, pos, len, opts = {}) {
      unarmed from every angle but the one you are not looking at. Angling it
      OUT and FORWARD puts the whole blade against the background. */
   const tip = [pos[0] + out * len * 0.20, top - len * 0.94, pos[2] + len * 0.52];
-  g.material(MAT.PLATE).color(0.80, 0.82, 0.86);
+  g.material(MAT.PLATE).color(WEAPON[0], WEAPON[1], WEAPON[2]);
   /* 3 cm at the base over a 40 cm blade. At 4.2 cm the parallel section
      was as wide as a forefinger and the thing read as a paddle or a
      feather rather than a sword. */
@@ -929,14 +980,14 @@ export function buildSpear(g, hand, pos, len = 1.9) {
   g.tube(UPRIGHT, [botX, botY, botZ], [topX, topY, topZ],
     0.015, 0.017, { seg: g.detail === DETAIL.NEAR ? 5 : 4, rings: 1 });
   /* BUTT CAP, so the shaft is not an open tube resting on the ground. */
-  g.material(MAT.PLATE).color(0.40, 0.42, 0.46);
+  g.material(MAT.PLATE).color(IRON[0], IRON[1], IRON[2]);
   g.tube(UPRIGHT, [botX, botY, botZ], [botX, botY + 0.055, botZ], 0.021, 0.017,
     { seg: 4, rings: 1 });
   /* THE HEAD: a winged spear tip with a socket, and a team-coloured tassel
      below it. The tassel is the Age of Empires signature on a spear and it is
      four triangles -- it reads as a coloured accent at gameplay distance even
      when the blade itself is one pixel wide. */
-  g.material(MAT.PLATE).color(0.78, 0.80, 0.84);
+  g.material(MAT.PLATE).color(WEAPON[0], WEAPON[1], WEAPON[2]);
   g.tube(UPRIGHT, [topX, topY, topZ], [topX, topY + 0.10, topZ], 0.021, 0.024,
     { seg: 4, rings: 1 });                       /* socket */
   g.blade(UPRIGHT, [topX, topY + 0.10, topZ], [topX, topY + 0.44, topZ],
@@ -947,7 +998,7 @@ export function buildSpear(g, hand, pos, len = 1.9) {
   g.material(MAT.TRIM).color(0.90, 0.88, 0.80);
   g.tube(UPRIGHT, [topX, topY + 0.055, topZ], [topX + 0.012, topY - 0.09, topZ + 0.012],
     0.026, 0.016, { seg: 4, rings: 1 });
-  g.material(MAT.PLATE).color(0.78, 0.80, 0.84);
+  g.material(MAT.PLATE).color(WEAPON[0], WEAPON[1], WEAPON[2]);
 }
 
 /** A bow, held in the off hand. A curved stave, not a straight stick. */
@@ -1007,7 +1058,7 @@ export function buildTool(g, hand, pos, kind) {
   const bottom = [pos[0], pos[1] - 0.40, pos[2]];
   g.tube(UPRIGHT, top, bottom, 0.015, 0.017, { seg: 4, rings: 1 });
   if (g.detail > DETAIL.MID) return;
-  g.material(MAT.PLATE).color(0.62, 0.63, 0.66);
+  g.material(MAT.PLATE).color(STEEL[0], STEEL[1], STEEL[2]);
   if (kind === 'axe' || kind === 'pick') {
     /* A head at the top, offset perpendicular to the haft -- and just under
        it, not beside it: a slab centred on the haft's own axis swallowed the
