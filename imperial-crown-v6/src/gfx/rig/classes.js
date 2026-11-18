@@ -101,13 +101,18 @@ export const CLASSES = {
      changes with the job. Should read as a civilian from across the map. */
   villager: {
     profile: 'villager',
+    /* Undyed wool, not the player's blue. A villager is a civilian: he is
+       the one class in the game who must NOT look like part of the army, and
+       since every cloth material is team-dyed, giving him a blue tunic made
+       him read as a foot soldier without a helmet. */
+    woolBody: [0.62, 0.53, 0.36],
     helm: () => 'none',
     hair: 'short',
     beard: true,
     build(g, m, o) {
       buildHairAfterHelm(g, m, this, o);
       buildFaceDetail(g, m, { hair: o.hair, beard: true });
-      buildSurcoat(g, m, { flares: true });
+      buildSurcoat(g, m, { flares: true, wool: [0.60, 0.50, 0.33] });
       buildBelt(g, m);
       buildSatchel(g, m);
       buildTool(g, B.HAND_R, [m.handX + 0.030, m.y(0.98), 0.06], o.tool || 'axe');
@@ -240,9 +245,14 @@ export const CLASSES = {
        not quite reach -- the armpit, the collar notch, a sliver at the
        shoulder -- showed as grey undershirt through brown wool. There is no
        grey garment on a monk to show. */
-    bodyCol: [0.50, 0.40, 0.32],
-    bodyMat: 0,
-    legMat: 0,
+    /* WOOL, not LINEN. bodyMat 0 is the team-dye material, so the brown
+       habit was rendered in the player's blue whatever colour was written
+       on it -- the exact trap the hose note in anatomy.js describes. A monk
+       belongs to no army and his habit is the one thing you recognise him
+       by, so it is the material that keeps its own colour. */
+    bodyCol: [0.42, 0.33, 0.25],
+    bodyMat: 9,
+    legMat: 9,
     build(g, m, o) {
       buildFaceDetail(g, m, { hair: o.hair, beard: true });
       /* The robe: a long lathe from the shoulders to the ankles. This is
@@ -252,7 +262,10 @@ export const CLASSES = {
          0.42/0.33/0.26 a robe this big has no gradient left across its
          front third and reads as a hole in the figure rather than as
          cloth -- the same trap the cape above fell into. */
-      g.material(MAT.LINEN).color(0.52, 0.42, 0.33);
+      /* WOOL. Written as MAT_LINEN this brown robe was rendered in the
+         player's blue -- the habit is the monk's entire identity and it was
+         the same colour as a spearman's surcoat. */
+      g.material(MAT.WOOL).color(0.52, 0.42, 0.33);
       g.lathe(B.SKIRT, [
         /* The robe has to close over the shoulders, not stop below them.
            The bare tunic reaches 0.225 at y(1.45) and the neck is only 0.058
@@ -304,7 +317,7 @@ export const CLASSES = {
         const SHO = side < 0 ? B.SHOULDER_L : B.SHOULDER_R;
         const UP = side < 0 ? B.UPPER_ARM_L : B.UPPER_ARM_R;
         const sx = side * m.x(m.armX);
-        g.material(MAT.LINEN).color(0.48, 0.39, 0.31);
+        g.material(MAT.WOOL).color(0.48, 0.39, 0.31);
         /* Six rings at near; the two that only describe the upper arm's
            slight swell are below the pixel at mid and far. */
         /* 75-90 mm, not 120: the sleeve was 0.25 m across, i.e. twice the
@@ -616,6 +629,8 @@ export const CLASSES = {
      A civilian with a club and no training: narrow, hunched, ragged. */
   mob_rioter: {
     profile: 'villager',
+    /* Grey-brown rags, not a uniform. */
+    woolBody: [0.44, 0.39, 0.33],
     helm: () => 'none',
     hair: 'long',
     beard: true,

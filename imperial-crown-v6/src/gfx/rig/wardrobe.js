@@ -23,7 +23,18 @@ import { HEAD_X } from './anatomy.js';
 /* Material ids, shared with unitShaders.js. */
 export const MAT = {
   LINEN: 0, MAIL: 1, PLATE: 2, GAMBESON: 3,
-  SKIN: 4, HAIR: 5, LEATHER: 6, WOOD: 7, TRIM: 8
+  SKIN: 4, HAIR: 5, LEATHER: 6, WOOD: 7, TRIM: 8,
+  /* DYED WOOL, NOT TEAM-DYED.
+     Cloth takes the team colour through MAT_LINEN/MAT_GAMBESON, and the
+     shader replaces the authored HUE with the team's -- only the garment's
+     luminance survives. That is correct for a uniform and it is why the
+     whole army was one blue mass: every cloth garment in the rig was one of
+     those two materials, so there was exactly one tint in the game.
+     Wool is the second cloth: same weave as the dye bath, but it keeps the
+     colour it was authored with, so a spearman's hose, a monk's habit and a
+     mercenary's cloak can be rust, oatmeal and grey around the player's blue
+     surcoat. */
+  WOOL: 9
 };
 
 /* ------------------------------------------------------------
@@ -368,6 +379,42 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
         [hr * 1.19 * HELM_CLEAR * 1.02, SIGHT_HI + hr * 0.05],
         [hr * 1.19 * HELM_CLEAR * 1.02, SIGHT_HI + hr * 0.09]
       ], { seg: g.seg(0), squash: [SQX + 0.02, SQZ * 1.06] });
+
+      /* THE LOWER FACE OF A GREAT HELM IS NOT BLANK.
+         With the sight done, everything below it was an unbroken band of
+         steel from the slit down to the gorget: the helmet read as a bucket
+         with a letterbox in it. Historical great helms carry a cross-shaped
+         breathing arrangement -- a vertical slot below the sight running
+         down over the mouth, and a row of small holes either side of it.
+         That cross is also what stops the lower half reading as a face: a
+         blank band under a slit is a visor, and a visor is where a viewer
+         looks for a nose. */
+      const SLOT_R = 1.18 * HELM_CLEAR * 1.03;
+      g.material(MAT.LEATHER).color(0.065, 0.065, 0.075);
+      /* the vertical of the cross: brow to chin, on the centre line */
+      g.lathe(B.HEAD, [
+        [hr * SLOT_R, headY - hr * 0.74],
+        [hr * SLOT_R, SIGHT_LO - hr * 0.02]
+      ], { seg: 4, squash: [SQX + 0.02, SQZ * 1.06],
+           arc: Math.PI * 0.085, arcStart: Math.PI * 0.5 - Math.PI * 0.0425 });
+      /* the breaths: three a side -- AT NEAR ONLY.
+         Six holes are 60 triangles, and a breath hole is 12 mm across, which
+         at the mid tier is under three pixels: below the point where an eye
+         can see it at all. The vertical slot carries the cross read at every
+         distance on its own. */
+      if (g.detail === DETAIL.NEAR) for (const side of [-1, 1]) {
+        for (let i = 0; i < 3; i++) {
+          const by = headY - hr * (0.28 + i * 0.16);
+          const ba = Math.PI * 0.5 + side * Math.PI * (0.13 + i * 0.012);
+          const bw = Math.PI * 0.030;
+          g.lathe(B.HEAD, [
+            [hr * SLOT_R, by - hr * 0.030],
+            [hr * SLOT_R, by + hr * 0.030]
+          ], { seg: 3, squash: [SQX + 0.02, SQZ * 1.06],
+               arc: bw, arcStart: ba - bw * 0.5 });
+        }
+      }
+      g.material(MAT.PLATE).color(0.70, 0.72, 0.76);
     }
     return;
   }
@@ -467,16 +514,52 @@ export function buildHelm(g, m, kind, age = 3, opts = {}) {
 export function buildCrest(g, m, colour, count = 4) {
   const { headY, hr } = m;
   g.material(MAT.HAIR).color(colour);
-  /* A crest is a fin, so each lock is one quad wide and one segment deep:
-     at two rings per lock, five locks cost 60 triangles for a plume. */
-  /* Three segments, not four: a plume lock is 12 mm across and reads purely
-     as a silhouette against the sky, and every triangle in the crest is a
-     triangle the age-4 soldier does not have for his armour. */
-  for (let i = 0; i < count; i++) {
-    const t = (i - (count - 1) / 2) / ((count - 1) / 2 || 1);
-    g.tube(B.HEAD, [0, headY + hr * 1.10, t * hr * 0.60],
-      [0, headY + hr * (1.55 + 0.20 * (1 - Math.abs(t))), t * hr * 0.90],
-      0.024, 0.015, { seg: 3, rings: 1, squash: [0.55, 1.0] });
+  /* A CREST IS A FIN OVER THE CROWN, NOT A BUNCH OF STICKS.
+     The old version started each lock at headY + 1.10 hr and ran it to
+     +1.55..1.75 hr. That is fine on a bare head and completely wrong on a
+     great helm, whose crown closes at +1.46 hr: the first 0.36 hr of every
+     lock was INSIDE the steel, so what rendered was three or four little
+     red sticks appearing out of the top of an otherwise plain helmet.
+     Worse, a 24 mm tube is a rod however you colour it, and a crest is a
+     sheet -- a plume is read from its silhouette edge-on and from its flat
+     face abeam, and a rod has neither.
+     So: one FIN in the X=0 plane, swept front-to-back over the crown with
+     `loft`, which takes the normal from the surface and solves its own
+     winding. It starts on the crown, peaks just behind the apex, and sweeps
+     down the back -- which is the shape that reads as a plume from every
+     angle, including the front, where it is a thin dark line against the
+     sky rather than a fork of sticks. */
+  const CROWN = headY + hr * 1.44;
+  const HALF = hr * 0.030;          /* fin half-thickness */
+  const sect = (base, h, taper) => [
+    [-HALF * taper, base],
+    [-HALF * 0.55 * taper, base + h],
+    [HALF * 0.55 * taper, base + h],
+    [HALF * taper, base]
+  ];
+  /* THE FIN HAS TO CLEAR THE CROWN BY MORE THAN ITS OWN BASE.
+     At 0.40 hr tall and starting at the crown it rendered as a red wedge
+     sitting ON the helmet like a finial -- most of the sheet was either
+     inside the steel or foreshortened against it. A plume rises: it is
+     anchored low at the brow, peaks a third of a head above the crown, and
+     falls away down the back. */
+  g.loft(B.HEAD, [
+    { z: hr * 0.40, pts: sect(CROWN - hr * 0.44, hr * 0.10, 0.45) },
+    { z: hr * 0.10, pts: sect(CROWN - hr * 0.14, hr * 0.62, 1.00) },
+    { z: -hr * 0.20, pts: sect(CROWN - hr * 0.02, hr * 0.72, 0.92) },
+    { z: -hr * 0.56, pts: sect(CROWN - hr * 0.30, hr * 0.40, 0.55) },
+    { z: -hr * 0.86, pts: sect(CROWN - hr * 0.86, hr * 0.10, 0.30) }
+  ], { axis: [0, CROWN] });
+  /* Two smaller side locks, so a crest is not a single flat blade. They sit
+     behind the fin's peak and are half its height; `count` gates them so a
+     cheap plume can be the fin alone. */
+  if (count >= 3) {
+    for (const side of [-1, 1]) {
+      g.tube(B.HEAD,
+        [side * hr * 0.11, CROWN - hr * 0.06, -hr * 0.10],
+        [side * hr * 0.24, CROWN + hr * 0.40, -hr * 0.52],
+        0.026, 0.009, { seg: 3, rings: 1, squash: [0.70, 1.0] });
+    }
   }
 }
 
@@ -488,10 +571,21 @@ export function buildCrest(g, m, colour, count = 4) {
 export function buildSurcoat(g, m, opts = {}) {
   const { x, y, cd, sw } = m;
   const flares = opts.flares !== false;
-  /* Mid grey, not near-white: the team tint replaces the hue and keeps
-     this garment's luminance, so a white surcoat has no value left to
-     keep and flattens into a saturated slab. */
-  g.material(MAT.LINEN).color(0.58, 0.56, 0.60);
+  /* `wool` makes the surcoat take its OWN colour instead of the team's.
+     Most of the army wears the player's blue and should; the classes that
+     are not part of a uniform -- a villager's smock, a monk's habit, a
+     mercenary's coat, a raider's cloak -- pass a colour here and get it.
+     Without this every cloth garment in the game was MAT_LINEN, the shader
+     replaces the authored hue with the team's, and the result was an army
+     that read as one blue mass at any distance. */
+  if (opts.wool) {
+    g.material(MAT.WOOL).color(opts.wool);
+  } else {
+    /* Mid grey, not near-white: the team tint replaces the hue and keeps
+       this garment's luminance, so a white surcoat has no value left to
+       keep and flattens into a saturated slab. */
+    g.material(MAT.LINEN).color(0.58, 0.56, 0.60);
+  }
   const profile = flares
     ? [
       [x(0.170), y(1.02)],

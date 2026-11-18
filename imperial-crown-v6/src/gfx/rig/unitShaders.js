@@ -334,6 +334,16 @@ void main() {
     float grain = sin(y * 52.0 + hash12(floor(wp * 30.0)) * 2.0) * 0.5 + 0.5;
     albedo *= 0.78 + grain * 0.36;
     roughness = 0.80;
+  } else if (mat == 9) {
+    /* DYED WOOL. The same weave as the dyed cloth above, but the colour is
+       the one the wardrobe authored rather than the team's. This is what
+       keeps an army from being one blue mass: the uniform is LINEN and takes
+       the player's colour, while hose, habits and mercenary coats are WOOL
+       and stay rust, oatmeal or grey. */
+    float w2 = weave(wp + y * 0.7, 46.0, 0.5);
+    float n2 = hash12(floor(wp * 190.0));
+    albedo *= 0.84 + w2 * 0.20 + n2 * 0.05;
+    roughness = 0.86;
   }
 
   vec3 N = normalize(vNormal);

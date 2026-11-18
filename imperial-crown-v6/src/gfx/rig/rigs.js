@@ -29,7 +29,9 @@ export const MAT = {
   LINEN: 0, MAIL: 1, PLATE: 2, GAMBESON: 3,
   SKIN: 4, HAIR: 5, LEATHER: 6, WOOD: 7,
   /* Undyed cloth. Not team-dyed, so it can frame the team colour. */
-  TRIM: 8
+  TRIM: 8,
+  /* Dyed wool. Also not team-dyed -- keeps its authored colour. */
+  WOOL: 9
 };
 
 /**
@@ -130,7 +132,13 @@ export function buildHumanoid(g, prop, def, opts = {}) {
        Classes that are armoured to the skin (the knight, the huskarl) say so
        with bareChest: they get MAT_MAIL on the body itself; everyone else
        gets cloth and lets the wardrobe decide what armour they wear. */
-    bodyMat: def.bodyMat !== undefined ? def.bodyMat : (def.bareChest ? 4 : (def.mailedBody ? 1 : 3)),
+    /* A class may declare `woolBody` and keep its own cloth colour instead
+       of taking the team's. The torso is the biggest single surface on the
+       figure, so this is the parameter that decides whether an army reads as
+       a uniform or as one blue mass. */
+    bodyMat: def.bodyMat !== undefined
+      ? def.bodyMat
+      : (def.bareChest ? 4 : (def.mailedBody ? 1 : (def.woolBody ? 9 : 3))),
     legMat: def.legMat !== undefined ? def.legMat : ((def.bareChest || def.mailedBody) ? (def.bareChest ? 4 : 1) : 3),
     /* A bare chest has to be skin-coloured as well as skin-material: using
        the gambeson's fabric colour on MAT_SKIN renders a topless warrior in
@@ -140,7 +148,9 @@ export function buildHumanoid(g, prop, def, opts = {}) {
        asked for MAT_MAIL got a pale linen-tinted mail that reads as cloth
        at any distance -- the cataphract's chest was indistinguishable from
        the man-at-arms' padded jacket. */
-    bodyCol: def.bodyCol || (def.bareChest ? skin : (def.mailedBody ? [0.62, 0.61, 0.57] : [0.78, 0.76, 0.70]))
+    bodyCol: def.bodyCol || (def.bareChest ? skin
+      : (def.mailedBody ? [0.62, 0.61, 0.57]
+        : (def.woolBody || [0.78, 0.76, 0.70])))
   };
   const m = buildBody(g, prop, bodyOpts);
   /* opts carries the class key through from buildRig, so the guard lookup is
