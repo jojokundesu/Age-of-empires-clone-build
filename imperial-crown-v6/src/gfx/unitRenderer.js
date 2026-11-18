@@ -33,6 +33,7 @@ import { mountSeatHeight } from './rig/mount.js';
 import { UNIT_MAX_ROWS, UNIT_TEX_WIDTH } from './rig/unitShaders.js';
 import { InstanceBatch } from './batch.js';
 import { BonePalette } from './rig/palette.js';
+import { TEAM_COLORS } from '../sim/data.js';
 
 /* Animation LOD thresholds, in metres from the camera. */
 export const ANIM_LOD = { NEAR: 20, MID: 60 };
@@ -216,7 +217,20 @@ export class UnitRenderer {
       const packed = (key === 'man_at_arms' ? 1 : 0) | (age << 12);
       const seed = u.animSeed !== undefined ? u.animSeed : 0;
       const gear = 0;
-      batch.push(m, 1, 1, 1, 1, 0, 1, seed,
+      /* THE TEAM COLOUR, WHICH WAS WHITE.
+         This pushed a literal (1, 1, 1) tint, and the very first thing the
+         unit shader does with a tint is feed a white one through the dye:
+         `tintMax` normalises to (1,1,1), `sat` -- which measures how far the
+         tint is from neutral -- comes out 0, so the dye is skipped and every
+         team-dyed garment renders at its AUTHORED value. Those authored
+         values are deliberately mid-greys and off-whites because the shader
+         is supposed to replace their hue, so what the player saw was a
+         mannequin: pale grey-white cloth on every class in the army.
+         The Armory passes TEAM_COLORS[1].unit and looks correct, which is
+         what put this difference on screen and made it findable. */
+      const tc = TEAM_COLORS[u.team] || TEAM_COLORS[1];
+      const uc = tc.unit;
+      batch.push(m, uc[0], uc[1], uc[2], 1, 0, 1, seed,
         a.row, packed, seed, gear);
       this.stats.units++;
     }

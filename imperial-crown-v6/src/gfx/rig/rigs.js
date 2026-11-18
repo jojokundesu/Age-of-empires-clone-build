@@ -24,6 +24,18 @@ import { CLASSES, FALLBACK_CLASS } from './classes.js';
 import { buildMount, MOUNT_STANDARD, MOUNT_PONY } from './mount.js';
 import { guardGrips } from './animator.js';
 
+/* THE PADDED JACKET, AS A COLOUR AND NOT A PLACEHOLDER.
+   This default was 0.78/0.76/0.70 -- essentially white. It is the body colour
+   for every class that does not override it, so the shader's quilt pattern
+   was being laid over a near-white surface, and under the sun plus the tone
+   curve that surface clipped to cream. A swordsman, a skirmisher and an
+   axeman therefore read as white mannequins even after the palette and the
+   lighting were fixed, because the largest single surface on the figure was
+   authored white. Real gambeson is dirty undyed linen: oatmeal, toward tan.
+   The team dye does not reach MAT_GAMBESON's authored hue, only MAT_LINEN's,
+   so a class that passes bodyMat 3 keeps this colour on purpose. */
+export const GAMBESON_COL = [0.56, 0.50, 0.40];
+
 /* Material ids shared with unitShaders.js */
 export const MAT = {
   LINEN: 0, MAIL: 1, PLATE: 2, GAMBESON: 3,
@@ -156,7 +168,7 @@ export function buildHumanoid(g, prop, def, opts = {}) {
          is blackened or blued iron with a dark sheen; the rings catch light,
          the garment does not. */
       : (def.mailedBody ? [0.34, 0.34, 0.33]
-        : (def.woolBody || [0.78, 0.76, 0.70])))
+        : (def.woolBody || GAMBESON_COL)))
   };
   const m = buildBody(g, prop, bodyOpts);
   /* opts carries the class key through from buildRig, so the guard lookup is

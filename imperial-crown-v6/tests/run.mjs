@@ -66,6 +66,13 @@ const SUITES = [
   ['shots', 'tests/shots.mjs', true],
   ['responsive', 'tests/responsive.mjs', true],
   ['playtest', 'tests/playtest.mjs', true],
+  /* What the units actually look like once the game is drawing them. Every
+     other renderer suite either runs on the CPU (rigshot, which never touches
+     the unit shader) or renders the pedestal (the Armory, which lights the
+     figure its own way and pushes its own team colour). Neither could see the
+     army render as white mannequins, so this suite boots the real game and
+     measures the pixels. */
+  ['unitcolour', 'tests/unitcolour.mjs', true],
   ['fuzzcrowns', 'tests/fuzzcrowns.mjs', ['--seconds', '180', '--seeds', '2']]
 ];
 

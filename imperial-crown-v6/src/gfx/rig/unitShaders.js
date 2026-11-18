@@ -348,7 +348,13 @@ void main() {
        multiplied by the albedo and its weight is cut, which is both more
        physical and the actual fix. */
     specTint = albedo / max(steelL, 0.12);
-    specGain = mix(0.30, 0.62, plish);
+    /* A polished helm is bright because it REFLECTS the sky, and the sky here
+       is a blue-white HDR key. At the old gain a 0.30-albedo helmet still
+       rendered as a pale grey dome, because the specular term was doing all
+       the work and the albedo was doing none. Halving the gain puts the
+       highlight back to being a highlight: the blackened-iron helms stay
+       dark, and only the polished ones catch the light. */
+    specGain = mix(0.12, 0.30, plish);
   } else if (mat == MAT_SKIN) {
     float v = hash12(floor(wp * 220.0));
     albedo *= 0.94 + v * 0.12;
@@ -400,10 +406,29 @@ void main() {
   float nh = max(dot(N, H), 0.0);
   float spec = pow(nh, mix(8.0, 96.0, 1.0 - roughness)) * mix(0.06, 1.5, metalness);
 
-  vec3 color = albedo * (uSunColor * ndl * sh * cl * 1.25 + ambient);
+  /* THE UNITS WERE LIT LIKE LANDSCAPE, AND IT BLEACHED THEM WHITE.
+     Handing this shader the authored albedo -- cream TRIM at 0.90, wool at
+     0.61, skin at 0.68 -- was not enough on its own. The sun is HDR: calling
+     uSunColor shows [2.05, 1.92, 1.66], and this line multiplied it by 1.25
+     and then handed the result to ACES with an exposure of 1.02. A wool tunic
+     came out of that sum at about 1.9x the tone curve's white point, so ACES
+     desaturated it toward cream while it compressed; the head, the sleeves
+     and the skirt went the same way and the figure flattened into one pale
+     silhouette with no form left in it. Only the leather legs, five times
+     darker than the trim, came out of the curve with a colour.
+     Terrain and buildings can carry that gain because they are broad, flat
+     and mostly mid-tone. A two-metre figure is none of those things, so units
+     get a gentler transfer: the same sun and the same ambient, scaled down
+     so an average cloth albedo lands AT the white point rather than two
+     stops past it. Every authored value now survives the curve, which is
+     the whole point of authoring them. */
+  const float UNIT_KEY = 0.34;
+  const float UNIT_AMBIENT = 0.55;
+  vec3 lit = uSunColor * ndl * sh * cl * (1.25 * UNIT_KEY) + ambient * UNIT_AMBIENT;
+  vec3 color = albedo * lit;
   /* specTint and specGain are set by the plate branch; everything else gets
      the old untinted highlight at its old weight. */
-  color += uSunColor * spec * sh * cl * 1.3 * specGain * specTint;
+  color += uSunColor * spec * sh * cl * 1.3 * specGain * specTint * UNIT_KEY;
 
   /* Team colour on cloth: take the HUE from the team, the VALUE from the
      garment, and the weave's luminance variation from the cloth itself, so a
@@ -453,7 +478,7 @@ void main() {
        panels. */
     vec3 dye = pow(tintMax, vec3(1.8)) * shade * 1.25;
     vec3 teamAlb = mix(albedo, dye, sat);
-    color = mix(color, teamAlb * (uSunColor * ndl * sh * cl * 1.25 + ambient), 0.82);
+    color = mix(color, teamAlb * lit, 0.82);
   }
 
   float dmg = vState.x;

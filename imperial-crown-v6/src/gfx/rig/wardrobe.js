@@ -45,10 +45,17 @@ export const MAT = {
    numbers decide the whole look of the armour, so they live in one place and
    run from blackened iron to polished plate. Nothing in this file should
    write a raw plate colour again. */
-export const IRON = [0.21, 0.20, 0.19];      /* blackened, mass-issue */
-export const STEEL = [0.36, 0.36, 0.37];     /* milled, the usual */
-export const BRIGHT = [0.52, 0.53, 0.56];    /* polished, for the elite */
-export const WEAPON = [0.44, 0.44, 0.46];    /* blade and haft fittings */
+/* The four finishes, in the ORDER a viewer reads them: blackened iron,
+   milled steel, polished steel, and the slightly cooler blade steel. Each is
+   a warm-to-neutral dark, never a blue-white, because a helmet is the most
+   convex thing on a soldier and any value above roughly 0.4 turns into a
+   white blob once the sun, the ambient and the tone curve have had it. The
+   spread between them is what makes a shield wall look issued rather than
+   moulded: some helms are near black, a few catch the light. */
+export const IRON = [0.17, 0.16, 0.15];      /* blackened, mass-issue */
+export const STEEL = [0.27, 0.26, 0.26];     /* milled, the usual */
+export const BRIGHT = [0.40, 0.40, 0.42];    /* polished, for the elite */
+export const WEAPON = [0.33, 0.33, 0.35];    /* blade and haft fittings */
 
 /* ------------------------------------------------------------
    Heads
