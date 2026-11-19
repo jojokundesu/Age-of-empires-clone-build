@@ -251,14 +251,12 @@ export class AIController {
     // ---------- age up ----------
     this.manageAges(st, age);
 
-    // ---------- court: market ----------
-    this.manageCourt(st, age);
+    // ---------- the market ----------
+    this.manageMarket(st, age);
 
     // ---------- the sky ----------
     this.manageOmens(st, age);
 
-    // ---------- the realm's temper ----------
-    this.manageRealm(st, age);
 
     // ---------- military ----------
     this.manageMilitary(st, age);
@@ -313,25 +311,13 @@ export class AIController {
     }
   }
 
-  /* ---------------- court ---------------- */
-  /** Appoint what can be appointed. There is nothing else to spend. */
-  manageCourtOffices(st, age) {
-    const g = this.game;
-    if (!g.court) return;
-    /* appointments: one per decision, so the court fills over a few seconds */
-    const cands = g.court.candidate(this.team);
-    for (const [id, unit] of Object.entries(cands)) {
-      if (g.court.canAppoint(this.team, id, unit)) continue;
-      const res = g.court.appoint(this.team, id, unit);
-      if (res.ok) break;
-    }
-  }
-
-  manageCourt(st, age) {
-    this.manageCourtOffices(st, age);
+  /* ---------------- the market ---------------- */
+  /** The market turns a gold mountain into the food and timber the army
+      actually eats. This used to be reached through a court-appointments
+      step; the court is gone, the market is not. */
+  manageMarket(st, age) {
     const g = this.game;
     const my = this.myBuildings();
-    // the market turns a gold mountain into the food the army actually eats
     const hasMarket = my.some((b) => b.type === 'market' && b.buildProgress >= 1);
     if (hasMarket) {
       // gold mountains are useless unless they become food and wood
@@ -523,10 +509,6 @@ export class AIController {
     if (plan.role === 'knight' && age >= 1 && this.count('stable') === 0) {
       if (this.tryBuild('stable', st)) return;
     }
-    /* supply: a raid that walks past its tents breaks. The AI keeps a forward
-       tent on the road to the enemy and a second behind it, so its armies can
-       hold ground a whole map from the town centre. */
-    if (this.manageSupply(st, age)) return;
     // a town centre if we somehow lost ours
     if (this.count('town_center') === 0) {
       if (this.tryBuild('town_center', st)) return;
@@ -554,30 +536,6 @@ export class AIController {
     if (age >= 1 && this.count('lumber_camp') < 2 && st.res.wood < 200 && this.tryBuild('lumber_camp', st)) return;
     // late game: more farms and towers
     if (age >= 2 && st.res.wood > 400 && this.count('farm') < 12) this.tryBuild('farm', st);
-  }
-
-  /** One forward tent at ~42 % of the road, a second at ~72 %. */
-  manageSupply(st, age) {
-    const g = this.game;
-    if (age < 1) return false;
-    if ((this.supplyAt || 0) > g.time) return false;
-    if (this.militaryUnits().length < 8) return false;
-    const tents = this.myBuildings().filter((b) => b.type === 'supply_tent');
-    if (tents.length >= 2) return false;
-    const cost = g.buildingCost('supply_tent', this.team);
-    if (!g.canAfford(this.team, cost)) return false;
-    const eb = this.enemyBase || { x: -this.base.x, z: -this.base.z };
-    const frac = tents.length === 0 ? 0.42 : 0.72;
-    const tx = this.base.x + (eb.x - this.base.x) * frac;
-    const tz = this.base.z + (eb.z - this.base.z) * frac;
-    const spot = g.freeSpotNear(tx, tz, { radius: 1.2, def: { size: 2.4 } }, 16);
-    if (!spot) { this.supplyAt = g.time + 30; return false; }
-    const b = g.placeBuilding('supply_tent', this.team, spot[0], spot[1], {});
-    if (!b) { this.supplyAt = g.time + 30; return false; }
-    const builders = this.pickBuilders(1);
-    if (builders.length) g.orderBuild(builders, b);
-    this.supplyAt = g.time + 25;
-    return true;
   }
 
   tryBuild(type, st) {
@@ -1378,64 +1336,6 @@ export class AIController {
     return best;
   }
 
-  /* ---------------- the realm ----------------
-     The AI has the same two estates and the same two ways to break, so it
-     has to play the same game the player does: price its taxes, throw a
-     feast when the commons are close to the line, and put down its own
-     risings before they cost it a hall. It is deliberately not perfect --
-     it reacts when the bar is already low, the way a player does. */
-  manageRealm(st, age) {
-    const g = this.game;
-    const realm = g.realm;
-    if (!realm) return;
-    const s = realm.state(this.team);
-    if (!s || s.empty) return;
-    const gold = st.res.gold || 0;
-
-    /* tax: fund the war when the bank is thin, relent before the villages
-       boil over. The thresholds leave a band where it simply leaves it. */
-    let wantTax = 'fair';
-    if (gold < 120 && s.commons > 56) wantTax = 'heavy';
-    else if (gold > 420 && s.commons < 60) wantTax = 'merciful';
-    else if (s.commons < 40) wantTax = 'merciful';
-    if (wantTax !== s.tax) realm.setTax(this.team, wantTax);
-
-    /* the two ways to buy goodwill -- only when the bar is genuinely low,
-       and only when the spend does not starve the army */
-    if (s.commons < 33 && s.feastCd <= 0 && gold > 260 && (st.res.food || 0) > 220) {
-      const r = realm.feast(this.team);
-      if (r.ok) this.log.push(['feast', g.time | 0, Math.round(s.commons)]);
-    }
-    if (s.nobles < 33 && s.endowCd <= 0 && gold > 320) {
-      const r = realm.endow(this.team);
-      if (r.ok) this.log.push(['endow', g.time | 0, Math.round(s.nobles)]);
-    }
-
-    /* A rising is an emergency, not a raid. Everything home is thrown at the
-       mob before it reaches a hall: rebels burn buildings, and buildings are
-       the one thing an AI cannot rebuild fast enough to ignore. */
-    let rebel = null, rebelD = Infinity;
-    for (const u of g.units) {
-      if (u.dead || !u.isRebel || u.rebelAgainst !== this.team) continue;
-      const d = dist2(u.x, u.z, this.base.x, this.base.z);
-      if (d < rebelD) { rebelD = d; rebel = u; }
-    }
-    if (rebel && rebelD < 60 * 60) {
-      this.rebelAlert = { x: rebel.x, z: rebel.z, t: g.time };
-      const army = this.militaryUnits();
-      for (const u of army) {
-        if (u.aiRole === 'hunt') continue;
-        if (dist2(u.x, u.z, this.base.x, this.base.z) > 46 * 46) continue;
-        u.aiRole = 'defend';
-        if (u.target !== rebel) {
-          u.target = rebel;
-          u.state = STATE.ATTACK;
-          u.noAggro = false;
-        }
-      }
-    }
-  }
-
   /* ---------------- military ---------------- */
   manageMilitary(st, age) {
     const g = this.game;
@@ -1767,9 +1667,9 @@ export function unitThreat(u) {
     }
   }
   if (u.def.hero) t += 2;
-  /* an officer of the enemy court is worth more than the unit carrying the
-     office: killing the Marshal is how you break an army's spine */
-  if (u.courtOffice) t += 3;
+  /* a champion is worth more than the unit carrying the title: killing him is
+     how you break an army's spine */
+  if (u.champion) t += 3;
   /* a chevron is worth more than a body: veterans are the enemy's future */
   t += (u.rank || 0) * 1.6;
   /* renown: a man who has survived long enough to earn a name is worth more

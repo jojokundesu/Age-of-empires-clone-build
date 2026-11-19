@@ -22,8 +22,6 @@ const MINIMAP_TEAM = { 1: TEAM_COLORS[1].css, 2: TEAM_COLORS[2].css, 3: TEAM_COL
    not at war with you never reads as the enemy. */
 const mapColour = (team, game) =>
   (game && game.partyTeam === team ? PARTY_COLOR.css : (MINIMAP_TEAM[team] || '#b9a678'));
-import { OFFICES as COURT_OFFICES, RANK_AT } from '../sim/court.js';
-import { TAX_RATES } from '../sim/realm.js';
 
 const CMD_HZ = 9;              // command card / text refresh rate
 const MINI_HZ = 11;
@@ -69,8 +67,8 @@ export class UI {
     this.el = {};
     const ids = ['resFood', 'resWood', 'resGold', 'resStone', 'resPop',
       'dotFood', 'dotWood', 'dotGold', 'dotStone',
-      'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer', 'seasonChip', 'realmChip', 'climateChip',
-      'btnIdle', 'idleBadge', 'btnArmy', 'btnTech', 'btnCourt', 'courtBadge',
+      'ageBtn', 'ageName', 'ageHint', 'clock', 'worldTime', 'wonderTimer', 'seasonChip', 'climateChip',
+      'btnIdle', 'idleBadge', 'btnArmy', 'btnTech',
       'btnSound', 'btnPause', 'btnMenu', 'alertStrip',
       'leftRail', 'railToggle', 'stanceBar', 'formationBar', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'camTiltUp', 'camTiltDown',
       'minimap', 'miniStamp', 'btnGotoTC', 'btnMiniMode', 'btnFormation',
@@ -124,8 +122,6 @@ export class UI {
     click(el.btnIdle, () => this.cycleIdleVillager());
     click(el.btnArmy, () => this.selectArmy());
     click(el.btnTech, () => this.openTech());
-    click(el.btnCourt, () => this.openCourt());
-    click(el.realmChip, () => this.openCourt());
     click(el.climateChip, () => this.openClimate());
     click(el.btnMenu, () => this.app.openPause?.());
     click(el.btnPause, () => this.togglePause());
@@ -404,7 +400,6 @@ export class UI {
       out.push({ icon: 'villager', label: 'Idle', action: () => this.cycleIdleVillager() });
       out.push({ icon: 'home', label: 'Town', action: () => this.centreOnTownCentre() });
       out.push({ icon: 'scroll', label: 'Tech', action: () => this.openTech() });
-      out.push({ icon: 'people', label: 'Court', action: () => this.openCourt() });
       out.push({ icon: 'map', label: 'Explore', action: () => this.sendScout() });
       return out;
     }
@@ -568,7 +563,6 @@ export class UI {
     const g = this.game;
     this.input.armed = null;
     g.placing = null;
-    g.courtArmed = null;
     if (g.modCast) g.modHost?.cancelCast();
     g.clearSelection();
     this._adHocUntil = 0; this.sig = '';
@@ -758,7 +752,7 @@ export class UI {
   openBuildMenu(villagers) {
     const g = this.game;
     const age = g.teams.get(1).age;
-    const types = ['house', 'farm', 'supply_tent', 'mill', 'lumber_camp', 'mining_camp', 'barracks', 'archery_range',
+    const types = ['house', 'farm', 'mill', 'lumber_camp', 'mining_camp', 'barracks', 'archery_range',
       'stable', 'blacksmith', 'market', 'watch_tower', 'palissade_wall', 'stone_wall', 'stone_gate',
       'monastery', 'siege_workshop', 'university', 'castle', 'dock', 'wonder'];
     /* a mod session adds its own tools to the same menu, in the same idiom */
@@ -949,12 +943,6 @@ export class UI {
       '<span class="dim tiny">Research at the matching building. Click a building to see what it can research.</span>');
   }
 
-  /* ---------------- the Court ----------------
-     Four offices, each held by a person on the map. The panel only *arms*
-     an appointment: the next tap on the battlefield chooses the subject,
-     which keeps the whole system inside the grammar the player already
-     knows (pick a card, tap a target). There are no writs and no favour --
-     an office is who holds it, and the passive that follows. */
   /* ---------------- the slow sky ----------------
      The climate panel is deliberately small: what the era is, what it is
      doing to every number, how much strain has built, and *when* the next
@@ -972,8 +960,7 @@ export class UI {
       ['Wheat and meat', pct(era.food)],
       ['Timber', pct(era.wood)],
       ['Marching', pct(era.speed)],
-      ['Healing', pct(era.heal)],
-      ['Nerve', pct(era.morale)]
+      ['Healing', pct(era.heal)]
     ].map(([k, v]) => `<div class="row"><b>${k}</b><span class="dim">${v}</span></div>`).join('');
     this.menu?.openModal('THE SLOW SKY', era.name,
       `<div class="realmBlock">
@@ -985,114 +972,6 @@ export class UI {
         <p class="dim tiny" style="margin-top:5px">Every farm, every roof and every log on the fire adds strain; standing forest takes it back. Cut the island bare and the sky changes early — for both crowns.</p>
       </div>`,
       '<span class="dim tiny">The Wheel of the Year is the weather. This is the climate: a slower clock that decides which weather is even possible.</span>');
-  }
-
-  /* ---------------- The Crown's Standing ----------------
-     The realm is the one system in the game whose numbers a player *must*
-     be able to argue with, so the panel prints the whole ledger: every line
-     that moves an estate is a row with its value and its icon. No hidden
-     moods, no "your people are unhappy" without a reason on screen. */
-  realmPanelHtml() {
-    const g = this.game;
-    if (!g || !g.realm) return '';
-    const s = g.realm.state(1);
-    const led = g.realm.ledger(1);
-    const rowFor = (lines, value, target, colour, label) => {
-      const rows = lines
-        .filter((l) => l.label !== 'The crown endures' && l.label !== 'A lord with a seat')
-        .map((l) => `<span class="${l.value >= 0 ? 'up' : 'down'}">${icon(l.icon)} ${l.label} ${l.value > 0 ? '+' : ''}${l.value.toFixed(1)}</span>`)
-        .join('');
-      const gap = target - value;
-      const arrow = gap > 0.4 ? `↑ ${gap.toFixed(0)} to settle` : gap < -0.4 ? `↓ ${(-gap).toFixed(0)} to settle` : 'settled';
-      return `
-      <div class="realmHead">
-        <h4 style="color:${colour}">${label} · ${g.realm.band(1, value === s.commons ? 'commons' : 'nobles').name}</h4>
-        <div class="realmBar"><i style="width:${Math.round(value)}%;background:${colour}"></i><b class="tick" style="left:${Math.round(Math.max(0, Math.min(100, target)))}%"></b></div>
-        <div class="realmLedger"><em class="dim">${arrow}</em><br>${rows || '<span class="dim">nothing moves it</span>'}</div>
-      </div>`;
-    };
-    const taxRows = (TAX_RATES || []).map((tr) => `
-      <button class="ghostBtn ${s.tax === tr.id ? 'on' : ''}" data-tax="${tr.id}" title="${tr.blurb}">${tr.name}</button>`).join('');
-    const unrest = Math.max(s.unrestC, s.unrestN);
-    return `
-    <div class="realmBlock">
-      <div class="realmHeads">
-        ${rowFor(led.commons, s.commons, led.targetC, '#9be08a', 'Commons')}
-        ${rowFor(led.nobles, s.nobles, led.targetN, '#e8c47a', 'Nobility')}
-      </div>
-      <div class="realmTax" data-tax-row>${taxRows}</div>
-      ${unrest > 1 ? `<div class="realmUnrest">Unrest ${Math.round(unrest)}% — at 100% the ${s.unrestC >= s.unrestN ? 'commons rise' : 'nobility raise a claimant'}</div>` : ''}
-      <div class="realmBtnRow">
-        <button class="ghostBtn" data-realm="feast" ${s.feastCd > 0 ? 'disabled' : ''}>Feast · 140f 90g${s.feastCd > 0 ? ` · ${Math.ceil(s.feastCd)}s` : ''}</button>
-        <button class="ghostBtn" data-realm="endow" ${s.endowCd > 0 ? 'disabled' : ''}>Endowments · 180g${s.endowCd > 0 ? ` · ${Math.ceil(s.endowCd)}s` : ''}</button>
-      </div>
-    </div>`;
-  }
-
-  openCourt() {
-    const g = this.game;
-    if (!g || !g.court) return;
-    const t = g.teams.get(1);
-    const age = t.age;
-    const rows = g.court.summary(1).map((o) => {
-      const def = COURT_OFFICES.find((d) => d.id === o.id);
-      const locked = age < def.age;
-      const holder = o.holder;
-      const rankPips = '●'.repeat(o.rank) + '○'.repeat(3 - o.rank);
-      const deedBar = `<div class="deedBar"><i style="width:${Math.round(o.progress * 100)}%"></i></div>`;
-      return `
-      <div class="courtRow ${locked ? 'locked' : ''} ${holder ? 'on' : ''}" data-office-row="${o.id}">
-        <b>${icon(o.icon)} ${o.name} <span class="tiny dim">${rankPips}</span></b>
-        <span>
-          ${holder
-            ? `<em>${holder.def.name} · rank ${o.rank}</em> ${o.rank < 3 ? deedBar + `<em class="dim tiny">${o.deeds}/[${rankTarget(o.rank)}] ${def.deedLabel}</em>` : '<em class="gold tiny">rank III</em>'}`
-            : `<em class="dim">${o.vacantFor > 0 ? `in mourning · ${Math.ceil(o.vacantFor)}s` : 'vacant'}</em>`}
-          <br><span class="tiny dim">${def.passive[Math.min(o.rank - 1, 2)]}</span>
-          <br>
-          ${locked ? `<span class="tiny dim">Unlocks in the ${def.age === 1 ? 'Feudal' : 'Castle'} Age</span>` : holder
-            ? `<button class="ghostBtn" data-appoint="${o.id}">Replace · ${costText(def.cost)}</button>
-               <button class="ghostBtn" data-dismiss="${o.id}">Dismiss</button>`
-            : `<button class="ghostBtn" data-appoint="${o.id}" ${o.vacantFor > 0 ? 'disabled' : ''}>Appoint · ${costText(def.cost)}</button>`}
-        </span>
-      </div>`;
-    }).join('');
-    this.menu?.openModal('THE COURT', 'Offices of the realm', `${this.realmPanelHtml()}<div class="courtList">${rows}</div>`,
-      `<span class="dim tiny">An office is held by a body on the battlefield: appoint a soldier, a villager, a rider or a monk, keep them alive, and the rank comes. Lose them and the office stands empty.</span>`);
-    const body = document.getElementById('modalBody');
-    if (!body) return;
-    body.onclick = (e) => {
-      const tax = e.target.closest('[data-tax]');
-      if (tax) {
-        const r = g.realm.setTax(1, tax.dataset.tax);
-        this.toast(r.ok ? `Tax: ${r.name}` : r.reason, r.ok ? 'info' : 'warn');
-        this.openCourt();
-        return;
-      }
-      const realmBtn = e.target.closest('[data-realm]');
-      if (realmBtn) {
-        const kind = realmBtn.dataset.realm;
-        const r = kind === 'feast' ? g.realm.feast(1) : g.realm.endow(1);
-        if (r.ok) { this.toast(kind === 'feast' ? 'A feast is thrown' : 'Titles granted', 'good'); this.audio?.play('horn'); }
-        else this.toast(r.reason || 'Not possible', 'warn');
-        this.openCourt();
-        return;
-      }
-      const app = e.target.closest('[data-appoint]');
-      if (app) {
-        g.courtArmed = { office: app.dataset.appoint };
-        this.menu?.closeModal();
-        const def = COURT_OFFICES.find((d) => d.id === app.dataset.appoint);
-        this.toast(`Tap one of your ${def.class === 'military' ? 'soldiers' : def.class === 'villager' ? 'villagers' : def.class === 'monk' ? 'monks' : 'units'} to raise them to ${def.name}`, 'gold');
-        return;
-      }
-      const dis = e.target.closest('[data-dismiss]');
-      if (dis) {
-        g.court.dismiss(1, dis.dataset.dismiss);
-        this.refreshCommands(true);
-        this.openCourt();
-        return;
-      }
-    };
   }
 
   openMarket() {
@@ -1433,32 +1312,7 @@ export class UI {
         el.seasonChip.setAttribute('aria-label', text.replace(/\n/g, ', '));
       }
     }
-    /* ---- the Crown's Standing ----
-       One number, because the chip is read at a glance: the *lower* of the
-       two estates. The tooltip carries both bars and the unrest clock, and
-       tapping it opens the Court, where the ledger lives. */
-    if (el.realmChip && g.realm) {
-      const w = g.realm.worst(1);
-      const key = `${Math.round(w.value)}|${w.band.id}|${g.realm.state(1).golden ? 1 : 0}`;
-      if (this._lastRealmKey !== key) {
-        this._lastRealmKey = key;
-        const b = el.realmChip.querySelector('b');
-        if (b) b.textContent = String(Math.round(w.value));
-        el.realmChip.dataset.band = w.band.id;
-        el.realmChip.dataset.golden = g.realm.state(1).golden ? '1' : '0';
-        const use = el.realmChip.querySelector('use');
-        if (use) use.setAttribute('href', w.band.id === 'angry' || w.band.id === 'hostile' ? '#i-warning' : '#i-crown');
-        const d = g.realm.describe(1);
-        const unrest = Math.max(g.realm.state(1).unrestC, g.realm.state(1).unrestN);
-        const text = [`The Crown's Standing`,
-          `Commons: ${d.commons}`, `Nobility: ${d.nobles}`, `Tax: ${d.tax}`,
-          unrest > 1 ? `Unrest: ${Math.round(unrest)}% — a rising gathers` : 'No unrest',
-          d.golden ? 'A golden age' : ''
-        ].filter(Boolean).join('\n');
-        el.realmChip.title = text;
-        el.realmChip.setAttribute('aria-label', text.replace(/\n/g, ', '));
-      }
-    }
+
     /* ---- the slow sky ----
        Names the era and carries a strain bar under it. The tooltip is the
        whole rules table plus when the next turn is coming, because a climate
@@ -1568,21 +1422,7 @@ export class UI {
         el.idleBadge.style.display = idle ? '' : 'none';
       }
     }
-    if (el.courtBadge && g.court) {
-      /* the badge is a nudge, not a census: only seats the player could fill
-         this instant, i.e. unlocked by age and not in mourning */
-      let open = 0;
-      for (const o of g.court.summary(1)) {
-        const def = COURT_OFFICES.find((d) => d.id === o.id);
-        if (!def || o.holder || o.vacantFor > 0) continue;
-        if (t.age < def.age) continue;
-        open++;
-      }
-      if (el.courtBadge.textContent !== String(open)) {
-        el.courtBadge.textContent = String(open);
-        el.courtBadge.style.display = open ? '' : 'none';
-      }
-    }
+
     // stance highlight
     const selUnits = g.selection.filter((e) => e.kind === 'unit' && e.team === 1);
     const stance = selUnits.length ? selUnits[0].stance : null;
@@ -1600,7 +1440,7 @@ export class UI {
     const g = this.game;
     const el = this.el;
     const sel = g.selection.filter((e) => !e.dead);
-    const canClear = !!(sel.length || this.input.armed || g.placing || g.modCast || g.courtArmed);
+    const canClear = !!(sel.length || this.input.armed || g.placing || g.modCast);
     if (el.btnDeselect) el.btnDeselect.style.display = canClear ? '' : 'none';
     el.btnQuickDeselect?.classList.toggle('hidden', !this.panelsCollapsed || !canClear);
     if (!sel.length) {
@@ -1650,7 +1490,7 @@ export class UI {
             : st === STATE.ATTACK ? 'Fighting' : st === STATE.MOVE ? 'Moving'
               : st === STATE.ATTACK_MOVE ? 'Advancing' : st === STATE.IDLE ? 'Idle'
                 : st === STATE.REPAIR ? 'Repairing' : st === STATE.HEAL ? 'Healing'
-                  : st === STATE.ROUT ? 'Falling back' : 'Ready';
+                  : 'Ready';
         sub = `${teamName} · ${stateName}`;
         if (e.guardTarget && !e.guardTarget.dead) sub += ` · Guarding ${e.guardTarget.name}`;
         if (e.squad) sub += ` · ${e.squad.name}`;
@@ -1679,9 +1519,7 @@ export class UI {
           : '';
         /* the flag is the game's own sprite, not a text glyph: U+2691 is
            missing from the device's fallback font and rendered as a box */
-        const morale = (e.def && e.def.attack > 0)
-          ? `<span class="morale${(e.morale ?? 100) < 40 ? ' bad' : ''}" title="Morale — kept up by supply buildings${e.fed ? '' : ' (out of supply)'}"><svg class="ic"><use href="#i-flag"/></svg>${Math.round(e.morale ?? 100)}</span>`
-          : '';
+
         /* the renown power, named: a player cannot counter what is invisible */
         let renown = '';
         if (g.elites) {
@@ -1695,7 +1533,7 @@ export class UI {
         const champ = e.champion && g.champions
           ? `<span class="renownChip championChip" title="Champion perks: ${perkNames.join(', ') || 'none chosen yet'}">✦ ${g.champions.rankName(e)} · ${perkNames.length}</span>`
           : '';
-        el.inspStats.innerHTML = vet + renown + champ + morale + `<span>⚔ ${Math.round(s.attack || 0)}</span><span>🛡 ${s.armor || 0}/${s.pierceArmor || 0}</span>` +
+        el.inspStats.innerHTML = vet + renown + champ + `<span>⚔ ${Math.round(s.attack || 0)}</span><span>🛡 ${s.armor || 0}/${s.pierceArmor || 0}</span>` +
           (s.range > 1.2 ? `<span>🎯 ${s.range.toFixed(1)}</span>` : '') +
           `<span>👟 ${(s.speed || 0).toFixed(1)}</span>` +
           (e.carry && e.carry.amount ? `<span>🎒 ${Math.round(e.carry.amount)} ${e.carry.kind}</span>` : '');

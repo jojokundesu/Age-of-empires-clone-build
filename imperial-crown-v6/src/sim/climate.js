@@ -41,28 +41,28 @@ export const ERAS = [
     id: 'temperate', name: 'The Temperate Years', icon: 'leaf',
     blurb: 'Rain when it should rain. The world is as it was.',
     tint: [1, 1, 1], fog: 0, cloud: 0, night: 0,
-    food: 1, wood: 1, speed: 1, heal: 1, morale: 1,
+    food: 1, wood: 1, speed: 1, heal: 1,
     omenWeights: {}, strainAt: 0
   },
   {
     id: 'thaw', name: 'The Great Thaw', icon: 'ship',
     blurb: 'The ice gives up the coast. Roads turn to mud and the low fields drown.',
     tint: [0.9, 1.0, 1.02], fog: 0.0004, cloud: 0.1, night: 0,
-    food: 0.94, wood: 1.02, speed: 0.93, heal: 1.05, morale: 0.96,
+    food: 0.94, wood: 1.02, speed: 0.93, heal: 1.05,
     omenWeights: { long_night: 2, bountiful: 1.5, great_frost: 0.4 }, strainAt: 26
   },
   {
     id: 'drought', name: 'The Long Drought', icon: 'flame',
     blurb: 'No rain at all. The fields crack; the herds go looking for water and do not come back.',
     tint: [1.08, 0.94, 0.76], fog: -0.0003, cloud: -0.18, night: 0,
-    food: 0.78, wood: 0.88, speed: 1.04, heal: 0.85, morale: 0.9,
+    food: 0.78, wood: 0.88, speed: 1.04, heal: 0.85,
     omenWeights: { wolf_moon: 2, bountiful: 0.5, plague_winds: 1.6 }, strainAt: 52
   },
   {
     id: 'storms', name: 'The Storm Years', icon: 'bolt',
     blurb: 'The sky answers what was done to it. Lightning finds high roofs and the rain never stops.',
     tint: [0.82, 0.88, 1.0], fog: 0.0011, cloud: 0.34, night: 0.06,
-    food: 0.9, wood: 1.0, speed: 0.9, heal: 0.9, morale: 0.86,
+    food: 0.9, wood: 1.0, speed: 0.9, heal: 0.9,
     omenWeights: { still_air: 0.3, iron_sky: 1.6, great_frost: 1.8 }, strainAt: 78,
     lightning: true
   },
@@ -70,7 +70,7 @@ export const ERAS = [
     id: 'killing_winter', name: 'The Killing Winter', icon: 'mountain',
     blurb: 'It does not warm again. The fields are gone, the roads are ice, and the cold is an enemy with a body count.',
     tint: [0.76, 0.84, 1.0], fog: 0.0009, cloud: 0.22, night: 0.1,
-    food: 0.58, wood: 0.8, speed: 0.86, heal: 0.7, morale: 0.72,
+    food: 0.58, wood: 0.8, speed: 0.86, heal: 0.7,
     omenWeights: { great_frost: 3, long_night: 2, bountiful: 0.2 }, strainAt: 100,
     cold: true
   }
@@ -352,7 +352,6 @@ export class Climate {
   woodMul() { return this.era.wood; }
   speedMul() { return this.era.speed; }
   healMul() { return this.era.heal; }
-  moraleMul() { return this.era.morale; }
 
   /** Weight for drawing an omen, so the deck answers the sky. */
   omenWeight(id) {

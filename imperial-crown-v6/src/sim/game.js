@@ -5,11 +5,8 @@
    friendly: one call to update(dt) advances everything by dt.
    ============================================================ */
 import { DOMAIN } from './hydrology.js';
-import { Court } from './court.js';
 import { Veterancy } from './veterancy.js';
-import { Morale } from './morale.js';
 import { Calendar } from './calendar.js';
-import { Realm, freshRealmState, TEAM_REBEL_P, TEAM_REBEL_E, crownOfRebel } from './realm.js';
 import { Climate } from './climate.js';
 import { Elites } from './elites.js';
 import { Squads } from './squads.js';
@@ -76,7 +73,6 @@ export class Game {
        system existing. See src/mods/. */
     this.modHost = null;
     /* the campaign's long game: four offices, each held by a body on the map */
-    this.court = new Court(this);
     this.veterancy = new Veterancy(this);
     this.squads = new Squads(this);
     this.guards = new Guards(this);
@@ -89,19 +85,10 @@ export class Game {
     /* the other half of experience: not what a man has done, but how long he
        has kept doing it. See src/sim/elites.js */
     this.elites = new Elites(this);
-    this.morale = new Morale(this);
     this.calendar = new Calendar(this);
-    /* The Crown's Standing. Two estates with books, and two ways for a
-       realm to break. See src/sim/realm.js -- it owns its own state so a
-       normal match pays one update call for the whole system. */
-    this.realm = new Realm(this);
     /* The slow sky: an era clock measured in tens of minutes that changes
        the rules underneath the seasons. See src/sim/climate.js. */
     this.climate = new Climate(this);
-    /* Rebel warbands answer exactly one crown; everyone else is a stranger
-       to them until they are attacked. This map remembers who drew blood. */
-    this.rebelGrudge = new Map();
-    this.courtArmed = null;
 
     this.units = [];
     this.buildings = [];
@@ -145,7 +132,7 @@ export class Game {
     this.waterPathFinder = null;
     /* --- gates, for any number of kingdoms ---
        A gate opens for its owner and closes on everybody else. With two
-       sides that was a pair of grids; with four kingdoms and rebels it
+       sides that was a pair of grids; with four kingdoms it
        needs one grid per team. They are built lazily (a team only pays
        when it first asks), and a map with no gates at all -- the common
        case -- never builds one. */
@@ -174,7 +161,7 @@ export class Game {
 
     this.teams = new Map();
     /* Every kingdom in the match. Two by default; kingdoms mode adds more,
-       and rebel warbands are allocated from TEAM_REBEL_P upwards. */
+       and a fourth is seated for the four-crown variant. */
     /* A War of Crowns seats three or four kingdoms on one island; every other
        mode is the classic duel. `kingdoms` is the number of *crowns*. */
     /* A sandbox seats two: the player, and the Free Company -- a third party
@@ -208,7 +195,6 @@ export class Game {
       });
     }
     /* one ledger per crown, in team order (the roster is known by now) */
-    for (const t of this.teamIds) this.realm.teams.set(t, freshRealmState());
 
     // fog of war (player vision only; the AI plays fair with its own grid)
     this.fow = new Uint8Array(FOW * FOW);        // 0 hidden, 1 explored, 2 visible
@@ -823,7 +809,7 @@ export class Game {
   civOf(team) {
     const t = this.teams.get(team);
     if (t && t.civ) return t.civ;
-    return t && t.rebel ? null : this.civ;
+    return this.civ;
   }
   civBonuses(team) { return CIVS[this.civOf(team)]?.bonuses || {}; }
   civBonus(team, key, type) {
@@ -969,10 +955,7 @@ export class Game {
     if (this.difficultyKey === 'sandbox') rate *= 1.25;
     rate *= this.buffMul(team, 'gather');
     rate *= this.gatherDayMul;
-    if (this.court) rate *= this.court.gatherMul(unit, kind);
     if (this.calendar) rate *= this.calendar.gatherMul(kind);
-    /* a sullen commons works slowly; a devoted one bends its back */
-    if (this.realm) rate *= this.realm.gatherMul(team);
     /* the slow sky: a drought is a food problem, a thaw a wood one */
     if (this.climate) rate *= (kind === 'food' ? this.climate.foodMul() : kind === 'wood' ? this.climate.woodMul() : 1);
     /* a Champion villager works with the hands of someone who chose to be here */
@@ -1058,7 +1041,6 @@ export class Game {
     }
     const st = this.teams.get(unit.team);
     if (st) st.gathered += amount;
-    if (this.court) this.court.onGather(unit, amount, kind);
     this.onEvent('deposit', { team: unit.team, kind, amount });
   }
 
@@ -1187,7 +1169,6 @@ export class Game {
     const u = this.spawnUnitRaw(type, team, sx, sz);
     if (!u) return null;
     /* a levy believes what his village believes */
-    if (this.realm && def.attack > 0) u.morale = this.realm.spawnMorale(team);
     st.popUsed += def.pop || 1;
     st.trained++;
     if (fromBuilding) {
@@ -1429,11 +1410,10 @@ export class Game {
   /* ==========================================================
      diplomacy
      ----------------------------------------------------------
-     Every kingdom is hostile to every other kingdom, and rebels
-     are hostile to the one crown they rose against -- plus to
-     anybody who draws their blood. That last clause is what keeps
-     a revolt from being a free lunch for the player: kick the mob
-     and it kicks back.
+     Every kingdom is hostile to every other kingdom. The only
+     exceptions are the neutral parties a map may seat (a shrine, a
+     Free Company nobody has struck yet), which are handled by the
+     same peace book that a first blow tears up.
      ========================================================== */
   /** Has this crown kept its hands to itself so far? */
   atPeace(team) {
@@ -1478,20 +1458,10 @@ export class Game {
     if (a === b) return false;
     if (a === TEAM_NEUTRAL || a === undefined || b === undefined) return false;
     if (b === TEAM_NEUTRAL) return false;
-    const ra = crownOfRebel(a);
-    const rb = crownOfRebel(b);
-    if (ra && rb) return false;                       // two risings ignore each other
-    if (ra) return b === ra || this._grudgeHas(a, b);
-    if (rb) return a === rb || this._grudgeHas(b, a);
     return true;                                      // two crowns
   }
 
-  _grudgeHas(rebelTeam, other) {
-    const set = this.rebelGrudge.get(rebelTeam);
-    return !!set && set.has(other);
-  }
-
-  /** A blow was struck: rebels remember who hit them. */
+  /** A blow was struck. */
   noteAttack(victim, attacker) {
     if (!victim || !attacker || attacker === victim) return;
     this.noteBlood(victim.team, attacker.team);
@@ -1503,28 +1473,9 @@ export class Game {
       if (this.peace.has(v)) this.breakPeace(v, a);
       else if (this.peace.has(a)) this.breakPeace(a, v);
     }
-    const va = crownOfRebel(v);
-    if (va && a !== va) {
-      let set = this.rebelGrudge.get(v);
-      if (!set) this.rebelGrudge.set(v, (set = new Set()));
-      if (!set.has(a) && set.size < 8) set.add(a);
-    }
   }
 
-  /** Rebel teams are not kingdoms: they get a bare state so lookups work. */
-  ensureRebelTeam(team) {
-    if (this.teams.has(team)) return this.teams.get(team);
-    const st = {
-      civ: null, res: { food: 0, wood: 0, gold: 0, stone: 0 }, techs: new Set(),
-      age: 0, ageResearch: null, pop: 0, popCap: 0, popUsed: 0, kills: 0, losses: 0,
-      gathered: 0, trained: 0, buffs: [],
-      resigned: false, rebel: true
-    };
-    this.teams.set(team, st);
-    return st;
-  }
-
-  /** Every live fighting body of a team (rebels included). */
+  /** Every live fighting body of a team. */
   armyOf(team) {
     const out = [];
     for (const u of this.units) {
@@ -1606,10 +1557,6 @@ export class Game {
 
   auraBonusFor(unit) {
     let best = 0;
-    if (this.court) {
-      const m = this.court.damageMul(unit);
-      if (m > 1) best = m - 1;
-    }
     const team = unit.team;
     for (const u of this.units) {
       if (u.dead || u.team !== team || u === unit) continue;
@@ -1622,17 +1569,15 @@ export class Game {
   }
 
   /**
-   * The multiplier on a man's speed: the court, the mods, his own
+   * The multiplier on a man's speed: the mods, his own
    * nerve, the season and the sky. Six systems consulted per unit per tick,
    * so the answer is remembered for the tick -- none of them can change
    * twice inside one thirtieth of a second.
    */
   unitSpeedMul(unit) {
     let base = this.buffMul(unit.team, 'speed');
-    if (this.court) base *= this.court.speedMul(unit);
     if (this.modHost) base *= this.modHost.speedMul(unit);
     if (unit.squad) base *= this.squads.speedMul(unit);
-    if (this.morale) base *= this.morale.speedMul(unit);
     if (this.calendar) base *= this.calendar.speedMul();
     if (this.climate) base *= this.climate.speedMul();
     return base;
@@ -1643,7 +1588,7 @@ export class Game {
    *
    * Six systems are consulted for every man on every step of his march, and
    * none of them can change twice inside a thirtieth of a second. The public
-   * `unitSpeedMul` stays pure -- the court, the calendar and the tests all
+   * `unitSpeedMul` stays pure -- the calendar and the tests all
    * ask it directly and expect a fresh answer -- and only the movement loop
    * takes the cached one.
    */
@@ -1656,7 +1601,7 @@ export class Game {
   }
 
   /* ==========================================================
-     STANDING BONUSES (realm events, omen, the golden age)
+     STANDING BONUSES (omen events, the golden age)
      ========================================================== */
   buffMul(team, kind) {
     const st = this.teams.get(team);
@@ -1806,7 +1751,7 @@ export class Game {
     unit.target = null;
     unit.gatherTarget = null;
     unit.carry.amount = 0;
-    /* population accounting: a rebel or a fallen crown's soldier was never
+    /* population accounting: a fallen crown's soldier was never
        counted against the living crown's cap, and a missing team has no
        ledger to debit */
     const to = this.teams.get(team);
@@ -2117,9 +2062,7 @@ export class Game {
     const killer = attacker && attacker.team !== undefined ? this.teams.get(attacker.team) : null;
     if (killer) {
       killer.kills++;
-      // every fallen enemy is a small offering to the court
     }
-    if (this.court) this.court.onKill(attacker, unit);
     if (this.veterancy) this.veterancy.onKill(attacker, unit);
     if (attacker && attacker.champion && this.champions) {
       this.champions.addRenown(attacker, 10 + (unit.maxHp || 60) / 35 + (unit.rank || 0) * 4, 'kill');
@@ -2130,11 +2073,6 @@ export class Game {
       if (this.champions.current === unit) this.champions.current = null;
       this.notify?.(`${unit.name} has fallen — ${this.champions.rankName(unit)} no more`, 'bad');
       this.onEvent?.('championDeath', { unit });
-    }
-    if (this.realm) this.realm.onUnitKilled(unit, attacker);
-    if (this.morale) {
-      this.morale.onAllyDeath(unit, attacker);
-      this.morale.onKill(attacker);
     }
     unit.deadT = 0;
     this.deadUnits.push(unit);
@@ -2161,7 +2099,6 @@ export class Game {
     if (attacker && attacker.champion && this.champions) {
       this.champions.addRenown(attacker, 34 + (building.maxHp || 800) / 90, 'building');
     }
-    if (this.realm) this.realm.onBuildingKilled(building, attacker);
     this.buildingSpatialDirty = true;
     this.popDirty = true;
     this.sound.play('collapse', building.x, building.z);
@@ -2178,7 +2115,6 @@ export class Game {
 
   onBuildingComplete(building) {
     this.popDirty = true;
-    if (this.realm) this.realm.onBuildingComplete(building);
     if (this.modHost) this.modHost.onBuildingComplete(building);
     if (building.team === TEAM_PLAYER) {
       this.notify(`${building.name} complete`, 'good');
@@ -2497,10 +2433,7 @@ export class Game {
       this.onEvent('phase', { phase, prev: prevPhase, hour: this.worldTime });
     }
 
-    if (this.court) this.court.update(dt);
-    if (this.realm) this.realm.update(dt);
-
-    // temporary standing bonuses (realm events, the golden age)
+    // temporary standing bonuses (omen events, the golden age)
     for (const team of this.teamIds) {
       const st = this.teams.get(team);
       if (!st) continue;
@@ -2540,7 +2473,6 @@ export class Game {
             this.sound.play('ageUp');
             this.fx.glowPulse(this.playerBase.x, this.heightAt(this.playerBase.x, this.playerBase.z) + 1, this.playerBase.z, 1, 0.9, 0.6);
           }
-          if (this.realm) this.realm.onAge(team, st.age);
           this.onEvent('age', { team, age: st.age });
         }
       }
@@ -2576,7 +2508,6 @@ export class Game {
     /* mods get a slice of every tick, strictly after the core simulation, in
        their own try/catch (inside the host): a broken mod cannot take the
        match down with it */
-    this.morale.update(dt);
     if (this.elites) this.elites.update(dt);
     if (this.modHost) this.modHost.update(dt);
 
@@ -2875,7 +2806,6 @@ export class Game {
     score += (st.age || 0) * 14;
     score += (st.kills || 0) * 0.5;
     score += (st.res.food + st.res.wood + st.res.gold + st.res.stone) / 500;
-    if (this.realm) score += Math.max(0, this.realm.state(team).commons - 40) * 0.2;
     return score;
   }
 
@@ -2930,15 +2860,6 @@ export class Game {
       this._costCache.clear();
       this._buildCostCache.clear();
       this.popDirty = true;
-      /* the realm remembers a rival humbled */
-      if (this.realm) {
-        const rs = this.realm.state(target);
-        if (!rs.empty) {
-          rs.commons = Math.min(100, rs.commons + 5);
-          rs.nobles = Math.min(100, rs.nobles + 9);
-          rs.glory = Math.min(40, rs.glory + 6);
-        }
-      }
     }
     /* the army changes its colours: a soldier does not stop existing because
        his king did, and the ranks he earned come with him */
@@ -2947,12 +2868,9 @@ export class Game {
         if (u.dead || u.team !== team) continue;
         if (u.isKing) continue;
         this.convertUnit(u, target);
-        u.morale = Math.min(u.morale ?? 100, 62);
         u.state = STATE.IDLE;
         u.target = null;
         u.aiRole = null;
-        u.isRebel = false;
-        u.rebelAgainst = 0;
         spoils.units++;
       }
     }
@@ -3074,7 +2992,6 @@ export class Game {
     for (let i = 0; i < list.length; i++) {
       const u = list[i];
       if (!u || u.dead || u.garrisoned || u.kind !== 'unit') continue;
-      if (u.state === STATE.ROUT) { broken++; continue; }
       // An explicit new order replaces a standing guard assignment.
       this.guards?.release(u);
       out.push(u);

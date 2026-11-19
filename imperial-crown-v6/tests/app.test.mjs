@@ -111,6 +111,17 @@ await app.startMatch({ mode: 'campaign', civ: 'franks', difficulty: 'standard', 
 globalThis.requestAnimationFrame = () => 0;
 window.requestAnimationFrame = globalThis.requestAnimationFrame;
 check('game running', () => assert(app.running && app.game, 'not running'));
+// A selection that says "nothing is enabled" arrives as an empty map, and an
+// empty map is truthy. Reading it as a one-entry list used to start a mod host
+// for every plain campaign, which ignored the whole map and ballooned the tab.
+check('a campaign with no mods enabled starts no mod host', () => {
+  assert(app.game.modHost == null, 'a mod host was created for a plain campaign');
+  assert(!document.body.classList.contains('mods'), 'the body is flagged as a mod session');
+  // a caller may omit `mods` entirely; what it must not do is pass a truthy
+  // non-list that the gate would then read as one enabled mod
+  const m = app.matchOpts && app.matchOpts.mods;
+  assert(m == null || (Array.isArray(m) && m.length === 0), 'a campaign carried mods: ' + JSON.stringify(m));
+});
 check('hud visible', () => assert(!document.getElementById('hud').classList.contains('hidden'), 'hud hidden'));
 check('input attached', () => assert(app.input && app.input.game === app.game, 'no input'));
 check('camera framed on base', () => {
@@ -248,7 +259,7 @@ check('minimap click recentres', () => {
   assert(Math.abs(app.camera.desired[0] - before) > 5, 'minimap did not move the camera');
 });
 check('HUD buttons do not throw', () => {
-  for (const id of ['btnIdle', 'btnArmy', 'btnTech', 'btnCourt', 'btnSound', 'btnPause', 'ageBtn', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'btnGotoTC', 'btnMiniMode', 'btnFormation', 'inspMultiBtn']) {
+  for (const id of ['btnIdle', 'btnArmy', 'btnTech', 'btnSound', 'btnPause', 'ageBtn', 'camRotL', 'camRotR', 'camHome', 'camZoomIn', 'camZoomOut', 'btnGotoTC', 'btnMiniMode', 'btnFormation', 'inspMultiBtn']) {
     const el = document.getElementById(id);
     if (!el) throw new Error('missing #' + id);
     el.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
@@ -414,8 +425,6 @@ await acheck('a four-crown war saves and reloads as the same war', async () => {
   assert(g.teamIds.length === 4, `${g.teamIds.length} teams`);
   assert(app.ais.length === 3, `${app.ais.length} AI controllers`);
   for (const t of g.teamIds) g.teams.get(t).res.gold = 300 + t * 10;
-  const crownCourt = g.court.rec(4);
-  assert(crownCourt, 'the fourth crown has no court');
   assert(app.saveMatch(), 'the war could not be saved');
   const save = JSON.parse(window.localStorage.getItem('imperial-crown-v6-save'));
   assert(save.kingdoms === 4 && save.victory === 'regicide', `saved as ${save.kingdoms} crowns, ${save.victory}`);
@@ -434,7 +443,6 @@ await acheck('a four-crown war saves and reloads as the same war', async () => {
   assert(g2.victory === 'regicide', `victory came back as ${g2.victory}`);
   assert(g2.fallenTeams.has(3), 'the fallen crown came back to life');
   assert(g2.lastBlood.get(3) === 2, 'the blood debt was forgotten');
-  assert(g2.court.rec(4), 'the fourth crown lost its court on reload');
   for (const t of g2.teamIds) {
     assert(Math.abs(g2.teams.get(t).res.gold - (300 + t * 10)) < 1, `crown ${t} came back with ${g2.teams.get(t).res.gold} gold`);
   }

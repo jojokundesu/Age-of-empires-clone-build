@@ -21,7 +21,7 @@ export class Menu {
   /* The save format is the one handshake between a running match and the
      menu. Bump it whenever a saved field changes meaning; the menu refuses
      anything else rather than half-loading a war it does not understand. */
-  static SAVE_VERSION = 6;
+  static SAVE_VERSION = 7;   // keep in step with main.js
   constructor(opts) {
     this.onStart = opts.onStart || (() => {});
     this.onSettingsChanged = opts.onSettingsChanged || (() => {});
@@ -177,11 +177,14 @@ export class Menu {
       this._matchStarting = true;
       this.hideMenu();
       const opts = { ...this.state };
-      /* A sandbox with Workshop mods enabled starts exactly like a mod
-         session, only with the sandbox's economy and no opponent. */
-      if (this.state.mode === 'sandbox' && this.state.sandboxMods) {
-        opts.mods = this.enabledMods();
-      }
+      /* THE ARCANE ORDER IS NOT A SANDBOX FEATURE.
+         This used to pass the enabled mods only when the mode was sandbox,
+         so a player who switched the mod on in the Workshop got nothing in
+         a normal Conquest match -- which is the only mode most players ever
+         start. The toggle now applies to whatever mode is selected. */
+      /* Always hand over a list, even an empty one: `opts` is spread from
+         state, whose `mods` is the id -> bool map, and a map is not a list. */
+      opts.mods = this.state.sandboxMods ? this.enabledMods() : [];
       this.onStart(opts);
     });
     el.btnSettings?.addEventListener('click', () => this.openSettings());
@@ -268,7 +271,6 @@ export class Menu {
       b.classList.toggle('active', parseInt(b.dataset.kingdoms, 10) === this.state.kingdoms);
     }
     if (el.sandboxModsRow) {
-      el.sandboxModsRow.classList.toggle('hidden', this.state.mode !== 'sandbox');
       for (const b of el.sandboxModsRow.querySelectorAll('[data-sandboxmods]')) {
         b.classList.toggle('active', (b.dataset.sandboxmods === '1') === !!this.state.sandboxMods);
       }
@@ -295,7 +297,7 @@ export class Menu {
     if (el.startSub) {
       const terms = VICTORIES[this.state.victory] || VICTORIES.conquest;
       const crowns = this.state.mode === 'kingdoms' ? ` · ${this.state.kingdoms} crowns` : '';
-      const modsOn = this.state.mode === 'sandbox' ? (this.state.sandboxMods ? modCount : 0) : modCount;
+      const modsOn = this.state.sandboxMods ? modCount : 0;
       el.startSub.textContent = `${civ.name} · ${diff.name} · ${modsOn ? `${modsOn} mod${modsOn === 1 ? '' : 's'}` : mode.name}${crowns} · ${terms.name}`;
     }
     if (el.modCount) {
@@ -445,7 +447,7 @@ export class Menu {
   }
 
   /* ---------------- modals ----------------
-     `openModal` auto-detects an in-game overlay (pause, tech tree, court,
+     `openModal` auto-detects an in-game overlay (pause, tech tree, armory,
      market, diplomacy, Forge Studio, any sheet the HUD opens). The native
      bridge only sees `isModalOpen()` / `closeModal()`, so that is the one
      pair that has to be exact: it must report the pause menu as open and a
@@ -782,7 +784,6 @@ export class Menu {
       <div class="row"><b>Two hands, one screen</b><span>Turn the phone sideways: the battlefield is wider than it is tall, and the stick and the attack thumb never cover the middle of the picture.</span></div>
       <div class="row"><b>Champion</b><span>Renown comes from damage, kills, parries, spells, gathering and razing. Each rank offers one of three permanent perks — armour, cleave, sprint, banners, spell power. They keep working when you go back to the sky view, and saves carry them.</span></div>
       <div class="row"><b>Squads</b><span>A squad shares a second pool of experience. In first person, FOLLOW ME puts them on your shoulder and FOCUS sends them at your target.</span></div>
-      <div class="row"><b>The Court</b><span>Top bar → Court. Give one of your own people an office: the Marshal rides with your soldiers, the Chancellor walks with your villagers, the Spymaster watches the enemy, the Hierophant holds the faith. Each earns rank from deeds — and if the officer falls, the office stands empty for a while.</span></div>
       <p class="dim tiny">Two fingers drag to pan · pinch to zoom · tap to select · long-press a soldier to attack-move. Every control in both views is a button on the glass.</p>
     `);
   }

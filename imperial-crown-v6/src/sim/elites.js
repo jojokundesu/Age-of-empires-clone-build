@@ -28,7 +28,7 @@
                       when at least one ally is within 12 m, so
                       cutting him off is the counter. Monks convert
                       him and the corpse never gets to be a martyr.
-     Banner           break the legend's morale below 50 and the
+     Banner           strike his banner low and the
                       banner falls; kill him and it dies with him.
                       The enemy AI puts a large bounty on him, so
                       the real counter is that everyone wants him
@@ -68,7 +68,7 @@ export const RENOWN = [
     key: 'legend', name: 'Legend', at: 900, star: 4,
     blurb: 'The banner is not a flag any more. It is him.',
     power: 'Banner: allies within 9 m strike 10% harder. He is always visible to the enemy.',
-    counter: 'Break his morale below 50 (the banner falls) or kill him. Expect the enemy to hunt him.'
+    counter: 'Strike his banner low or kill him outright. Expect the enemy to hunt him.'
   }
 ];
 export const MAX_RENOWN = RENOWN.length - 1;
@@ -93,7 +93,6 @@ const LAST_STAND_ALLY_RANGE = 12;
 /* Banner */
 const BANNER_RANGE = 9;
 const BANNER_ATTACK = 1.10;
-const BANNER_MORALE_FLOOR = 50;
 
 export class Elites {
   constructor(game) {
@@ -196,7 +195,7 @@ export class Elites {
       if (u.rally && g.time >= u.rally) { u.rally = 0; statsChanged = true; }
 
       /* ---- Banner ---- */
-      if (tier >= MAX_RENOWN && (u.morale === undefined || u.morale >= BANNER_MORALE_FLOOR)) legends.push(u);
+      if (tier >= MAX_RENOWN) legends.push(u);
     }
 
     /* Banner auras: a handful of legends against a company, so the plain
@@ -249,7 +248,6 @@ export class Elites {
       s.attack *= 1.30;
       s.armor += 2;
       s.pierceArmor += 2;
-      s.moraleFloor = Math.max(s.moraleFloor || 0, 60);
     }
     if (this.commanded.has(u)) s.attack *= BANNER_ATTACK;
     if (tier >= 1) s.renown = tier;
@@ -276,7 +274,7 @@ export class Elites {
 
   /** The banner is a beacon: the enemy always knows where this man is. */
   isBeacon(u) {
-    return this.tier(u) >= MAX_RENOWN && (u.morale === undefined || u.morale >= BANNER_MORALE_FLOOR);
+    return this.tier(u) >= MAX_RENOWN;
   }
 
   /** How much this unit is worth to an enemy commander, as a multiplier. */

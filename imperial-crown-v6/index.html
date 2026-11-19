@@ -117,7 +117,6 @@
           <span id="worldTime" class="worldTime">☀ 12:00</span>
           <span id="wonderTimer" class="wonderTimer hidden" title="Wonder Race: hold your wonder for 240 seconds">✦ --:--</span>
           <span id="seasonChip" class="seasonChip"><svg class="ic"><use href="#i-leaf"/></svg><b>Spring</b></span>
-          <span id="realmChip" class="seasonChip realmChip" title="The Crown's Standing"><svg class="ic"><use href="#i-crown"/></svg><b>62</b></span>
           <span id="climateChip" class="seasonChip climateChip" title="The climate"><svg class="ic"><use href="#i-leaf"/></svg><b>Temperate</b></span>
         </div>
       </div>
@@ -126,7 +125,6 @@
         <button class="iconBtn" id="btnIdle" title="Next idle villager"><svg class="ic"><use href="#i-villager"/></svg><span class="badge" id="idleBadge">0</span></button>
         <button class="iconBtn" id="btnArmy" title="Select army"><svg class="ic"><use href="#i-sword"/></svg></button>
         <button class="iconBtn" id="btnTech" title="Technology"><svg class="ic"><use href="#i-scroll"/></svg></button>
-        <button class="iconBtn" id="btnCourt" title="The Court"><svg class="ic"><use href="#i-people"/></svg><span class="badge" id="courtBadge">0</span></button>
         <button class="iconBtn" id="btnSound" title="Sound"><svg class="ic"><use href="#i-sound"/></svg></button>
         <button class="iconBtn" id="btnPause" title="Pause"><svg class="ic"><use href="#i-pause"/></svg></button>
         <button class="iconBtn" id="btnMenu" title="Menu"><svg class="ic"><use href="#i-menu"/></svg></button>
@@ -431,10 +429,10 @@
             <button class="seg" data-kingdoms="4">Four</button>
           </div>
           <div class="victoryBrief" id="victoryBrief"></div>
-          <!-- Workshop content is opt-in in any match: the sandbox can carry
-               the Arcane Order, relics or weather exactly like a mod session. -->
-          <div class="segRow" id="sandboxModsRow" title="Play this sandbox with the Workshop mods you have enabled">
-            <span class="segLabel">Workshop mods</span>
+          <!-- Workshop content is opt-in in EVERY mode: the Arcane Order can
+               be switched on for any match, not only a sandbox. -->
+          <div class="segRow" id="sandboxModsRow" title="Play this match with the Workshop mods you have enabled">
+            <span class="segLabel">Arcane Order</span>
             <button class="seg" data-sandboxmods="0">Off</button>
             <button class="seg active" data-sandboxmods="1">On</button>
           </div>

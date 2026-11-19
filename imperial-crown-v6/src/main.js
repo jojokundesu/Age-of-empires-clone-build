@@ -28,7 +28,12 @@ import { RESOURCES } from './core/resources.js';
    simulation steals from the frame. The renderer interpolates between the two
    most recent ticks, so nothing looks stepped. */
 const STEP = 1 / 30;
-const SAVE_VERSION = 6;
+/* 7: the unit tuple lost its morale column when morale was retired. Every
+   index after `survived` shifted down one, so a version 6 save read back with
+   its garrison and transport references pointing at the wrong units -- the
+   passenger ends up inside a building and the order belongs to his neighbour.
+   Loading refuses anything older than 4; a 6 is not a 7. */
+const SAVE_VERSION = 7;
 
 // Only explored/not-explored needs to be saved. Visibility is recalculated
 // from the restored army, so an old sight radius cannot reveal enemies.
@@ -505,11 +510,27 @@ class App {
        the extra unit and building meshes can be registered lazily. This is the
        only place in the app that imports src/mods: a normal campaign never
        downloads or parses a byte of it. */
-    /* Workshop mods are opt-in in *any* match, not only in a "mod session".
-       A sandbox that wants the Arcane Order, relics or weather now gets them;
-       an untouched campaign still never loads a byte of mod code. */
-    const wantMods = Array.isArray(opts.mods) ? opts.mods : (opts.mods ? [opts.mods] : []);
-    const modMatch = wantMods.length > 0 && (opts.mode === 'mods' || opts.mode === 'sandbox');
+    /* THE ARCANE ORDER IS AVAILABLE IN EVERY MODE.
+       This used to require `opts.mode === 'mods' || opts.mode === 'sandbox'`,
+       which is why the one mod worth keeping was locked out of every match a
+       player actually starts. There is no reason for the gate: the host is
+       additive (it registers units and buildings on activate and deletes
+       exactly those keys on dispose), so a match that asked for the mod gets
+       it wherever it is fought -- conquest, kingdoms, regicide, wonder,
+       sandbox or the workshop -- for the player and the enemy crown alike.
+       A match that asks for nothing still never loads a byte of mod code. */
+    /* Read the selection defensively. The menu hands over a list, but a saved
+       match, a URL or a caller can hand over a map of id -> bool, and the map
+       for "nothing is enabled" is `{}` -- which is truthy. Treating that as a
+       one-entry list started a mod host for every plain campaign, and the
+       empty mod's activation is what ballooned the tab. A selection is a list
+       of non-empty strings and nothing else. */
+    const rawMods = opts.mods;
+    const listed = Array.isArray(rawMods) ? rawMods
+      : rawMods && typeof rawMods === 'object' ? Object.keys(rawMods).filter((id) => rawMods[id])
+      : rawMods ? [rawMods] : [];
+    const wantMods = listed.filter((id) => typeof id === 'string' && id);
+    const modMatch = wantMods.length > 0;
     if (modMatch) {
       this.menu.bootProgress(0.8, 'Opening the workshop…');
       try {
@@ -975,10 +996,8 @@ class App {
       teams: Object.fromEntries(g.teamIds.map((t) => [t, g.exportTeam(t)])),
       wonder: [...g.wonderClocks.entries()],
       sacredClock: { ...g.sacredClock },
-      court: g.court ? g.court.toJSON() : null,
       calendar: g.calendar ? g.calendar.toJSON() : null,
       climate: g.climate ? g.climate.toJSON() : null,
-      realm: g.realm ? g.realm.toJSON() : null,
       elites: g.elites ? g.elites.toJSON() : null,
       squads: g.squads.toJSON(unitIndex),
       guards: g.guards.toJSON(unitIndex, buildingIndex),
@@ -988,7 +1007,7 @@ class App {
       modState: saveModState(g.modHost, liveUnits, liveBuildings, unitIndex, buildingIndex),
       // The indices below share exactly the same live arrays as squads,
       // guards and workshop state; no volatile runtime entity ids are used.
-      units: liveUnits.map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round((u.xp || 0) * 10) / 10, Math.round(u.morale ?? 100), Math.round(u.survived || 0), (u.garrisoned ? buildingIndex.get(u.garrisonTarget) : undefined) ?? -1, u.maxHp, (u.garrisoned ? unitIndex.get(u.garrisonTarget) : undefined) ?? -1, order(u)]),
+      units: liveUnits.map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round((u.xp || 0) * 10) / 10, Math.round(u.survived || 0), (u.garrisoned ? buildingIndex.get(u.garrisonTarget) : undefined) ?? -1, u.maxHp, (u.garrisoned ? unitIndex.get(u.garrisonTarget) : undefined) ?? -1, order(u)]),
       buildings: liveBuildings.map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0, { queue: b.queue, researchQueue: b.researchQueue, rally: b.rally, amount: b.def && b.def.resKind ? Math.round(b.amount || 0) : undefined, poiType: b.poiType, poiId: b.poiId, siteOwner: b.siteOwner, captureTeam: b.captureTeam, captureProgress: b.captureProgress }]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0, r.worldResourceIndex ?? null])
     };
@@ -1014,7 +1033,6 @@ class App {
       const t = save.teams?.[team];
       if (t) game.importTeam(team, t);
     }
-    if (save.realm && game.realm) game.realm.fromJSON(save.realm);
     if (save.climate && game.climate) game.climate.fromJSON(save.climate);
     game.wonderClocks = new Map((save.wonder || []).filter(([team]) => game.teamIds.includes(team)));
     if (save.sacredClock && game.teamIds.includes(save.sacredClock.team) && Number.isFinite(save.sacredClock.time))
@@ -1025,7 +1043,6 @@ class App {
     for (const [type, team, x, z, hp, prog, facing, extra] of save.buildings || []) {
       placed.push(null); // every tuple occupies its index, even if invalid
       if (!BUILDING_DEFS[type]) continue;
-      if (team !== 0 && !game.teams.has(team)) game.ensureRebelTeam(team);
       const complete = (prog ?? 1) >= 1;
       // Rebuild authoritative saved foundations without paying again or
       // completing an unfinished building as a side effect of loading.
@@ -1059,10 +1076,9 @@ class App {
     // v4 omitted neutral outposts entirely; restore them when importing an old save.
     if (save.version === 4) for (const p of game.world.poi || []) game.addBuilding(new Building(game, 'outpost_shrine', 0, p.x, p.z, true));
     const restoredUnits = [];
-    for (const [type, team, x, z, hp, rank, xp, morale, survived, inBuilding, savedMaxHp] of save.units || []) {
+    for (const [type, team, x, z, hp, rank, xp, survived, inBuilding, savedMaxHp] of save.units || []) {
       restoredUnits.push(null);
       if (!UNIT_DEFS[type]) continue;
-      if (team !== 0 && !game.teams.has(team)) game.ensureRebelTeam(team);
       const u = team === 0 ? game.spawnUnitRaw(type, team, x, z) : game.spawnUnit(type, team, x, z, null, { force: true });
       if (!u) continue;
       restoredUnits[restoredUnits.length - 1] = u;
@@ -1081,7 +1097,6 @@ class App {
       if (Number.isFinite(savedMaxHp) && savedMaxHp > 0) u.maxHp = savedMaxHp;
       u.maxHp = Math.max(u.maxHp, hp);
       u.hp = Math.min(u.maxHp, hp);
-      u.morale = morale === undefined ? 100 : clamp(morale, 0, 100);
       /* renown is survival time: a veteran of the old campaign comes back a
          veteran, with whatever the field taught him */
       if (Number.isFinite(survived) && survived > 0 && game.elites) {
@@ -1092,7 +1107,8 @@ class App {
     // Transport references use the same live-unit index space and are linked
     // after every unit exists, so passenger/ship ordering in saves is irrelevant.
     for (let i = 0; i < restoredUnits.length; i++) {
-      const hostIndex = save.units[i]?.[11];
+      /* 10, not 11: the unit tuple lost its morale column in 6.5 */
+      const hostIndex = save.units[i]?.[10];
       if (Number.isInteger(hostIndex) && hostIndex >= 0 && restoredUnits[i] && restoredUnits[hostIndex]) {
         game.boardTransport(restoredUnits[i], restoredUnits[hostIndex], true);
       }
@@ -1142,7 +1158,7 @@ class App {
       return null;
     };
     for (let i = 0; i < restoredUnits.length; i++) {
-      const u = restoredUnits[i], o = save.units[i]?.[12];
+      const u = restoredUnits[i], o = save.units[i]?.[11];
       if (!u || !o || typeof o !== 'object') continue;
       if (['aggressive', 'defensive', 'stand'].includes(o.stance)) u.stance = o.stance;
       if (o.carry && ['food', 'wood', 'gold', 'stone'].includes(o.carry.kind) && Number.isFinite(o.carry.amount) && o.carry.amount > 0)
@@ -1185,7 +1201,6 @@ class App {
       }
     }
     if (save.explored) restoreExplored(game, save.explored);
-    if (game.court && save.court) game.court.fromJSON(save.court);
     /* the wheel is restored before anything reads a multiplier from it */
     if (game.calendar && save.calendar) game.calendar.fromJSON(save.calendar);
     // clearEntities clears the resource hash too; restore it before build,

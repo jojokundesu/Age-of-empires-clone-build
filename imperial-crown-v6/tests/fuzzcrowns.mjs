@@ -3,8 +3,8 @@
    The campaign fuzz (`tests/fuzz.mjs`) runs two teams and the five systems
    the game shipped with. This suite exists because the four-crown war turned
    on a second engine room -- collapse and inheritance, per-team nav grids,
-   a court per crown, the wheel of the year, the slow sky, the realm, the
-   elites -- and none of it was ever soaked.
+   the wheel of the year, the slow sky, the elites -- and none of it was ever
+   soaked.
 
    What is checked, every second of game time:
      · no NaN position, no dead-but-standing entity, nobody outside the map
@@ -13,8 +13,8 @@
      · a fallen crown owns nothing and fields nobody (inheritance is total)
      · the fallen set, the survivor's roster and the crown count agree
 
-   And at the end: a save round-trips every subsystem (court, calendar,
-   climate, realm, elites) without throwing, and a reloaded game still runs.
+   And at the end: a save round-trips every remaining subsystem (calendar,
+   climate, elites) without throwing, and a reloaded game still runs.
 
    node tests/fuzzcrowns.mjs [--seconds 240] [--seeds 2]
 */
@@ -237,7 +237,8 @@ function runSeed(seed) {
 
 /** Every subsystem's save must survive a JSON round-trip and a reload. */
 function checkSave(game, tag) {
-  const systems = ['court', 'calendar', 'climate', 'realm', 'elites'];
+  /* the retired side systems (court, realm) are gone: nothing left to save */
+  const systems = ['calendar', 'climate', 'elites'];
   const blob = {};
   for (const key of systems) {
     const sys = game[key];

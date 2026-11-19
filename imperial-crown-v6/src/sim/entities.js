@@ -50,11 +50,7 @@ export const STATE = {
   GATHER: 'gather', RETURN: 'return', BUILD: 'build', REPAIR: 'repair',
   HEAL: 'heal', CONVERT: 'convert', GARRISON: 'garrison', PATROL: 'patrol',
   DEAD: 'dead', TRADE: 'trade', UNPACK: 'unpack',
-  /* ROUT is a state, not a flag: a broken unit runs a different behaviour
-     branch entirely and the whole command layer has to be able to recognise
-     it. Keeping it in STATE means every tool that reads a unit's state --
-     contract tests, the inspector, a mod -- sees it. */
-  ROUT: 'rout', CONTROLLED: 'controlled'
+  CONTROLLED: 'controlled'
 };
 
 /* Entity ids come from the *game*, not from a module-level counter. Two games
@@ -120,8 +116,6 @@ export class Entity {
       const wall = this.game.elites.shieldwall(this, attacker, kind);
       if (wall) armor += wall;
     }
-    /* a man who has turned his back is the easiest kill on the field */
-    if (this.game && this.game.morale) amount *= this.game.morale.damageTakenMul(this);
     if (this.game && this.game.buffMul) {
       const blessed = this.game.buffMul(this.team, 'armor');
       if (blessed > 1) armor += blessed;
@@ -201,7 +195,6 @@ export class Unit extends Entity {
     this.baseMaxHp = this.maxHp;
     this.rank = 0;
     this.xp = 0;
-    this.morale = 100;
     // civ bonuses
     if (type === 'villager') this.maxHp *= 1 + (team === game.playerTeam ? (game.civOf(team) === 'japanese' ? 0.05 : 0) : 0);
     this.hp = this.maxHp;
@@ -305,10 +298,6 @@ export class Unit extends Entity {
     if (civ === 'franks' && this.type === 'axeman' && g.hasTech(team, 'chivalry')) s.attack *= 1.15;
     if (civ === 'byzantines' && this.type === 'cataphract' && g.hasTech(team, 'greek_fire')) s.attack *= 1.1;
     if (civ === 'persians' && this.type === 'war_elephant' && g.hasTech(team, 'mahouts')) { s.speed *= 1.3; s.maxHpScale = 1.3; }
-    if (g.court) {
-      s.sight += g.court.sightBonus(team);
-      s.healMul = g.court.healMul(team);
-    }
     /* rank: the multipliers the chevrons stand for. Inside stats() so the
        inspector, the projectile maths and the damage all agree. */
     if (this.rank && g.veterancy) {
@@ -595,7 +584,6 @@ export class Unit extends Entity {
       case STATE.PATROL: this.updatePatrol(dt, stats); break;
       case STATE.TRADE: this.updateTrade(dt, stats); break;
       case STATE.GARRISON: this.updateGarrisonMove(dt, stats); break;
-      case STATE.ROUT: this.updateRout(dt, stats); break;
       case STATE.CONTROLLED: if (g.directControl?.unit === this) g.directControl.moveUnit(this, dt, stats); else this.state = STATE.IDLE; break;
       default: this.updateIdle(dt, stats); break;
     }
@@ -696,33 +684,6 @@ export class Unit extends Entity {
     if (!b || b.dead) { g.removeFromGarrison(this); return; }
     if (b.kind === 'building' && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 1.5 * dt);
     this.x = b.x; this.z = b.z;
-  }
-
-  /**
-   * Broken men run for the nearest supply and keep running until they find
-   * their nerve. They cannot be ordered, and they will not stop to fight.
-   */
-  updateRout(dt, stats) {
-    const g = this.game;
-    const m = g.morale;
-    if (!m) { this.state = STATE.IDLE; return; }
-    this.target = null;
-    let gx, gz;
-    const src = m.nearestSupply(this);
-    if (src) { gx = src.x; gz = src.z; }
-    else { const home = m.homeOf(this.team); gx = home.x; gz = home.z; }
-    if (Math.hypot(gx - this.x, gz - this.z) < 3) { this.moving = false; this.path = null; return; }
-    this.repathTimer -= dt;
-    if (!this.path || !this.targetPos || this.repathTimer <= 0) {
-      this.repathTimer = 1.2;
-      /* fan out around the tent instead of forming a queue at its door */
-      const a = ((this.id * 37) % 100) / 100 * Math.PI * 2;
-      this.destX = gx + Math.cos(a) * 2.4;
-      this.destZ = gz + Math.sin(a) * 2.4;
-      this.setPath(this.destX, this.destZ, true);
-    }
-    if (this.path) this.stepMovement(dt, stats);
-    else this.moving = false;
   }
 
   updateIdle(dt, stats) {
@@ -1017,7 +978,6 @@ export class Unit extends Entity {
     dmg *= 1 + aura;
     if (this.squad && g.squads) dmg *= g.squads.attackMul(this);
     dmg *= g.buffMul(this.team, 'attack');
-    if (g.morale) dmg *= g.morale.attackMul(this);
     if (g.calendar) dmg *= g.calendar.attackMul();
     /* Champion: armour-piercing, long-range and execution bonuses */
     if (this.champion && g.champions) dmg = g.champions.modifyOutgoing(this, target, dmg);
@@ -1197,7 +1157,6 @@ export class Unit extends Entity {
     let cap = 15;
     if (g.hasTech(this.team, 'wheelbarrow')) cap += 8;
     if (g.hasTech(this.team, 'hand_cart')) cap += 12;
-    if (g.court) cap += g.court.carryBonus(this);
     if (this.champion && g.champions) cap += g.champions.carryBonus(this);
     return cap;
   }
@@ -1449,12 +1408,10 @@ export class Unit extends Entity {
     }
     this.moving = false;
     this.path = null;
-    const courtHeal = g.court ? g.court.healMul(this.team) : 1;
-    const heal = (this.def.heal || 10) * dt * (g.civBonuses(this.team).monkHeal || 1) * courtHeal;
+    const heal = (this.def.heal || 10) * dt * (g.civBonuses(this.team).monkHeal || 1);
     const beforeHeal = target.hp;
     target.heal(heal);
     if (g.veterancy) g.veterancy.onHeal(this, target.hp - beforeHeal);
-    if (g.court) g.court.onHeal(this, target.hp - beforeHeal);
     this.anim.attack = Math.max(this.anim.attack, Math.sin(g.time * 3) * 0.35 + 0.3);
     if (g.rng() < dt * 3) g.fx.heal(target.x, target.y, target.z, 1);
   }

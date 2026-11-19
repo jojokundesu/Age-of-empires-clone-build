@@ -257,20 +257,19 @@ check('multi selection', () => {
   ui.refreshCommands(); ui.update(0.1);
   assert(document.getElementById('inspName').textContent.length > 0, 'no inspector text');
 });
-check('tech / court / market modals', () => {
+check('tech and market modals', () => {
   ui.openTech(); menu.closeModal();
-  ui.openCourt(); menu.closeModal();
   ui.openMarket(); menu.closeModal();
 });
-check('the court panel is appointments and perks, with nothing to spend', () => {
-  ui.openCourt();
-  const body = document.getElementById('modalBody');
-  assert(body, 'no modal body');
-  assert(!body.querySelector('[data-writ]'), 'a writ button came back');
-  assert(!/favour|decree/i.test(body.textContent), 'the panel still mentions favour or decrees');
-  const app = body.querySelector('[data-appoint]');
-  assert(app || /Appoint|Unlocks|vacant|mourning/i.test(body.textContent), 'no appointment affordance');
-  menu.closeModal();
+check('the retired panels are gone from the interface, not merely hidden', () => {
+  /* Removing a system means removing its door. A button that opens an empty
+     modal, or an element the renderer no longer writes, is the kind of ghost
+     UI the 6.5 cleanup exists to prevent. */
+  for (const id of ['btnCourt', 'courtBadge', 'realmChip']) {
+    assert(!document.getElementById(id), `#${id} is still in the DOM`);
+  }
+  assert(typeof ui.openCourt !== 'function', 'ui.openCourt still exists');
+  assert(!document.querySelector('.realmChip'), 'a realm chip is still styled');
 });
 check('market sells and buys at a moving price', () => {
   const t = game.teams.get(1);

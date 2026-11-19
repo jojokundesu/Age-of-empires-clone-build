@@ -26,7 +26,7 @@ export class Guards {
     if (!unit || !target || unit === target || unit.dead || target.dead) return false;
     if (unit.kind !== 'unit' || (target.kind !== 'unit' && target.kind !== 'building')) return false;
     if (unit.team !== this.game.playerTeam || target.team !== unit.team) return false;
-    if (unit.garrisoned || unit.state === STATE.ROUT) return false;
+    if (unit.garrisoned) return false;
     let next = target;
     for (let i = 0; i <= this.records.size; i++) {
       if (next === unit) return false;
@@ -60,7 +60,7 @@ export class Guards {
   release(unit, stop = false) {
     if (!this.records.delete(unit)) return false;
     unit.guardTarget = null;
-    if (stop && !unit.dead && unit.state !== STATE.ROUT) unit.stop();
+    if (stop && !unit.dead) unit.stop();
     return true;
   }
 
@@ -78,7 +78,7 @@ export class Guards {
       }
       // A broken guard, a garrisoned one or a possessed one must not be
       // overridden by an automatic order. It resumes on release/rally.
-      if (u.garrisoned || u.state === STATE.ROUT || g.directControl?.unit === u) continue;
+      if (u.garrisoned || g.directControl?.unit === u) continue;
       const anchor = target.garrisoned && target.garrisonTarget && !target.garrisonTarget.dead
         ? target.garrisonTarget : target;
       const pd = Math.hypot(u.x - anchor.x, u.z - anchor.z);

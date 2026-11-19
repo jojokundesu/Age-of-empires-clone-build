@@ -590,7 +590,6 @@ export class Champions {
       if (u.dead || u.team !== unit.team) continue;
       if (Math.hypot(u.x - unit.x, u.z - unit.z) > 11) continue;
       u.heal(45);
-      if (u.morale !== undefined) u.morale = Math.min(100, u.morale + 18);
       g.fx?.heal(u.x, u.y + 1, u.z, 3);
       n++;
     }

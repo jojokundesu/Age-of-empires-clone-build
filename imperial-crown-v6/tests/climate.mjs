@@ -44,7 +44,7 @@ check('the eras are a complete, ordered, well-described ladder', () => {
     ids.add(e.id);
     assert(e.name && e.blurb && e.icon, `${e.id} is missing display fields`);
     assert(e.tint && e.tint.length === 3, `${e.id} has no tint`);
-    for (const k of ['food', 'wood', 'speed', 'heal', 'morale']) {
+    for (const k of ['food', 'wood', 'speed', 'heal']) {
       assert(typeof e[k] === 'number' && e[k] > 0.3 && e[k] <= 1.25, `${e.id}.${k} = ${e[k]}`);
     }
   }
@@ -149,13 +149,17 @@ check('strain is capped and finite however long the match runs', () => {
 check('every era moves a number the player can feel', () => {
   const g = fresh();
   const c = g.climate;
-  const base = { food: c.foodMul(), wood: c.woodMul(), speed: c.speedMul(), morale: c.moraleMul() };
+  /* Food, timber, speed and healing: the four the eras actually drive. There
+     used to be a fifth, morale, on this list and on every era's table; it
+     fed nothing after morale was retired, so it was deleted rather than left
+     as a number that looks like it does something. */
+  const base = { food: c.foodMul(), wood: c.woodMul(), speed: c.speedMul(), heal: c.healMul() };
   let moved = 0;
   for (let i = 1; i < ERAS.length; i++) {
     c.turn(i);
-    const now = { food: c.foodMul(), wood: c.woodMul(), speed: c.speedMul(), morale: c.moraleMul() };
+    const now = { food: c.foodMul(), wood: c.woodMul(), speed: c.speedMul(), heal: c.healMul() };
     if (Math.abs(now.food - base.food) > 0.05 || Math.abs(now.speed - base.speed) > 0.05 ||
-        Math.abs(now.wood - base.wood) > 0.05 || Math.abs(now.morale - base.morale) > 0.05) moved++;
+        Math.abs(now.wood - base.wood) > 0.05 || Math.abs(now.heal - base.heal) > 0.05) moved++;
   }
   assert(moved === ERAS.length - 1, `only ${moved} of ${ERAS.length - 1} eras change a number`);
 });

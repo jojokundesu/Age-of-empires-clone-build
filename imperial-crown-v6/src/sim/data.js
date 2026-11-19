@@ -239,7 +239,7 @@ export const UNIT_DEFS = {
   mob_rioter: U({
     name: 'Rioter', icon: 'flame', hp: 95, attack: 8, armor: 0, pierceArmor: 0,
     speed: 3.05, time: 0, cost: {}, classes: ['infantry'], pop: 0,
-    bonuses: { building: 17 }, sight: 9, morale: 42,
+    bonuses: { building: 17 }, sight: 9,
     desc: 'An angry villager with a pitchfork and a torch. Burns buildings, breaks easily.'
   }),
   claimant_knight: U({
@@ -346,11 +346,6 @@ export const BUILDING_DEFS = {
     name: 'Gate', icon: 'gate', hp: 1600, armor: 8, pierceArmor: 12, size: 2.8, sight: 8,
     cost: { stone: 30 }, time: 20, walkable: false, gate: true,
     desc: 'A gate your own troops pass through freely — the enemy cannot.'
-  }),
-  supply_tent: B({
-    name: 'Supply Tent', icon: 'tent', hp: 240, armor: 0, pierceArmor: 2, size: 2.4, sight: 6,
-    cost: { wood: 55 }, time: 14, supply: 26,
-    desc: 'Extends your supply line 26 m. Armies far from one lose heart and eventually break.'
   }),
   castle: B({
     name: 'Castle', icon: 'castle', hp: 4800, armor: 9, pierceArmor: 14, size: 6.8, pop: 10, supply: 40, sight: 15,
@@ -513,7 +508,7 @@ export const BUILDING_AGE = {
   town_center: 0, house: 0, farm: 0, lumber_camp: 0, mining_camp: 0, mill: 0,
   palissade_wall: 0, outpost_shrine: 0,
   barracks: 1, archery_range: 1, stable: 1, blacksmith: 1, market: 1, watch_tower: 1,
-  stone_wall: 1, stone_gate: 1, supply_tent: 0, monastery: 2, siege_workshop: 2, university: 2, castle: 2,
+  stone_wall: 1, stone_gate: 1, monastery: 2, siege_workshop: 2, university: 2, castle: 2,
   wonder: 3, dock: 1
 };
 

@@ -8,7 +8,6 @@
 import { readFileSync } from 'node:fs';
 import { generateWorld } from '../src/sim/worldgen.js';
 import { Game } from '../src/sim/game.js';
-import { officeCatalogue } from '../src/sim/court.js';
 import { STATE } from '../src/sim/entities.js';
 
 let pass = 0;
@@ -121,29 +120,21 @@ check('Game exposes the documented public surface', () => {
   assert(!missing.length, 'missing: ' + missing.join(', '));
 });
 
-check('the court is appointments and passives, with no second currency', () => {
+check('the retired side systems are gone and stay gone', () => {
   const g = new Game({ world: generateWorld(20261), civ: 'franks', mode: 'sandbox', difficulty: 'sandbox' });
   g.start();
-  /* The player asked for the court to be an appointment and the perk that
-     comes with it. Writs, decrees and favour are gone: if any of them comes
-     back, the panel grows a second economy nobody asked for. */
+  /* The court, the realm's two estates, rebellion and morale were built,
+     never felt, and pulled out in 6.5 so the core loop could be fixed without
+     a half-baked economy-of-favour sitting on top of it. This check is the
+     ratchet: if any of them is wired back in by accident, it fails here
+     rather than in a match six months from now. */
+  assert(g.court === undefined, 'the court is back');
+  assert(g.realm === undefined, 'the realm is back');
+  assert(g.morale === undefined, 'morale is back');
+  assert(!('favor' in g.teams.get(1)), 'the favour pool is back');
   assert(g.decrees === undefined, 'decrees are back');
-  assert(typeof g.activateDecree === 'undefined', 'activateDecree is back');
-  for (const t of g.teamIds) {
-    assert(!('favor' in g.teams.get(t)), 'the favour pool is back on team ' + t);
-  }
-  const off = g.court.summary(1);
-  assert(off.length === 4, 'the court should have four offices');
-  for (const o of off) {
-    assert(o.id && o.name && o.icon, 'office ' + o.id + ' is missing display fields');
-    assert(o.writ === undefined, `office ${o.id} still offers a writ`);
-  }
-  const cat = officeCatalogue();
-  for (const o of cat) {
-    assert(o.cost && o.cost.gold > 0, `office ${o.id} is free`);
-    assert(!('favor' in o.cost), `office ${o.id} still costs favour`);
-    assert(o.passive.length === 3, `office ${o.id} has no per-rank perks`);
-  }
+  const u = g.units.find((x) => x.def && x.def.attack > 0);
+  if (u) assert(u.morale === undefined, 'units carry a morale stat again');
 });
 
 check('FX presets used by the sim all exist', () => {

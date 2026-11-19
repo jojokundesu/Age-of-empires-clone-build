@@ -7,7 +7,7 @@
      Spring   food flows, the wounded recover, the roads are mud
      Summer   farms are rich and armour is hot: slow, but fast to build
      Autumn   wood and gold are easy, and the granary fills once
-     Winter   food dies, the cold eats morale, and the roads freeze
+     Winter   food dies, the cold closes the roads, and men heal slowly
 
    And at every turn of the season the sky shows an OMEN: one rule
    changed for the whole season, announced to both players and drawn
@@ -35,26 +35,26 @@ export const SEASONS = [
     key: 'spring', name: 'Spring', icon: 'leaf', tint: [0.72, 0.95, 0.62],
     blurb: 'The roads are mud, but nothing starves.',
     food: 1.12, wood: 0.95, gold: 0.95, stone: 1.0,
-    speed: 0.96, morale: 1.25, heal: 1.25
+    speed: 0.96, heal: 1.25
   },
   {
     key: 'summer', name: 'Summer', icon: 'flame', tint: [1.0, 0.86, 0.45],
     blurb: 'Rich fields, hot armour.',
     food: 1.18, wood: 1.0, gold: 1.0, stone: 1.0,
-    speed: 0.94, morale: 1.0, heal: 1.0
+    speed: 0.94, heal: 1.0
   },
   {
     key: 'autumn', name: 'Autumn', icon: 'wheat', tint: [1.0, 0.7, 0.34],
     blurb: 'Timber and gold, and one last harvest.',
     food: 1.0, wood: 1.18, gold: 1.16, stone: 1.0,
-    speed: 1.0, morale: 1.0, heal: 1.0,
+    speed: 1.0, heal: 1.0,
     harvest: true
   },
   {
     key: 'winter', name: 'Winter', icon: 'mountain', tint: [0.72, 0.84, 1.0],
     blurb: 'The fields are dead and the cold is an enemy.',
     food: 0.72, wood: 0.86, gold: 0.94, stone: 1.06,
-    speed: 0.9, morale: 0.6, heal: 0.75,
+    speed: 0.9, heal: 0.75,
     cold: true
   }
 ];
@@ -208,7 +208,6 @@ export class Calendar {
   attackMul() { return this.omenMul.attack || 1; }
   healMul() { return this.season.heal * (this.omenMul.heal !== undefined ? this.omenMul.heal : 1); }
   sightMul() { return this.omenMul.sight || 1; }
-  moraleMul() { return this.season.morale; }
   buildMul() { return this.omenMul.buildSpeed || 1; }
   /** how much longer the dark lasts (1 = normal) */
   get nightStretch() { return this.omenMul.nightStretch || 1; }

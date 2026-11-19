@@ -2,7 +2,7 @@
 
    This is the eyes of the project. Every other suite asks "does the rule
    work"; this one asks "does it look like a game": a home town at noon, a
-   four-crown war in progress, the build ring, the court, the sky at night,
+   four-crown war in progress, the build ring, the top bar, the sky at night,
    the end screen and a mod session. The pictures land in `ci/shots/` and are
    reviewed by a human (or by a model with eyes).
 
@@ -250,14 +250,15 @@ await check('a war in progress is photogenic', async () => {
   return `scenes of war, nearest pair ${hot.d.toFixed(1)} m apart`;
 });
 
-await check('the court shows its four offices', async () => {
-  await page.evaluate(() => window.__imperial.ui.openCourt());
-  await frame(4);
-  await shot('05-court');
-  const rows = await page.evaluate(() => document.querySelectorAll('[data-office-row]').length);
-  assert(rows >= 4, `the court listed ${rows} offices`);
-  await page.evaluate(() => window.__imperial.menu.closeModal());
-  return `${rows} offices`;
+await check('the top bar carries no dead buttons', async () => {
+  /* The court and the realm chip were removed in 6.5. A screenshot suite is
+     the right place to catch a control that still draws: it is the only check
+     that looks at the bar the player actually sees. */
+  const ghosts = await page.evaluate(() => ['btnCourt', 'realmChip', 'courtBadge']
+    .filter((id) => document.getElementById(id)));
+  assert(ghosts.length === 0, `dead controls still drawn: ${ghosts.join(', ')}`);
+  await shot('05-topbar');
+  return 'top bar clean';
 });
 
 await check('the sky turns, and night is a different picture', async () => {

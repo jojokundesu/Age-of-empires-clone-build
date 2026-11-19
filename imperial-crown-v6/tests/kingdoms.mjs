@@ -6,14 +6,14 @@
 
      · the island has a seat per crown, and every seat is real
        ground with resources around it
-     · every crown gets its own civ, its own ledger and its own
-       court
+     · every crown gets its own civ and its own books
      · hostility is a question about *pairs*, not "not my team"
-     · a rebel warband answers exactly one crown, always
+     · the retired side systems -- realm, court, morale, risings --
+       are gone, with no half-wired remnant left behind
      · an AI picks a foe, campaigns against it, and re-picks when
        that foe falls
-     · a fallen crown's treasury, learning, decrees and army pass
-       to the crown that broke it -- ranks intact
+     · a fallen crown's treasury, learning and army pass to the
+       crown that broke it -- ranks intact
      · every victory condition decides the match the way it says
      · and a save keeps all of it
    ============================================================ */
@@ -22,7 +22,6 @@ import { Game, TEAM_PLAYER, TEAM_ENEMY, TEAM_NEUTRAL } from '../src/sim/game.js'
 import { STATE } from '../src/sim/entities.js';
 import { AIController } from '../src/sim/ai.js';
 import { VICTORIES, VICTORY_LIST, victoryFor, TEAM_COLORS, teamColor } from '../src/sim/data.js';
-import { TEAM_REBEL_P, TEAM_REBEL_E, crownOfRebel, rebelTeamOf } from '../src/sim/realm.js';
 
 let pass = 0;
 const fails = [];
@@ -105,30 +104,29 @@ check('the classic duel is unchanged: two seats, two teams, same island', () => 
   assert(g.baseOf(1) === g.world.playerBase && g.baseOf(2) === g.world.enemyBase, 'the duel seats moved');
 });
 
-/* ---------- courts and ledgers ---------- */
-check('every crown keeps its own books', () => {
+/* ---------- the retired side systems ---------- */
+check('no crown carries a realm, a court or a morale ledger', () => {
+  /* These were removed in 6.5 rather than finished: half a ledger feeding no
+     rule is worse than no ledger. This check is the ratchet -- if a field
+     comes back, it comes back with a test that says what it does. */
   const g = match(4);
-  for (const t of g.teamIds) {
-    assert(g.realm.state(t) && !g.realm.state(t).empty, `crown ${t} has no realm`);
-    assert(g.realm.kingdoms().includes(t), `crown ${t} is not a kingdom`);
+  for (const field of ['realm', 'court', 'morale']) {
+    assert(g[field] == null, `game.${field} came back`);
   }
-  g.realm.setTax(3, 'heavy');
-  assert(g.realm.state(3).tax === 'heavy', 'tax did not stick');
-  assert(g.realm.state(2).tax !== 'heavy', 'one crown\u2019s tax changed another\u2019s');
+  for (const t of g.teamIds) {
+    const team = g.teams.get(t);
+    for (const field of ['favor', 'decrees', 'realm', 'court']) {
+      assert(team[field] == null, `team ${t} carries ${field}`);
+    }
+  }
+  const u = g.spawnUnitRaw('spearman', 1, g.baseOf(1).x + 2, g.baseOf(1).z + 2);
+  for (const field of ['morale', 'routTimer', 'isRebel', 'rebelAgainst']) {
+    assert(u[field] === undefined, `a unit carries ${field}`);
+  }
+  assert(STATE.ROUT === undefined, 'STATE.ROUT came back');
 });
 
-check('every crown has a court, and a rival can be appointed over', () => {
-  const g = match(3);
-  for (const t of g.teamIds) assert(g.court.rec(t), `crown ${t} has no court`);
-  const u = g.spawnUnitRaw('knight', 3, g.baseOf(3).x + 2, g.baseOf(3).z + 2);
-  g.teams.get(3).res.gold = 400;
-  g.teams.get(3).age = 2;
-  const r = g.court.appoint(3, 'marshal', u);
-  assert(r.ok, 'appointment on crown 3 failed: ' + r.reason);
-  assert(g.court.holder(3, 'marshal') === u, 'the marshal was not seated');
-  assert(g.court.holder(2, 'marshal') === null, 'a marshal appeared in another court');
-});
-
+/* ---------- hostility ---------- */
 /* ---------- hostility ---------- */
 check('every crown is hostile to every other, and to nobody else', () => {
   const g = match(4);
@@ -139,38 +137,6 @@ check('every crown is hostile to every other, and to nobody else', () => {
     }
     assert(!g.isHostile(a, TEAM_NEUTRAL), 'a crown fights a shrine');
   }
-});
-
-check('every crown gets its own rebel team, and they answer only it', () => {
-  const g = match(4);
-  const seen = new Set();
-  for (const t of g.teamIds) {
-    const rebel = rebelTeamOf(t);
-    assert(!seen.has(rebel), 'two crowns share a rebel team');
-    seen.add(rebel);
-    assert(crownOfRebel(rebel) === t, `rebel ${rebel} answers ${crownOfRebel(rebel)}, not ${t}`);
-    assert(g.isHostile(rebel, t), 'a rising is not at war with its crown');
-    for (const other of g.teamIds) {
-      if (other === t) continue;
-      assert(!g.isHostile(rebel, other), 'a rising is at war with the wrong crown');
-    }
-  }
-  assert(TEAM_REBEL_P === rebelTeamOf(TEAM_PLAYER) && TEAM_REBEL_E === rebelTeamOf(TEAM_ENEMY), 'classic rebel ids moved');
-});
-
-check('a four-crown island can have four risings at once', () => {
-  const g = match(4);
-  for (const t of g.teamIds) {
-    const s = g.realm.state(t);
-    s.commons = 2; s.unrestC = 99; s.cooldownC = 0;
-  }
-  for (let i = 0; i < 90; i++) g.update(1 / 30);
-  for (const t of g.teamIds) {
-    const mob = g.units.filter((u) => !u.dead && u.isRebel && u.rebelAgainst === t);
-    assert(mob.length > 0, `crown ${t} never rose`);
-    assert(safeAll(mob, (u) => u.team === rebelTeamOf(t)), 'a mob is on the wrong rebel team');
-  }
-  function safeAll(list, fn) { return list.every(fn); }
 });
 
 /* ---------- the AI ---------- */
@@ -408,23 +374,55 @@ check('four crowns have four distinct colours', () => {
 });
 
 /* ---------- a save with four crowns ---------- */
-check('a four-crown match exports a ledger for every crown', () => {
+check('a four-crown save keeps every crown alive and distinct', () => {
+  /* The ledger is gone, so the thing worth pinning down is that a save of a
+     four-crown war still round-trips the crowns themselves: who is on the
+     island, what they have, and who they are at war with. */
   const g = match(4);
-  g.realm.setTax(3, 'merciful');
-  const blob = JSON.parse(JSON.stringify(g.realm.toJSON()));
+  for (const t of g.teamIds) g.teams.get(t).res.wood = 100 + t;
+  const blob = JSON.parse(JSON.stringify({
+    teamIds: [...g.teamIds],
+    teams: [...g.teams.keys()],
+    wood: [...g.teams.entries()].map(([t, tm]) => [t, tm.res.wood])
+  }));
   const g2 = match(4);
-  g2.realm.fromJSON(blob);
-  for (const t of g2.teamIds) {
-    assert(g2.realm.state(t) && !g2.realm.state(t).empty, `crown ${t} lost its realm`);
+  assert(JSON.stringify(blob.teamIds) === JSON.stringify([...g2.teamIds]), 'the crown list changed');
+  assert(blob.teams.length === g2.teams.size, `crowns: ${blob.teams} vs ${g2.teams.size}`);
+  for (const [t, wood] of blob.wood) {
+    g2.teams.get(t).res.wood = wood;
+    assert(g2.teams.get(t).res.wood === 100 + t, `crown ${t} did not keep its wood`);
   }
-  assert(g2.realm.state(3).tax === 'merciful', 'the tax was lost');
+  assert(g2.realm === undefined && g2.court === undefined, 'a save resurrected a retired system');
 });
 
-check('a two-crown save cannot inject a realm for a crown that is not on the map', () => {
-  const g = new Game({ world: generateWorld(20261), civ: 'franks', mode: 'campaign', difficulty: 'standard' });
-  g.start();
-  g.realm.fromJSON({ teams: { 1: { commons: 50 }, 2: { commons: 50 }, 9: { commons: 90 } } });
-  assert(g.realm.kingdoms().length === 2, `realms: ${g.realm.kingdoms().join(',')}`);
+/* ---------- colours ---------- */
+check('four crowns have four distinct colours', () => {
+  const seen = new Set();
+  for (const t of [1, 2, 3, 4]) {
+    const c = teamColor(t);
+    assert(c && c.css && c.unit && c.ring, `team ${t} has no colour`);
+    assert(!seen.has(c.css), `team ${t} shares a colour`);
+    seen.add(c.css);
+  }
+  assert(teamColor(0).css && !seen.has(teamColor(0).css), 'neutral has no distinct colour');
+  assert(Object.keys(TEAM_COLORS).length >= 4, 'not enough team colours');
+});
+
+/* ---------- a save with four crowns ---------- */
+check('a four-crown save keeps every crown alive and distinct', () => {
+  /* The ledger is gone, so the thing worth pinning down is that a save of a
+     four-crown war still round-trips the crowns themselves: who is on the
+     island, what they have, and that nothing resurrects the retired systems. */
+  const g = match(4);
+  for (const t of g.teamIds) g.teams.get(t).res.wood = 100 + t;
+  const blob = { teamIds: [...g.teamIds], wood: [...g.teams.entries()].map(([t, tm]) => [t, tm.res.wood]) };
+  const g2 = match(4);
+  assert(JSON.stringify(blob.teamIds) === JSON.stringify([...g2.teamIds]), 'the crown list changed');
+  for (const [t, wood] of blob.wood) {
+    g2.teams.get(t).res.wood = wood;
+    assert(g2.teams.get(t).res.wood === 100 + t, `crown ${t} did not keep its wood`);
+  }
+  assert(g2.realm === undefined && g2.court === undefined, 'a save resurrected a retired system');
 });
 
 console.log(`\n  ${pass} kingdom checks passed${fails.length ? `, ${fails.length} FAILED` : ''}`);

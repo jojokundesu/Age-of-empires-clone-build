@@ -40,7 +40,6 @@ import { bakeTerrain } from './bake.js';
 import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
 import { extractPlanes, sphereInFrustum } from './camera.js';
 import { BUILDING_DEFS, teamColorFor, PARTY_COLOR, TEAM_COLORS, NEUTRAL_COLOR } from '../sim/data.js';
-import { OFFICE_BY_ID } from '../sim/court.js';
 import { STATE } from '../sim/entities.js';
 import { buildRenderTerrain } from '../sim/worldgen.js';
 import { TIERS, renderSize } from './quality.js';
@@ -1856,34 +1855,6 @@ export class Renderer {
       d.push(u.x, (u.y || 0) + 0.075, u.z, r, 0.72, 0.62, 1, 0.55, 0, 1, 0, 0);
       d.push(u.x, (u.y || 0) + 0.08, u.z, r * 0.86, 0.8, 0.72, 1, 0.16, 0, 0, 0, 0);
     }
-    /* the court's officers keep a ring of their own office's colour on the
-       ground, so a Marshal can be found in a crowd without clicking him */
-    if (game.court && game.court.eachHolder) {
-      const pulse = 0.5 + 0.5 * Math.sin(this.time * 2.4);
-      game.court.eachHolder((u, o) => {
-        const c = o.color || [1, 0.86, 0.4];
-        const r = (u.radius || 0.5) * (1.7 + pulse * 0.12);
-        d.push(u.x, u.y + 0.065, u.z, r * 1.4, c[0], c[1], c[2], 0.3, 0, 0, 0, 0);
-        d.push(u.x, u.y + 0.075, u.z, r, c[0], c[1], c[2], 0.95, 0, 1, 0, 0);
-        d.push(u.x, u.y + 0.085, u.z, r * 0.62, c[0], c[1], c[2], 0.5, 0, 1, 0, 0);
-      });
-    }
-    /* the supply net: shown while a tent is being placed and whenever a
-       supply building is selected. A permanent 34 m ring around every town
-       centre would be wallpaper, but a ring the player asked for tells them
-       exactly what ground their army can hold. */
-    if (game.morale) {
-      const placingTent = game.placing && game.placing.type === 'supply_tent';
-      for (let i = 0; i < game.buildings.length; i++) {
-        const bd = game.buildings[i];
-        if (bd.dead || bd.team !== 1) continue;
-        const sr = bd.def && bd.def.supply;
-        if (!sr) continue;
-        if (!placingTent && !(sel && sel.indexOf(bd) >= 0)) continue;
-        d.push(bd.x, bd.y + 0.06, bd.z, sr, 0.55, 0.8, 1, 0.1, 0, 0, 0, 0);
-        d.push(bd.x, bd.y + 0.07, bd.z, sr - 0.16, 0.55, 0.8, 1, 0.42, 0, 1, 0, 0);
-      }
-    }
     /* an armed mod spell shows its footprint under the finger: the same ring
        the game uses for everything else, in the spell's own colour */
     const cast = game.modCast;
@@ -1968,23 +1939,15 @@ export class Renderer {
       if (u.dead || u.garrisoned || cam.firstPerson?.unit === u) continue;
       const selected = sel && sel.has(u);
       const ratio = clamp(u.hp / Math.max(1, u.maxHp), 0, 1);
-      const office = u.courtOffice ? game.court : null;
-      /* a full-health unit normally draws nothing. Veterans and broken men
-         must always draw something, or the two things the player most needs
-         to see -- who is experienced, who is running -- would vanish at full
-         health. */
-      if (!selected && ratio > 0.995 && !office && !u.rank && !u.renown && u.state !== STATE.ROUT) continue;
+      /* A full-health unit normally draws nothing. Veterans must always draw
+         something, or the thing the player most needs to see -- who has
+         earned their chevrons -- would vanish at full health. */
+      if (!selected && ratio > 0.995 && !u.rank && !u.renown) continue;
       if ((u.x - cx) ** 2 + (u.z - cz) ** 2 > 92 * 92) continue;
       const meta = this.unitMeta.get(u.type) || UNIT_META_FALLBACK;
       const w = selected ? 1.15 : 0.85;
       const y = u.y + meta.height + 0.42;
       if (!this._inFrustum(u.x, y, u.z, 2)) continue;
-      /* a broken unit flies a red lamp: the player must be able to see who
-         is running without clicking every man */
-      if (u.state === STATE.ROUT) {
-        const pulse = 0.75 + 0.25 * Math.sin(this.time * 6 + u.id);
-        b.push(u.x, y + 0.26, u.z, 0.13 * pulse, 1.0, 0.36, 0.3, 0.9, 0.04, 0, 0, 0);
-      }
       /* rank chevrons: one small gold bar per chevron. This is the only
          reward a unit carries with it, so it has to read from the normal
          camera distance. */
@@ -2007,21 +1970,6 @@ export class Renderer {
             0.055 + (n === 4 ? 0.02 : 0), 1.0, 0.62, 0.22, 0.95, 0.05, 0, 0, 0);
         }
       }
-      if (office) {
-        const o = OFFICE_BY_ID.get(u.courtOffice);
-        const c = (o && o.color) || [1, 0.86, 0.4];
-        const rank = u.courtRank || 1;
-        const bob = Math.sin(this.time * 2.2 + u.id * 0.7) * 0.04;
-        const hy = u.y + meta.height + 0.66 + bob;
-        /* the sigil grows with the office's rank: a ring, a second ring, and a
-           third — a Marshal you can pick out of a crowd at a glance */
-        b.push(u.x, hy, u.z, 0.34 + rank * 0.07, c[0], c[1], c[2], 0.22 + rank * 0.05, 0.5, 1, 0, 0);
-        b.push(u.x, hy, u.z, 0.22 + rank * 0.03, c[0], c[1], c[2], 0.95, 0.22, 1, 0, 0);
-        if (rank >= 2) b.push(u.x, hy + 0.16, u.z, 0.13, c[0], c[1], c[2], 0.8, 0.13, 1, 0, 0);
-        if (rank >= 3) b.push(u.x, hy + 0.3, u.z, 0.09, c[0], c[1], c[2], 0.7, 0.09, 1, 0, 0);
-      }
-      /* a full-health officer shows his sigil and nothing else: an empty bar
-         over every commander would be noise, not information */
       if (selected || ratio <= 0.995) {
         b.push(u.x, y, u.z, w + 0.06, 0.02, 0.02, 0.02, 0.45, 0.12, 0, 0.6, 0);
         const col = teamColorFor(u.team, game).unit;

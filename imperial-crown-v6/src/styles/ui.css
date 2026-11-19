@@ -800,10 +800,6 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
   border: 1px solid rgba(240, 201, 111, 0.35); border-radius: 5px;
   padding: 1px 4px; margin-right: 2px; background: rgba(240, 201, 111, 0.1);
 }
-/* morale: a quiet flag until it turns red */
-.inspStats .morale { color: #cdd8e6; display: inline-flex; align-items: center; gap: 3px; }
-.inspStats .morale .ic { width: 10px; height: 10px; }
-.inspStats .morale.bad { color: #ff9b84; font-weight: 600; }
 .renownChip { color: #ffc766; border: 1px solid rgba(255, 199, 102, 0.35); border-radius: 6px; padding: 0 5px; font-size: 8.5px; letter-spacing: 0.06em; background: rgba(70, 44, 12, 0.5); }
 .rankChip { color: #e8c47a; }
 
@@ -832,14 +828,6 @@ svg.ic.big { width: 26px; height: 26px; stroke-width: 1.4; }
 /* The Crown's Standing: the same pill as the season, because it is read in
    the same glance. It shows the *lower* of the two estates -- a realm is as
    steady as its angriest half -- and only shouts when that half is angry. */
-.realmChip { color: #d8cba6; }
-.realmChip .ic { color: #e8c47a; }
-.realmChip .ic.bad { color: #ff8f75; }
-.realmChip b { font-weight: 700; }
-.realmChip[data-band="devoted"] { color: #ffe08a; border-color: rgba(255, 224, 138, 0.5); }
-.realmChip[data-band="hostile"] { color: #ff8f75; border-color: rgba(230, 120, 90, 0.6); }
-.realmChip[data-band="angry"] { color: #ffb27a; }
-.realmChip[data-golden="1"] { box-shadow: 0 0 8px rgba(255, 216, 120, 0.55); border-color: rgba(255, 216, 120, 0.7); }
 
 /* the ledger inside the Court panel: every line is a real input, so it is
    printed as a signed number the player can argue with */

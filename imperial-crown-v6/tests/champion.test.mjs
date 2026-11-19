@@ -29,6 +29,8 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { createMockGL } from './mockgl.mjs';
+import { Menu } from '../src/game/menu.js';
+const SAVE_VERSION = Menu.SAVE_VERSION;
 
 const dom = new JSDOM(readFileSync(new URL('../index.html', import.meta.url), 'utf8'),
   { url: 'https://v6.test/', pretendToBeVisual: true });
@@ -595,7 +597,9 @@ check('renown and perks survive a save and a reload', () => {
   assert.equal(app.saveMatch(), true, 'save failed');
   const blob = JSON.parse(localStorage.getItem('imperial-crown-v6-save'));
   assert.ok(blob.champions, 'the save has no champion section');
-  assert.equal(blob.version, 6);
+  /* read the live constant: a hardcoded 6 broke the moment the save shape
+     changed, which is exactly when a save test is most needed */
+  assert.equal(blob.version, SAVE_VERSION);
   g = app.game;
   const clone = { ...champ };
   app.applySave(g, blob);

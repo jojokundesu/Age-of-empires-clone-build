@@ -543,26 +543,6 @@ export class Input {
       && hit.kind === 'unit' && hit.team === 1 && this.lastTapEntity.kind === 'unit'
       && this.lastTapEntity.type === hit.type;
 
-    /* 0a. an armed court appointment: the next tap picks the person */
-    if (game.courtArmed) {
-        const office = game.courtArmed.office;
-        game.courtArmed = null;
-        if (hit && hit.kind === 'unit' && hit.team === game.playerTeam) {
-          const res = game.court.appoint(game.playerTeam, office, hit);
-          if (res.ok) {
-            this.ui?.toast(`${hit.def.name} is raised`, 'good');
-            this.audio?.play?.('horn');
-          } else {
-            this.ui?.toast(res.reason || 'The appointment fails', 'warn');
-            this.audio?.play?.('warn');
-          }
-        } else {
-          this.ui?.toast('Appointment cancelled — tap one of your own units', 'warn');
-        }
-        this.lastTapTime = 0;
-        return;
-    }
-
     /* 0. an armed mod spell takes the tap before anything else: the player has
        already chosen the ability, so the next tap is its target */
     if (game.modCast) {

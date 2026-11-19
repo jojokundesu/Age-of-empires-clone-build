@@ -217,7 +217,7 @@ check('save stores squad bonds and building guards under an isolated v6 key', ()
   g.fow[0] = 1;
   assert.equal(app.saveMatch(), true);
   const saved = JSON.parse(localStorage.getItem('imperial-crown-v6-save'));
-  assert.equal(saved.version, 6); assert.equal(saved.squads.squads.length, 1); assert.ok(saved.guards.length > 0);
+  assert.equal(saved.version, Menu.SAVE_VERSION); assert.equal(saved.squads.squads.length, 1); assert.ok(saved.guards.length > 0);
   assert.equal(localStorage.getItem('imperial-crown-save'), null);
 });
 let save = JSON.parse(localStorage.getItem('imperial-crown-v6-save'));
@@ -254,7 +254,7 @@ check('a v5 campaign is imported read-only and never overwritten in place', () =
   assert.equal(Menu.readSave().seed, 77, 'a v5 save was not offered');
   Menu.writeSave(save);
   assert.equal(JSON.parse(localStorage.getItem('imperial-crown-v5-save')).seed, 77, 'the v5 slot was overwritten');
-  assert.equal(JSON.parse(localStorage.getItem('imperial-crown-v6-save')).version, 6);
+  assert.equal(JSON.parse(localStorage.getItem('imperial-crown-v6-save')).version, Menu.SAVE_VERSION);
   localStorage.removeItem('imperial-crown-v5-save');
 });
 
@@ -269,17 +269,20 @@ check('v4 settings and workshop preferences are imported read-only', () => {
   assert.equal(imported.settings.music, false);
   assert.deepEqual(Menu.readMods(), { arcane: true });
   imported.applySettings({ music: true });
-  Menu.writeMods({ weather: true });
+  Menu.writeMods({ arcane: true });
   assert.equal(localStorage.getItem('imperial-crown-settings'), oldSettings);
   assert.equal(localStorage.getItem('imperial-crown-mods'), oldMods);
   assert.equal(JSON.parse(localStorage.getItem('imperial-crown-v6-settings')).music, true);
-  assert.deepEqual(Menu.readMods(), { weather: true });
+  assert.deepEqual(Menu.readMods(), { arcane: true });
   localStorage.removeItem('imperial-crown-settings');
   localStorage.removeItem('imperial-crown-mods');
 });
 
 console.log('\nV5: ARCANE AND WORKSHOP ROUND-TRIP');
-const mods = ['arcane', 'beasts', 'relics', 'weather', 'zombies', 'artificer'];
+/* The workshop ships one mod. The rest were retired in 6.5; this suite
+   still proves the hard part -- that a mod's state, entities and indexed
+   references survive a save and a reload. */
+const mods = ['arcane'];
 await start({ mode: 'mods', mods }); g = app.game; [x, z] = findOpen(g);
 const mage = spawn(g, 'mage', 1, x, z);
 const guard = spawn(g, 'swordsman', 1, x + 2, z);
@@ -326,8 +329,6 @@ check('workshop save carries mod state, entities and indexed references', () => 
   g.veterancy.gain(guard, 90, 'test'); g.orderGuard([guard], mage);
   const golem = spawn(g, 'stone_golem', 1, x + 4, z); golem.owner = mage;
   arc.state.golems.push({ unit: golem, until: g.time + 26 });
-  const relics = g.modHost.mods.get('relics').state;
-  relics.shrines[0].owner = 1; relics.shrines[0].progress = 1;
   assert.equal(app.saveMatch(), true); save = JSON.parse(localStorage.getItem('imperial-crown-v6-save'));
   assert.equal(save.mods.length, mods.length); assert.ok(save.modState.states.arcane.discovered.$set.includes('plasma'));
   assert.equal(save.squads.squads[0].name, s.name);
@@ -338,14 +339,12 @@ await start({ mode: 'campaign', load: save }); g = app.game;
 check('old match toast nodes do not leak into a new HUD', () => {
   assert.ok(!document.getElementById('toastLayer').textContent.includes('old match sentinel'));
 });
-check('all workshop mods, spells, effects, relics, squads and guards reload', () => {
+check('the mod, its spells, its golems, its squads and its guards reload', () => {
   assert.deepEqual(g.modHost.activeIds().sort(), mods.slice().sort());
   const loadedArc = g.modHost.mods.get('arcane'), loadedMage = g.units.find((u) => u.type === 'mage');
   assert.ok(loadedArc.state.discovered instanceof Set); assert.ok(loadedArc.state.discovered.has('plasma'));
   assert.ok(loadedMage.modState.arcane.cd.fireball > g.time);
   assert.equal(loadedArc.state.golems[0].unit.owner, loadedMage);
-  assert.equal(g.modHost.mods.get('relics').state.shrines[0].owner, 1);
-  assert.ok(g.buildings.includes(g.modHost.mods.get('relics').state.shrines[0].b));
   const s = g.squads.list.find((v) => v.name === 'The Order'); assert.equal(s.members.length, 2);
   assert.ok([...g.guards.records].some(([u, rec]) => u.squad === s && rec.target === loadedMage));
   tick(g, 30); assert.deepEqual(g.modHost.errors, []);

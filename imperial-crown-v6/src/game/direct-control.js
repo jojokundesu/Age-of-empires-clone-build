@@ -41,7 +41,7 @@ const BASE_LOOK = 0.0034;     // radians per CSS pixel of drag
 const DODGE_DISTANCE = 4.6;
 const DODGE_TIME = 0.22;
 const SPRINT_DRAIN = 17;      // stamina per second
-const BUILD_TYPES = ['house', 'farm', 'supply_tent', 'mill', 'lumber_camp', 'mining_camp', 'barracks', 'archery_range',
+const BUILD_TYPES = ['house', 'farm', 'mill', 'lumber_camp', 'mining_camp', 'barracks', 'archery_range',
   'stable', 'blacksmith', 'market', 'watch_tower', 'palissade_wall', 'stone_wall', 'stone_gate', 'monastery',
   'siege_workshop', 'university', 'castle', 'dock', 'wonder'];
 
@@ -54,7 +54,7 @@ function equipmentFor(unit) {
   if (unit.type === 'villager') return 'tool';
   if (def.caster) return 'staff';
   if (classes.includes('monk')) return 'relic';
-  if (def.naval || def.siege || ['war_elephant', 'dire_wolf', 'bear', 'stone_golem', 'plague_zombie', 'trade_cart'].includes(unit.type)) return 'none';
+  if (def.naval || def.siege || ['war_elephant', 'dire_wolf', 'bear', 'stone_golem', 'trade_cart'].includes(unit.type)) return 'none';
   if (def.projectile === 'arrow') return 'bow';
   if (def.projectile === 'javelin' || def.icon === 'spear') return 'spear';
   if (def.icon === 'axe' || def.projectile === 'axe') return 'axe';
@@ -114,7 +114,7 @@ export class DirectControl {
   get active() { return !!this.unit; }
   canAct() {
     return !!this.unit && !this.unit.dead && this.unit.team === this.game.playerTeam && !this.unit.garrisoned &&
-      this.unit.state !== STATE.ROUT && !this.game.gameOver && !this.app.paused;
+      !this.game.gameOver && !this.app.paused;
   }
 
   /* ==========================================================
@@ -275,7 +275,7 @@ export class DirectControl {
      entering and leaving the body
      ========================================================== */
   enter(unit) {
-    if (!unit || unit.dead || unit.kind !== 'unit' || unit.team !== this.game.playerTeam || unit.garrisoned || unit.state === STATE.ROUT) {
+    if (!unit || unit.dead || unit.kind !== 'unit' || unit.team !== this.game.playerTeam || unit.garrisoned) {
       this.ui.toast('Select one available friendly unit first', 'warn');
       return false;
     }
@@ -666,7 +666,7 @@ export class DirectControl {
      ========================================================== */
   /** Runs inside Unit.update, on the fixed simulation tick. */
   prepareUnit(u) {
-    if (u !== this.unit || u.state === STATE.ROUT) return;
+    if (u !== this.unit) return;
     const [x, y] = this.movement();
     if (u.state === STATE.IDLE || (u.state !== STATE.CONTROLLED && (x || y || this.attackHeld))) {
       u.state = STATE.CONTROLLED;
@@ -1320,12 +1320,11 @@ export class DirectControl {
   frame(dt) {
     if (!this.unit) return;
     const u = this.unit;
-    if (u.dead || u.team !== this.game.playerTeam || u.garrisoned || u.state === STATE.ROUT || this.game.gameOver) {
+    if (u.dead || u.team !== this.game.playerTeam || u.garrisoned || this.game.gameOver) {
       this.exit(u.dead ? 'Your Champion has fallen' : 'Direct control ended');
       return;
     }
     /* the possessed body stepped in a gate / got converted: drop the lens */
-    if (u.state === STATE.ROUT) { this.exit('Your unit has broken and is running'); return; }
     if (this.camera.firstPerson) this.camera.firstPerson.bobScale = this.bobEnabled ? 1 : 0;
     this._rotCheck += dt;
     if (this._rotCheck > 0.5) { this._rotCheck = 0; this._syncOrientation(); }

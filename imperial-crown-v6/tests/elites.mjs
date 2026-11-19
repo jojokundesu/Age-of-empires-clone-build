@@ -199,17 +199,24 @@ check('the last stand has a cooldown', () => {
   assert(u.rallyCd > g.time + 60, `cooldown ${u.rallyCd - g.time}s`);
 });
 
-check('a last stand does not break morale', () => {
+check('a last stand needs company, and does not fire alone', () => {
+  /* This used to check that the rally could not be broken by the morale
+     system. Morale is gone; the part of the rule that still exists is that a
+     last stand is about the men around him, so a lone survivor does not get
+     one. */
   const g = fresh();
-  const u = g.spawnUnitRaw('spearman', 1, g.playerBase.x + 30, g.playerBase.z + 30);
-  g.spawnUnitRaw('spearman', 1, u.x + 2, u.z + 2);
+  const alone = g.spawnUnitRaw('spearman', 1, g.playerBase.x + 30, g.playerBase.z + 30);
+  alone.renown = 3;
+  alone.hp = alone.maxHp * 0.2;
+  alone.lastHurt = g.time;
+  g.elites.update(0.5);
+  assert(!alone.rally, 'a lone man found a last stand in an empty field');
+  const u = g.spawnUnitRaw('spearman', 1, alone.x + 2, alone.z + 2);
   u.renown = 3;
   u.hp = u.maxHp * 0.2;
   u.lastHurt = g.time;
   g.elites.update(0.5);
-  u.morale = 5;
-  g.morale.update(0.5);
-  assert(u.morale >= 60, `morale fell to ${u.morale} during a last stand`);
+  assert(u.rally, 'a last stand never fired with company present');
 });
 
 console.log('\nBANNER');
@@ -226,13 +233,14 @@ check('a Legend makes the men around him hit harder', () => {
   assert(a > b, `no banner aura: near ${a} far ${b}`);
 });
 
-check('a broken legend carries no banner', () => {
+check('a legend is a beacon by rank alone, and the bounty follows him', () => {
   const g = fresh();
   const lead = g.spawnUnitRaw('spearman', 1, g.playerBase.x + 30, g.playerBase.z + 30);
+  const plain = g.spawnUnitRaw('spearman', 1, lead.x + 2, lead.z);
+  assert(!g.elites.isBeacon(plain), 'a plain spearman is a beacon');
   lead.renown = MAX_RENOWN;
-  lead.morale = 20;
-  assert(!g.elites.isBeacon(lead), 'a routing legend is still a beacon');
-  assert(g.elites.bounty(lead) === 3, 'the bounty should not care about his nerve');
+  assert(g.elites.isBeacon(lead), 'a legend is not a beacon');
+  assert(g.elites.bounty(lead) === 3, 'the bounty does not follow the banner');
 });
 
 check('a legend is a beacon, and the AI prices him accordingly', () => {
@@ -243,6 +251,10 @@ check('a legend is a beacon, and the AI prices him accordingly', () => {
   lead.renown = MAX_RENOWN;
   assert(g.elites.bounty(lead) === 3, 'a legend is not worth three men');
   assert(g.elites.isBeacon(lead), 'a legend is not a beacon');
+  /* `fresh()` is a sandbox, where the enemy crown is a party at peace and
+     nobody picks a fight until the player swings. A hunt list is exactly such
+     an unasked fight, so the crown has to have been provoked first. */
+  g.breakPeace(2, 1);
   const ai = new AIController(g, 1, {});
   assert(ai.threatOf(lead) > ai.threatOf(plain) * 2, 'the AI does not price renown');
   assert(unitThreat(lead) > unitThreat(plain), 'raw threat ignores renown');
