@@ -436,6 +436,14 @@
             <button class="seg" data-sandboxmods="0">Off</button>
             <button class="seg active" data-sandboxmods="1">On</button>
           </div>
+          <!-- The size of the battlefield. Large is the default: 512 m is a
+               village, and no amount of room to manoeuvre exists in one. -->
+          <div class="segRow" id="mapSizeRow" title="How much ground the war is fought over">
+            <span class="segLabel">Ground</span>
+            <button class="seg" data-mapsize="classic">Classic 512 m</button>
+            <button class="seg active" data-mapsize="large">Large 1024 m</button>
+            <button class="seg" data-mapsize="huge">Huge 1536 m</button>
+          </div>
           <div class="seedRow">
             <label for="mapType">Map</label>
             <select id="mapType" aria-label="Map archetype">

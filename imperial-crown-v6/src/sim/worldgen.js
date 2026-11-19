@@ -7,6 +7,65 @@
 import { clamp, lerp, smoothstep, fbm2, ridged2, noise2, mulberry32, rngFor, dist2, TAU } from '../core/math.js';
 import { buildHydrology, refreshHydrology, DOMAIN, WATER_LEVEL } from './hydrology.js';
 
+/* The three map sizes, and the one place their numbers live.
+   `WORLD` below stays the 512 m classic preset, because a great many call
+   sites read it as a constant and every one of them is describing the map it
+   was written for. A generated world carries its own numbers in `world.w`, and
+   that is what the simulation and the renderer read. Anything that needs to be
+   size-agnostic takes the world, not the module. */
+export const MAP_SIZES = {
+  /* Classic is exactly what shipped before 6.5 and must not move a metre:
+     every existing test, seed and save describes it. */
+  classic: { id: 'classic', name: 'Classic', size: 512, segments: 128, navCells: 256, navCell: 2, fowCells: 128, bakeTex: 512 },
+  /* Large is the new default. 256 segments is 4 m cells -- the same ground
+     detail as Classic, twice the ground. The nav grid doubles to 512 cells so
+     the cell stays 2 m: a 2 m cell is what a man's path is worth, and coarsen-
+     ing it is felt immediately in movement. That costs 4x nav memory (1 MB per
+     layer at 512^2, and there are five), which is the honest price of the
+     size. */
+  large: { id: 'large', name: 'Large', size: 1024, segments: 256, navCells: 512, navCell: 2, fowCells: 256, bakeTex: 1024 },
+  /* Huge is the compromise: 384 segments is 4 m cells still, but the nav grid
+     stays at 512 cells, so the cell opens to 3 m. Beyond this the pathfinder's
+     memory and its per-search cost both stop being something a phone forgives. */
+  huge: { id: 'huge', name: 'Huge', size: 1536, segments: 384, navCells: 512, navCell: 3, fowCells: 384, bakeTex: 1024 }
+};
+export const MAP_SIZE_LIST = ['classic', 'large', 'huge'];
+export const DEFAULT_MAP_SIZE = 'large';
+
+export function mapSize(idOrSize) {
+  if (typeof idOrSize === 'number') {
+    let best = MAP_SIZES.classic, gap = Infinity;
+    for (const k of MAP_SIZE_LIST) {
+      const g = Math.abs(MAP_SIZES[k].size - idOrSize);
+      if (g < gap) { gap = g; best = MAP_SIZES[k]; }
+    }
+    return best;
+  }
+  return MAP_SIZES[idOrSize] || MAP_SIZES[DEFAULT_MAP_SIZE];
+}
+
+/** The shape of a world, derived once from its preset. */
+export function worldShape(preset) {
+  const size = preset.size;
+  return {
+    id: preset.id,
+    name: preset.name,
+    size,
+    half: size * 0.5,
+    segments: preset.segments,
+    cell: size / preset.segments,
+    navCells: preset.navCells,
+    navCell: preset.navCell,
+    fowCells: preset.fowCells,
+    fowCell: size / preset.fowCells,
+    bakeTex: preset.bakeTex,
+    waterLevel: 0.0,
+    seaLevel: -1.6
+  };
+}
+
+/* The classic 512 m preset, kept under its old name for every caller that
+   means "the map I was written against". A world carries the truth. */
 export const WORLD = {
   size: 512,
   half: 256,
@@ -88,8 +147,13 @@ export class HeightField {
 export function generateWorld(seed = 20261, opts = {}) {
   const rand = mulberry32(seed);
   const rng = rngFor(seed ^ 0x9e3779b9);
-  const res = WORLD.segments;
-  const size = WORLD.size;
+  /* A world's size is decided here, once, and travels in `w`. Classic is the
+     default at the API level so that every existing caller -- 41 test files,
+     every save, every seed -- keeps the map it was written against; the menu
+     asks for Large explicitly. */
+  const shape = worldShape(mapSize(opts.size || opts.mapSize || 'classic'));
+  const res = shape.segments;
+  const size = shape.size;
   const hf = new HeightField(res, size);
   /* Every map is a hydrological map now. `classic` is still accepted so that
      an old save reloads, and each classic save gets its own historic map for
@@ -97,7 +161,7 @@ export function generateWorld(seed = 20261, opts = {}) {
   const sites = Math.max(2, Math.min(4, (opts && opts.sites) | 0 || 2));
   const requested = opts.mapType || 'confluence';
   const mapType = requested === 'classic' ? 'confluence' : requested;
-  const hydro = buildHydrology(seed, mapType, { res, size, navCells: WORLD.navCells, seats: sites });
+  const hydro = buildHydrology(seed, mapType, { res, size, navCells: shape.navCells, seats: sites });
   const mapInfo = hydro.info;
   const style = hydro.style;
   const n = res + 1;
@@ -237,11 +301,21 @@ export function generateWorld(seed = 20261, opts = {}) {
   const hfSample = (f, x, z) => f.sample(x, z);
   const hfSlope = (f, x, z) => f.slope(x, z);
 
+  /* Resources scale with the ground. A scatter tuned for 512 m, run unchanged
+     on a 1024 m map, leaves the same nine hundred nodes spread over four times
+     the area: the field is 226 nodes per classic map's worth of ground, which
+     is a walk between every tree and a stone mine a march away. `spread` is
+     the area ratio, and it multiplies the counts -- not the radii, not the
+     cluster sizes, because a bigger map should have MORE places to go, not
+     the same places covering more ground. */
+  const spread = (size * size) / (512 * 512);
+  const spreadCount = (n) => Math.max(1, Math.round(n * spread));
+
   // Forests: dense clumps of trees
-  const forestClusters = 26;
+  const forestClusters = spreadCount(26);
   for (let c = 0; c < forestClusters; c++) {
-    const cx = rng() * 440 - 220;
-    const cz = rng() * 440 - 220;
+    const cx = rng() * (size - 72) - (size - 72) * 0.5;
+    const cz = rng() * (size - 72) - (size - 72) * 0.5;
     if (hfSample(hf, cx, cz) < 0.3) continue;
     if (nearBase(cx, cz, 34)) continue;
     const rad = 9 + rng() * 17;
@@ -249,8 +323,9 @@ export function generateWorld(seed = 20261, opts = {}) {
     for (let i = 0; i < count; i++) {
       const a = rng() * TAU;
       const d = Math.sqrt(rng()) * rad;
-      const x = clamp(cx + Math.cos(a) * d, -248, 248);
-      const z = clamp(cz + Math.sin(a) * d, -248, 248);
+      const edge = size * 0.5 - 8;
+      const x = clamp(cx + Math.cos(a) * d, -edge, edge);
+      const z = clamp(cz + Math.sin(a) * d, -edge, edge);
       if (hfSample(hf, x, z) < 0.4 || hfSlope(hf, x, z) > 0.55) continue;
       if (nearBase(x, z, 20)) continue;
       const kind = rng() < 0.86 ? 'tree' : 'bush';
@@ -387,14 +462,15 @@ export function generateWorld(seed = 20261, opts = {}) {
       const a = rng() * TAU, d = Math.sqrt(rng()) * 24;
       const x = cx0 + Math.cos(a) * d, z = cz0 + Math.sin(a) * d;
       if (hfSample(hf, x, z) < 0.2) continue;
-      stampRoad(splat, hf, x, z, 0.35 + 0.4 * (1 - d / 26), 2.0);
+      stampRoad(splat, hf, shape, x, z, 0.35 + 0.4 * (1 - d / 26), 2.0);
     }
   }
 
   // Scattered distant gold/stone
-  for (let i = 0; i < 14; i++) {
-    const a = rng() * TAU, d = 70 + rng() * 160;
-    const x = clamp(Math.cos(a) * d, -240, 240), z = clamp(Math.sin(a) * d, -240, 240);
+  for (let i = 0; i < spreadCount(14); i++) {
+    const a = rng() * TAU, d = (70 + rng() * 160) * (size / 512);
+    const edge = size * 0.5 - 16;
+    const x = clamp(Math.cos(a) * d, -edge, edge), z = clamp(Math.sin(a) * d, -edge, edge);
     if (hfSample(hf, x, z) < 0.3 || nearBase(x, z, 22)) continue;
     const isGold = rng() < 0.55;
     const count = 3 + ((rng() * 3) | 0);
@@ -410,17 +486,18 @@ export function generateWorld(seed = 20261, opts = {}) {
 
   /* Fishing grounds, on every map that has water at all: the river is a food
      economy, not scenery. Shoals sit in the channel and along the bank. */
-  for (let i = 0; i < 40; i++) {
-    const a = rng() * TAU, d = 12 + Math.sqrt(rng()) * 200;
+  for (let i = 0; i < spreadCount(40); i++) {
+    const a = rng() * TAU, d = (12 + Math.sqrt(rng()) * 200) * (size / 512);
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (hfSample(hf, x, z) > -0.42) continue;
     resources.push({ kind: 'food', type: 'fish', resKind: 'food', x, z, amount: 700, radius: 1.6, scale: 0.9, y: hfSample(hf, x, z) });
   }
 
   // Relics: 5 scattered golden chests
-  for (let i = 0; i < 5; i++) {
-    const a = rng() * TAU, d = 60 + rng() * 150;
-    const x = clamp(Math.cos(a) * d, -230, 230), z = clamp(Math.sin(a) * d, -230, 230);
+  for (let i = 0; i < spreadCount(5); i++) {
+    const a = rng() * TAU, d = (60 + rng() * 150) * (size / 512);
+    const re = size * 0.5 - 26;
+    const x = clamp(Math.cos(a) * d, -re, re), z = clamp(Math.sin(a) * d, -re, re);
     if (hfSample(hf, x, z) < 0.3) continue;
     resources.push({ kind: 'relic', type: 'relic', resKind: 'relic', x, z, amount: 1, radius: 0.5, scale: 1, y: hfSample(hf, x, z) });
   }
@@ -515,7 +592,7 @@ export function generateWorld(seed = 20261, opts = {}) {
         roadPts.push([x, z]);
       }
     }
-    for (const [x, z] of roadPts) stampRoad(splat, hf, x, z, 1);
+    for (const [x, z] of roadPts) stampRoad(splat, hf, shape, x, z, 1);
   }
 
   /* A town is not dropped onto untouched meadow: it stands on ground that has
@@ -529,7 +606,7 @@ export function generateWorld(seed = 20261, opts = {}) {
       const x = base.x + Math.cos(a) * d, z = base.z + Math.sin(a) * d;
       if (hfSample(hf, x, z) < -0.4) continue;
       const falloff = 1 - d / 19;
-      stampRoad(splat, hf, x, z, 0.45 + falloff * 0.45, 2.2 + rng() * 2.0);
+      stampRoad(splat, hf, shape, x, z, 0.45 + falloff * 0.45, 2.2 + rng() * 2.0);
     }
   }
 
@@ -671,11 +748,11 @@ export function generateWorld(seed = 20261, opts = {}) {
       const cos = Math.cos(f.angle || 0), sin = Math.sin(f.angle || 0);
       for (let i = 0; i < 46; i++) {
         const u = (rng() * 2 - 1) * f.radius * 0.66;
-        const w = (rng() * 2 - 1) * f.radius;
-        if (u * u / (f.radius * 0.66) ** 2 + w * w / (f.radius * f.radius) > 1) continue;
-        const x = f.x + cos * u - sin * w;
-        const z = f.z + sin * u + cos * w;
-        stampRoad(splat, hf, x, z, 0.85, 1.3);
+        const v = (rng() * 2 - 1) * f.radius;
+        if (u * u / (f.radius * 0.66) ** 2 + v * v / (f.radius * f.radius) > 1) continue;
+        const x = f.x + cos * u - sin * v;
+        const z = f.z + sin * u + cos * v;
+        stampRoad(splat, hf, shape, x, z, 0.85, 1.3);
       }
     }
     /* Reed beds at the waterline and gravel bars in the channel. These are the
@@ -692,14 +769,14 @@ export function generateWorld(seed = 20261, opts = {}) {
   for (const r of resources) {
     if (r.type === 'fish' || r.type === 'relic') continue;
     const s = r.radius * r.scale;
-    stampDisc(props, hf, r.x, r.z, Math.max(0.6, s * 0.8), 1);
+    stampDisc(props, hf, shape, r.x, r.z, Math.max(0.6, s * 0.8), 1);
   }
 
   const world = {
     seed, style,
     mapType: mapInfo.id,
     mapName: mapInfo.name,
-    size, half: size * 0.5,
+    w: shape, size, half: size * 0.5,
     height: hf,
     hydrology: hydro,
     /* The navigation domain and the water shader's field. Every map has both. */
@@ -716,6 +793,8 @@ export function generateWorld(seed = 20261, opts = {}) {
     isNaval: hydro.isNaval,
     splat, water, walk, props, biome,
     resources, decor, roads: roadPts, poi, fords,
+    /* the land routes at the map corners: the river is not the only way */
+    corridors: hydro.corridors || [],
     playerBase, enemyBase,
     bases: SEATS,
     nav: null,
@@ -730,7 +809,7 @@ export function generateWorld(seed = 20261, opts = {}) {
      a close camera is the pale glow the eye reads as a painted outline. One
      metre per texel, from the same interpolated surface the gameplay uses,
      puts the waterline where the terrain actually meets the water. */
-  world.bedTex = bakeBedTex(hf, 512);
+  world.bedTex = bakeBedTex(hf, shape.bakeTex);
   /* Cosmetic height lookup: smooth contours, used only by the bake (sand band)
      and the water shader (via bedTex). Gameplay keeps hf.sample. */
   world.heightSmooth = (x, z) => sampleSmooth(hf, x, z);
@@ -907,35 +986,35 @@ function world_water_level_fallback(hydro, b) {
   return Number.isFinite(hydro.waterLevel) ? hydro.waterLevel : (b.deck ? b.deck - 2.1 : 0);
 }
 
-function stampDisc(grid, hf, wx, wz, radius, value) {
-  const res = WORLD.segments;
+function stampDisc(grid, hf, w, wx, wz, radius, value) {
+  const res = w.segments;
   const n = res + 1;
-  const cell = WORLD.size / res;
-  const cx0 = Math.floor((wx - radius + WORLD.half) / cell);
-  const cx1 = Math.ceil((wx + radius + WORLD.half) / cell);
-  const cz0 = Math.floor((wz - radius + WORLD.half) / cell);
-  const cz1 = Math.ceil((wz + radius + WORLD.half) / cell);
+  const cell = w.cell;
+  const cx0 = Math.floor((wx - radius + w.half) / cell);
+  const cx1 = Math.ceil((wx + radius + w.half) / cell);
+  const cz0 = Math.floor((wz - radius + w.half) / cell);
+  const cz1 = Math.ceil((wz + radius + w.half) / cell);
   for (let z = Math.max(0, cz0); z <= Math.min(res, cz1); z++) {
     for (let x = Math.max(0, cx0); x <= Math.min(res, cx1); x++) {
-      const px = (x / res) * WORLD.size - WORLD.half;
-      const pz = (z / res) * WORLD.size - WORLD.half;
+      const px = (x / res) * w.size - w.half;
+      const pz = (z / res) * w.size - w.half;
       if (dist2(px, pz, wx, wz) <= radius * radius) grid[z * n + x] = value;
     }
   }
 }
 
-function stampRoad(splat, hf, wx, wz, strength, radius = 2.6) {
-  const res = WORLD.segments;
+function stampRoad(splat, hf, w, wx, wz, strength, radius = 2.6) {
+  const res = w.segments;
   const n = res + 1;
-  const cell = WORLD.size / res;
-  const cx0 = Math.floor((wx - radius + WORLD.half) / cell);
-  const cx1 = Math.ceil((wx + radius + WORLD.half) / cell);
-  const cz0 = Math.floor((wz - radius + WORLD.half) / cell);
-  const cz1 = Math.ceil((wz + radius + WORLD.half) / cell);
+  const cell = w.cell;
+  const cx0 = Math.floor((wx - radius + w.half) / cell);
+  const cx1 = Math.ceil((wx + radius + w.half) / cell);
+  const cz0 = Math.floor((wz - radius + w.half) / cell);
+  const cz1 = Math.ceil((wz + radius + w.half) / cell);
   for (let z = Math.max(0, cz0); z <= Math.min(res, cz1); z++) {
     for (let x = Math.max(0, cx0); x <= Math.min(res, cx1); x++) {
-      const px = (x / res) * WORLD.size - WORLD.half;
-      const pz = (z / res) * WORLD.size - WORLD.half;
+      const px = (x / res) * w.size - w.half;
+      const pz = (z / res) * w.size - w.half;
       const d = Math.sqrt(dist2(px, pz, wx, wz));
       if (d > radius) continue;
       const i = z * n + x;
@@ -946,14 +1025,14 @@ function stampRoad(splat, hf, wx, wz, strength, radius = 2.6) {
          almost no dirt in them.) */
       const k = smoothstep(1 - d / radius) * strength;
       const b = splat[i * 2];
-      const w = k;
-      if (w <= 0.02) continue;
+      const wt = k;
+      if (wt <= 0.02) continue;
       const prev = splat[i * 2 + 1];
       if (b !== TERRAIN_LAYER.DIRT) {
         splat[i * 2] = TERRAIN_LAYER.DIRT;
-        splat[i * 2 + 1] = Math.min(255, Math.round(w * 240)) | 0;
+        splat[i * 2 + 1] = Math.min(255, Math.round(wt * 240)) | 0;
       } else {
-        splat[i * 2 + 1] = Math.max(prev, Math.min(255, Math.round(w * 240))) | 0;
+        splat[i * 2 + 1] = Math.max(prev, Math.min(255, Math.round(wt * 240))) | 0;
       }
     }
   }
@@ -1037,8 +1116,9 @@ function findBaseSite(hf, walk, hx, hz, rng, avoid) {
  * impassable or occupied by a large prop.
  */
 export function buildNavGrid(world) {
-  const N = WORLD.navCells;
-  const cell = WORLD.navCell;
+  const w = world.w || WORLD;
+  const N = w.navCells;
+  const cell = w.navCell;
   const blocked = new Uint8Array(N * N);
   /* `steep` is the same sample against the movement code's own, looser
      threshold: it lets `isPassable`, which is asked for every man on every
@@ -1056,8 +1136,8 @@ export function buildNavGrid(world) {
   const hydro = world.hydrology;
   for (let z = 0; z < N; z++) {
     for (let x = 0; x < N; x++) {
-      const wx = (x + 0.5) * cell - WORLD.half;
-      const wz = (z + 0.5) * cell - WORLD.half;
+      const wx = (x + 0.5) * cell - w.half;
+      const wz = (z + 0.5) * cell - w.half;
       const slope = world.height.slope(wx, wz);
       const d = hydro.domainAt(wx, wz);
       domain[z * N + x] = d;
@@ -1071,13 +1151,13 @@ export function buildNavGrid(world) {
   }
   return { cells: N, cell, blocked, steep, domain, naval,
     isWaterCell: (x, z) => {
-      const cx = clamp(((x + WORLD.half) / cell) | 0, 0, N - 1);
-      const cz = clamp(((z + WORLD.half) / cell) | 0, 0, N - 1);
+      const cx = clamp(((x + w.half) / cell) | 0, 0, N - 1);
+      const cz = clamp(((z + w.half) / cell) | 0, 0, N - 1);
       return domain[cz * N + cx] === DOMAIN.WATER_ONLY;
     },
     domainAt: (x, z) => {
-      const cx = clamp(((x + WORLD.half) / cell) | 0, 0, N - 1);
-      const cz = clamp(((z + WORLD.half) / cell) | 0, 0, N - 1);
+      const cx = clamp(((x + w.half) / cell) | 0, 0, N - 1);
+      const cz = clamp(((z + w.half) / cell) | 0, 0, N - 1);
       return domain[cz * N + cx];
     }
   };

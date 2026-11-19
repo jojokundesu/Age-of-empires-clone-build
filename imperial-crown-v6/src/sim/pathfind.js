@@ -28,7 +28,7 @@ const DIRS = [
   [1, 1, 1.4142], [1, -1, 1.4142], [-1, 1, 1.4142], [-1, -1, 1.4142]
 ];
 const STEP = 1.25;              // cost of a straight cell step (0.75 + 0.5 * 1)
-const HEUR = STEP;              // ...and the matching heuristic scale
+const HEUR = STEP;              // ...and the matching, admissible heuristic scale
 
 class MinHeap {
   constructor(cap) {
@@ -97,9 +97,20 @@ export class PathFinder {
     this.compQueue = new Int32Array(n);
     this.compId = 0;
 
-    this.maxNodes = 3000;
+    /* Both limits are per *search*, and both were sized for a 256-cell map.
+       On 512 cells a route from one bank of the map to the other is four
+       times the area to explore, and A* died at exactly `maxNodes` -- it
+       returned a "partial path to the closest explored cell", which is an
+       honest answer to "I ran out of room" and a terrible answer to "walk to
+       the corner": the unit walked 380 m and stopped in the middle of a
+       field. The ceiling is now a function of the ground being searched, and
+       the per-tick budget scales with it, so a 512-cell map can still afford
+       a couple of long routes a tick while short ones stay as cheap as they
+       were. */
+    const side = Math.sqrt(n) || 128;
+    this.maxNodes = Math.max(3000, Math.round(side * side * 0.055));
     this.searchBudget = 24;
-    this.nodeBudget = 14000;
+    this.nodeBudget = Math.max(14000, this.maxNodes * 2);
     this.budget = 1e9;
     this.lastWasSkip = false;
     this.stats = { searches: 0, nodes: 0, hits: 0, skipped: 0, unreachable: 0 };
@@ -108,7 +119,7 @@ export class PathFinder {
   /** Called by Game.update() once per tick. */
   beginTick() {
     this.searchBudget = 24;
-    this.nodeBudget = 14000;
+    this.nodeBudget = Math.max(14000, this.maxNodes * 2);
     this.budget = 1e9;
     this.stats.searches = 0;
     this.stats.nodes = 0;

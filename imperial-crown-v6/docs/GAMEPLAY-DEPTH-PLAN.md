@@ -207,6 +207,118 @@ with `WORLD` becoming a function of it.
   at the numbers above.
 - No in-game screenshot or capture control of any kind.
 
+### Status: COMPLETE
+
+All five criteria are met, and `node tests/mapsize.mjs` (19 checks) holds them.
+Growing the world turned out to be less about the size of the map than about
+every place in the codebase where 512 m had been assumed. Those are worth
+recording, because each one failed silently rather than loudly:
+
+- **Water was a 512 m plane.** The river sheet was built as a fixed 512 m mesh,
+  so on a 1024 m map every channel stopped dead at ±256 m and the river read as
+  a chain of disconnected blue rectangles with real water flowing past the edge
+  of the mesh. Now the world's size, tessellated to the same metres-per-quad.
+- **The unit hash covered 576 m of a 1024 m map.** `SpatialHash` took its half
+  extent from the world but its cell *count* from a constant, and `insert`
+  returns silently for a cell outside the grid. Everything past ±320 m — men,
+  houses, trees — did not exist to separation, aggro, gathering, auras or a
+  gate's leaf. Nothing threw. The map was just empty over there.
+- **The prop culling grid was 8×8 cells of 64 m.** Scenery beyond the first
+  quadrant was never drawn: correct ground, no trees.
+- **The minimap divided by 512.** Blips, buildings and the view rectangle
+  crowded into the top-left quarter of the panel; a tap on it jumped to the
+  wrong place.
+- **The pathfinder gave up at exactly 3000 nodes**, a cap sized for a 256-cell
+  grid. Routes across a 512-cell grid returned a "partial path to the closest
+  explored cell" — the unit walked 380 m and stopped in a field.
+- **A fresh unit was invisible to neighbour queries until the next tick**, so a
+  gate did not see a man standing in its own gateway.
+
+The landform is scaled horizontally only: the same island, river and hills over
+more ground, with relief unchanged, so a bigger map is a bigger landscape with
+gentler slopes. River plans are scaled in position and width but *not* in depth
+— a wider river is not a deeper one — and fords get their shelf resized to the
+water they actually have to cross, which is what made crossings work at 1024 m.
+
+**A note on "corner" corridors.** The trunk river runs the width of the map
+through its middle, so the geometric corners are half a kilometre from any
+water and a dry shelf parked there bridges nothing. The flanks are therefore
+sited where the river meets the map border — out on the map's edge, at the far
+end of the longest march, which is what the corner route was always for. They
+are stamped in river coordinates so the shelf spans the channel wherever the
+channel goes.
+
+Classic is bit-identical to the map that shipped: same terrain hash, same nav
+grid, same 907 resource nodes, same three fords. A test asserts the hashes so a
+future change cannot quietly re-draw it.
+
+### The zoom-out was the last criterion to actually pass
+
+Everything above is about the *map*; "full-map zoom-out with the far corner
+legible" is about the *camera*, and it was taken on trust. It did not hold. The
+zoom-out limit was `half * 1.45` — a linear guess that frames 512 m and nothing
+else. On Large the camera stopped at 742 m and the map's own corners projected
+to **4.7** in normalised device coordinates, so the "overview" showed the middle
+of the battlefield and cut off the war. Playing the match made it look fine,
+because the camera starts over the player's town and the crop is off-screen
+behind the HUD.
+
+Framing is geometric, not linear, and it has a wrinkle an approximate closed
+form gets wrong twice: the pitch tips the map so the near corner is far closer
+to the eye than the far one, and a square's corners sit at 45° to the view axis.
+So the limit is now *solved* — `Camera.fitDistance` projects the map's four
+corners through this camera's real frustum, at this screen's real aspect and
+this pitch, and bisects the distance until all four sit inside the frame with an
+eighth of the screen to spare. Large needs 1599 m at 16:9 and 3218 m on a phone
+held upright, which is why it is computed per resize and not per map.
+
+Three of the bugs on that path were mine and all three were caught by the check
+rather than by looking at the screen: a view basis built by dividing the eye
+offset by the distance (which zeroes the horizontal terms), a bisection whose
+brackets ran the wrong way (so it returned the distance that *fails*), and a
+margin of 1.12 in the solver against 1.16 in its only caller.
+
+Two things that follow from the longer lens:
+
+- **The far plane had to grow with it.** It was `max(820, half * 3)`; at 1599 m
+  of distance it clipped the back of the map into fog-coloured nothing.
+- **The water shader had to survive the distance.** Its shoreline cut is a tenth
+  of a metre of depth, which draws a crisp bank at 46 m and falls apart at a
+  kilometre: a 4 m texel of a 2 m-deep bank collapses the contour, and the river
+  drew as a chain of pools with dry ground between them. The cut now loosens
+  with zoom and the far field gets a colour floor, so the channel keeps its
+  course when what the player is reading is the battlefield.
+
+What the overview still shows, correctly, is fog of war: the half of the map
+nobody has walked is a grey memory of the terrain, and that is the design. The
+terrain, the river and the far corner are all legible under it.
+
+### One thing found and deliberately not fixed here
+
+On Large, **55.7 % of the trunk river's own centreline is dry ground**, in two
+long runs at the map's west and east ends (from −1076 to −434, and 447 to 1052,
+on seed 20261). The ground there sits at 0.55 m, half a metre above the water
+table, and flat. Classic is unaffected: 0 % of its centreline is dry.
+
+The cause is the width scaling. `add()` scales a river's control-point *width*
+by `riverScale` but deliberately not its depth, so at 1024 m a trunk whose bed
+is −7.2 m is 62 m wide. The carve only cuts where the ground is within
+`w * 6.5` — 400 m of the channel — but the *macro landform*'s hillside ramp only
+starts 26 m from the waterline, so the channel does not sit in a valley; it is a
+trench cut into a flat plain. At the meander's extremes the trench floor rises
+to the floodplain and the noise tips it above zero, and the river breaks.
+
+Fixing it means reconciling two scale factors that were never designed to agree
+— the river plan's width and the landform's macro coordinates. Attempted here
+and reverted: a distance prune in the cell scan (exact, but the landform reads
+distance out to 150 m so the bound was wrong) and a bucket index on the segment
+search (exact and verified over 54 000 probes, but only 1.2–1.5× faster, because
+the ring walk costs as much as it saves). Both were removed rather than shipped
+half-understood. The visible symptom at play is a river that has wide pools at
+the ends of the map rather than a continuous channel — noticeable, not
+gameplay-breaking, and it belongs with Section 3's river work, which touches the
+same geometry.
+
 ---
 
 ## Section 3 — The AI crosses the river

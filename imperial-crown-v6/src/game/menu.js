@@ -5,6 +5,7 @@
    ============================================================ */
 import { CIVS, DIFFICULTY, GAME_MODES, VICTORIES } from '../sim/data.js';
 import { mulberry32, clamp } from '../core/math.js';
+import { DEFAULT_MAP_SIZE, MAP_SIZES, MAP_SIZE_LIST } from '../sim/worldgen.js';
 
 const AREAS = {
   franks: ['The Rhine Frontier', 'Vineyards and stone keeps along a cold river. Your knights hold the ford.'],
@@ -66,6 +67,9 @@ export class Menu {
       /* Workshop content in the sandbox, on by default: the sandbox is where
          you go to *try* things, and a mod is a thing to try. */
       sandboxMods: true,
+      /* The map. Large is the default from 6.5: 512 m is a village, and every
+         strategic choice the game wants to offer needs room to be made in. */
+      mapSize: opts.settings?.mapSize || DEFAULT_MAP_SIZE,
       mods: Menu.readMods()
     };
     this.el = {
@@ -84,6 +88,7 @@ export class Menu {
       sandboxModsRow: document.getElementById('sandboxModsRow'),
       seed: document.getElementById('seedInput'),
       mapType: document.getElementById('mapType'),
+      mapSizeRow: document.getElementById('mapSizeRow'),
       reroll: document.getElementById('btnRerollSeed'),
       start: document.getElementById('btnStart'),
       startSub: document.getElementById('startSub'),
@@ -167,6 +172,12 @@ export class Menu {
       el.mapType.value = this.state.mapType;
       el.mapType.addEventListener('change', () => { this.state.mapType = el.mapType.value; });
     }
+    el.mapSizeRow?.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-mapsize]');
+      if (!b || !MAP_SIZES[b.dataset.mapsize]) return;
+      this.state.mapSize = b.dataset.mapsize;
+      this._syncMapSize();
+    });
     el.seed?.addEventListener('input', () => {
       const v = parseInt(el.seed.value.replace(/[^0-9]/g, ''), 10);
       if (Number.isFinite(v)) { this.state.seed = v; this._paintArt(); }
@@ -269,6 +280,11 @@ export class Menu {
     }
     for (const b of el.kingdomRow ? el.kingdomRow.querySelectorAll('.seg') : []) {
       b.classList.toggle('active', parseInt(b.dataset.kingdoms, 10) === this.state.kingdoms);
+    }
+    if (el.mapSizeRow) {
+      for (const b of el.mapSizeRow.querySelectorAll('[data-mapsize]')) {
+        b.classList.toggle('active', b.dataset.mapsize === this.state.mapSize);
+      }
     }
     if (el.sandboxModsRow) {
       for (const b of el.sandboxModsRow.querySelectorAll('[data-sandboxmods]')) {
@@ -514,6 +530,15 @@ export class Menu {
   /* ---------------- Mod Workshop ----------------
      The catalogue is imported *lazily*: a normal campaign never loads a byte
      of mod code, and the workshop is one dynamic import away. */
+  /** Repaint just the ground row: a size change moves no other control. */
+  _syncMapSize() {
+    const row = this.el && this.el.mapSizeRow;
+    if (!row) return;
+    for (const b of row.querySelectorAll('[data-mapsize]')) {
+      b.classList.toggle('active', b.dataset.mapsize === this.state.mapSize);
+    }
+  }
+
   enabledMods() {
     return Object.keys(this.state.mods || {}).filter((id) => this.state.mods[id]);
   }

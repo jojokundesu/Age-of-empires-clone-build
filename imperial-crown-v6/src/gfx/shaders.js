@@ -386,7 +386,10 @@ void main(){
      patchwork, the tussocks, the dry pockets, the altitude tint and the baked
      ambient occlusion. See bake.js for the bake itself. The texture is sRGB,
      so the hardware decodes it to linear for free -- no pow() per pixel. */
-  vec4 alb = texture(uAlbedo, vWorld.xz / 512.0 + 0.5);
+  /* uWorldHalf is the ground's half-extent, so the map-spanning textures index
+     against the map that is actually loaded. A literal 512 here put every
+     texel of the 1024 m bed on the wrong part of the world. */
+  vec4 alb = texture(uAlbedo, vWorld.xz / uWorldHalf * 0.25 + 0.5);
   vec3 albedo = alb.rgb;
 
   /* Ground detail: one mip-mapped 4 m tile, sampled twice at two scales.
@@ -795,6 +798,7 @@ uniform sampler2D uHeightMap;   // r = terrain height (0..1 over 46 m)
 uniform sampler2D uFlowMap;     // rg = flow direction, b = bed depth, a = shore mask
 uniform float uFlowStrength;
 uniform float uWaterLevel;
+uniform float uWaterZoom;       // 0 at close range, 1 at the full-map overview
 uniform vec2 uNormalOffset;
 uniform vec3 uShallowColor;
 uniform vec3 uDeepColor;
@@ -835,8 +839,23 @@ void main(){
      field. The last few centimetres fade rather than clip. */
   float wobble = (texture(uWater, vWorld.xz * 0.23).b - 0.5) * 0.16
                + (texture(uWater, vWorld.xz * 0.061 + 0.5).b - 0.5) * 0.10;
-  if (dRaw + wobble < 0.10) discard;
-  float shoreFade = smoothstep(0.10, 0.42, dRaw + wobble);
+  /* ---- the channel has to survive the zoom-out -------------------------
+     The cut above is a tenth of a metre of depth, which is right under a
+     close camera and wrong at the overview. A channel is a few metres wide
+     and, on a 1024 m map, the whole map is a thousand pixels: the bed
+     texture is sampled at four metres a texel, so the bank's depth ramp lands
+     inside one texel, the shoreline contour folds up, and a river that is one
+     continuous channel in the data draws as a chain of disconnected pools
+     with dry light ground between them. The player zooms out to read the
+     battlefield and the battlefield's single most important feature has
+     fallen apart.
+     So the cut gets *looser* as the eye climbs, and the body colour gets a
+     floor: at the overview a centimetre of water still reads as water over
+     the land, because what the eye is reading is the channel's course. */
+  float farFlat = smoothstep(0.30, 0.92, uWaterZoom);
+  float cutDepth = mix(0.10, -0.10, farFlat);
+  if (dRaw + wobble < cutDepth) discard;
+  float shoreFade = smoothstep(cutDepth, cutDepth + 0.32, dRaw + wobble);
   float d = max(dRaw, 0.0);
   float shoreSoft = hyd.a;
 
@@ -908,6 +927,13 @@ void main(){
   reflW *= 0.14 + 0.86 * smoothstep(0.30, 2.4, d);
   vec3 col = mix(body, sky * 0.82, reflW);
   col = mix(col, bedCol * 1.25, bedShine);
+  /* At the overview, thin water is not a translucent skin over sand -- it is
+     the river, seen from four hundred metres up, and it reads blue. Without
+     this the shallow reaches are the bed's colour and the channel keeps the
+     dashes it has at close range. Only the far field and only the shallows:
+     the near camera keeps the absorption ramp it was tuned for. */
+  vec3 farWater = mix(vec3(0.10, 0.24, 0.33), vec3(0.05, 0.13, 0.21), smoothstep(0.0, 2.4, d));
+  col = mix(col, farWater, farFlat * 0.78);
 
   /* ---- sun glint ---- */
   float rl = max(dot(R, uSunDir), 0.0);

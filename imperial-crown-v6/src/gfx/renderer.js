@@ -550,6 +550,15 @@ export class Renderer {
     const gl = this.gl;
     this._disposeWorld();
     this.world = world;
+    /* How much ground there is changes how far the eye must reach. At 512 m a
+       90 m camera framed the war; at 1024 m the far bank is 700 m away and at
+       1536 m it is a kilometre, so the far plane and the overview zoom both
+       scale with the map rather than sitting at fixed metres. */
+    const half = (world && world.half) || 256;
+    this.farDist = Math.max(820, half * 3);
+    /* the distance at which the whole map fits the frame; main.js hands it to
+       the camera, and the overview button asks for it by name */
+    this.overviewDist = Math.round(half * 1.45);
     this.heightAt = world.heightAt || ((x, z) => world.height.sample(x, z));
     const RT = buildRenderTerrain(world);
     this.terrain = RT;
@@ -692,7 +701,16 @@ export class Renderer {
 
   _buildWater() {
     const gl = this.gl;
-    const N = 64, span = 512, half = span / 2;
+    /* The water sheet covers the world. It was a hard 512 m plane -- exactly
+       the classic map -- so every river, lake and bay on a bigger map was only
+       drawn inside the middle 512 m of it: the channel crossed the map as a
+       chain of disconnected blue rectangles that stopped dead at +-256 m, with
+       real water flowing on past the edge of the mesh. The sheet is the
+       world's size and the tessellation grows with it, so the swell keeps the
+       same wavelength per metre on every map. */
+    const span = (this.world && this.world.size) || 512;
+    const half = span / 2;
+    const N = Math.max(64, Math.round(span / 8));
     const verts = new Float32Array((N + 1) * (N + 1) * 3);
     let p = 0;
     for (let j = 0; j <= N; j++) for (let i = 0; i <= N; i++) {
@@ -727,12 +745,20 @@ export class Renderer {
   _bucketProps(world) {
     this.propCells = new Map();
     this.propCount = 0;
-    const CELL = 64, HALF = 256;
+    /* The culling grid is derived from the world, not from the map it was
+       first written for. It was 8 cells of 64 m -- exactly the 512 m map --
+       so on a bigger world every prop beyond the first quadrant was dropped
+       on the floor: the ground was there, the trees and rocks and ruins were
+       not, and the far half of a 1024 m map rendered as bare terrain. */
+    const HALF = world.half || 256;
+    const DIM = Math.max(8, Math.ceil((HALF * 2) / 64));
+    const CELL = (HALF * 2) / DIM;
+    this.propGrid = DIM;
     const add = (kind, x, y, z, rot, scale, tint) => {
       if (!this.propBatches.has(kind)) return;
-      const cx = clamp(Math.floor((x + HALF) / CELL), 0, 7);
-      const cz = clamp(Math.floor((z + HALF) / CELL), 0, 7);
-      const key = cz * 8 + cx;
+      const cx = clamp(Math.floor((x + HALF) / CELL), 0, DIM - 1);
+      const cz = clamp(Math.floor((z + HALF) / CELL), 0, DIM - 1);
+      const key = cz * DIM + cx;
       if (!this.propCells.has(kind)) this.propCells.set(kind, new Map());
       const map = this.propCells.get(kind);
       if (!map.has(key)) map.set(key, []);
@@ -779,9 +805,22 @@ export class Renderer {
         }
       }
     }
-    if (!this.fogTexture) {
+    /* The grid is not a fixed size: a 512 m map has 128 cells a side and a
+       1024 m map has 256. A texture allocated for the first match on the page
+       is the wrong size for the second, and writing a 256-wide image into a
+       128-wide texture is not an error the driver reports -- it leaves the
+       far half of the ground reading whatever the last match left there. So
+       the allocation is keyed on the size it was made for. */
+    if (!this.fogTexture || this.fogTexSize !== size) {
+      if (this.fogTexture) {
+        /* the empty texture it tracked is a different object; forget and free
+           the real one directly */
+        if (this.fogRecord) RESOURCES.forget(this.fogRecord, 'persistent');
+        this.gl.deleteTexture(this.fogTexture);
+      }
       this.fogTexture = gl.createTexture();
-      if (this._persistentTracked) RESOURCES.track({ glHandle: this.fogTexture, kind: 'texture' }, 'persistent');
+      this.fogTexSize = size;
+      if (this._persistentTracked) RESOURCES.track(this.fogRecord = { glHandle: this.fogTexture, kind: 'texture' }, 'persistent');
       gl.bindTexture(gl.TEXTURE_2D, this.fogTexture);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -925,6 +964,25 @@ export class Renderer {
       if (at.cloud !== undefined) this.cloudCover = clamp(this.cloudCover + at.cloud, 0, 1);
       if (at.night) this.night = Math.max(this.night, at.night);
     }
+    /* Fog is a distance cue for a camera that is 40 m up. Pull the camera back
+       to see the whole map and the same density stops being a cue and becomes
+       a wall: at the overview the far bank of a 1024 m map is 700 m away, and
+       the dusk value would grey out the half of the war the player zoomed out
+       to look at. So density falls off with how far the eye has climbed --
+       full strength at close range, a third of it at the overview. Anything
+       the sky or a mod added on top is scaled with it, so weather still reads
+       at any zoom. */
+    const cam = this._cam;
+    const zoomOut = cam && cam.dist
+      ? clamp((cam.dist - 60) / Math.max(1, (cam.maxDist || 92) - 60), 0, 1)
+      : 0;
+    this.fogZoom = zoomOut;
+    if (zoomOut > 0) this.fogDensity *= 1 - 0.68 * zoomOut;
+    /* At distance the terrain mipmaps average the whole relief flat, and the
+       fog greys it further, so the far corner of the overview is a pale wash
+       with no readable edges. Lift the contrast and the relief term back up as
+       the eye climbs. */
+    if (zoomOut > 0.35) this.fogDensity *= 1 - 0.55 * clamp((zoomOut - 0.35) / 0.65, 0, 1);
   }
 
   /**
@@ -1181,8 +1239,23 @@ export class Renderer {
       const loc = s.u(`uTownLight[${i}]`);
       if (loc) this.gl.uniform3f(loc, this.townLight[b], this.townLight[b + 1], this.townLight[b + 2]);
     }
-    s.f('uWorldHalf', 256);
-    s.f('uShadowStrength', this.quality.shadows ? 0.92 : 0);
+    /* The half-extent of the ground. This is what maps a world position into
+       the fog mask's UV, the water shader's height map, and the terrain's own
+       edge fade: hard-coded to 256 it put every one of them on the wrong
+       quarter of a 1024 m map, which read as the far half of the world being
+       unexplored no matter how much of it you had walked. */
+    s.f('uWorldHalf', this.world ? this.world.half : 256);
+    /* The shadow map covers a fixed square of ground around the camera. Pull
+       the eye back to see a whole 1024 m map and that square is stretched over
+       four times the area, so every shadow texel becomes a metre-wide band
+       across the plateau -- which is what the high ground looked like from
+       the overview. Fading the shadows out as the camera climbs trades a
+       detail nobody can resolve at that distance for a clean plate of ground,
+       and leaves full shadows at the zoom the game is actually played at. */
+    const shadowFade = this._cam && this._cam.dist
+      ? 1 - 0.85 * clamp((this._cam.dist - 90) / Math.max(1, (this._cam.maxDist || 92) - 90), 0, 1)
+      : 1;
+    s.f('uShadowStrength', this.quality.shadows ? 0.92 * shadowFade : 0);
     s.f('uShadowTexel', 1 / this.shadowSize);
     s.m4('uShadowMatrix', this.shadowMatrix);
     s.tex('uShadowMap', this.shadowTarget.tex, this.gl.TEXTURE_2D);
@@ -1459,11 +1532,14 @@ export class Renderer {
     }
     this._propCam.x = cx; this._propCam.z = cz; this._propCam.t = 0;
     this.propDirty = false;
-    const CELL = 64, HALF = 256;
-    const minCx = clamp(Math.floor((cx - far + HALF) / CELL), 0, 7);
-    const maxCx = clamp(Math.floor((cx + far + HALF) / CELL), 0, 7);
-    const minCz = clamp(Math.floor((cz - far + HALF) / CELL), 0, 7);
-    const maxCz = clamp(Math.floor((cz + far + HALF) / CELL), 0, 7);
+    const DIM = this.propGrid || 8;
+    const HALF = this.world ? this.world.half : 256;
+    /* the same grid the bucket pass used, so the two cannot drift apart */
+    const CELL = (HALF * 2) / DIM;
+    const minCx = clamp(Math.floor((cx - far + HALF) / CELL), 0, DIM - 1);
+    const maxCx = clamp(Math.floor((cx + far + HALF) / CELL), 0, DIM - 1);
+    const minCz = clamp(Math.floor((cz - far + HALF) / CELL), 0, DIM - 1);
+    const maxCz = clamp(Math.floor((cz + far + HALF) / CELL), 0, DIM - 1);
     const prev = this._activeProps;
     prev.length = 0;
     for (const [kind, cellMap] of this.propCells) {
@@ -1472,7 +1548,7 @@ export class Renderer {
       batch.begin();
       for (let gz = minCz; gz <= maxCz; gz++) {
         for (let gx = minCx; gx <= maxCx; gx++) {
-          const list = cellMap.get(gz * 8 + gx);
+          const list = cellMap.get(gz * DIM + gx);
           if (!list) continue;
           for (let i = 0; i < list.length; i++) {
             const p = list[i];
@@ -1637,6 +1713,10 @@ export class Renderer {
     s.f('uFlowStrength', this.flowTex ? 1 : 0);
     s.f('uWaterLevel', this.waterLevel !== undefined ? this.waterLevel : 0);
     s.v2('uNormalOffset', this.time * 0.018, this.time * 0.011);
+    /* How far out the eye stands, 0..1. The water shader needs it because the
+       shoreline cut that draws a crisp bank at 46 m falls apart at the
+       overview -- see the note in WATER_FS. */
+    s.f('uWaterZoom', this.fogZoom || 0);
     s.v3('uShallowColor', 0.24, 0.53, 0.48);
     s.v3('uDeepColor', 0.05, 0.13, 0.19);
     s.v3('uZenithColor', this.zenith[0], this.zenith[1], this.zenith[2]);

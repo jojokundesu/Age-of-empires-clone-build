@@ -28,8 +28,6 @@ export const TEAM_PLAYER = 1;
 export const TEAM_ENEMY = 2;
 
 const RES_KEYS = ['food', 'wood', 'gold', 'stone'];
-const FOW = WORLD.fowCells;
-
 
 export class Game {
   constructor(opts) {
@@ -47,6 +45,10 @@ export class Game {
     this.seed = seed >>> 0;
     this._idCounter = 1;
     this.world = opts.world;
+    /* The map's own numbers. `W` is the module constant for the 512 m classic
+       preset; `w` is the world's. A generated world always carries `w`, and a
+       hand-built one in a test may not, so fall back rather than crash. */
+    this.mapw = this.world.w || WORLD;
     this.playerBase = opts.world.playerBase;
     this.enemyBase = opts.world.enemyBase;
     this.civ = opts.civ || 'franks';
@@ -96,13 +98,23 @@ export class Game {
     this.deadUnits = [];
     this.projectiles = new ProjectilePool(240);
 
-    this.spatial = new SpatialHash(6, 96);
-    this.spatial.half = WORLD.half;
-    this.buildingSpatial = new SpatialHash(12, 48);
-    this.buildingSpatial.half = WORLD.half;
-    this.resourceSpatial = new SpatialHash(8, 72);
-    this.resourceSpatial.half = WORLD.half;
-    this.pathFinder = new PathFinder(this.world.nav.cells, this.world.nav.cell, WORLD.half);
+    /* The uniform hash has to cover the WORLD, not the map it was written on.
+       `half` was already taken from the world, but the cell COUNT was a
+       constant -- 96 cells of 6 m is a 576 m span, so on a 1024 m map
+       everything past +-320 m fell outside the grid and was dropped on insert
+       (cellIndex returns -1 and insert quietly gives up). Not "slow": gone.
+       Units, buildings and resource nodes east of that line did not exist as
+       far as separation, aggro, gathering, gates and every other neighbour
+       query were concerned. Both numbers are now derived from the world's
+       extent and the cell size each index wants, so they scale with the map
+       and the bucket count per query stays what it always was. */
+    this.spatial = new SpatialHash(6, Math.ceil((this.mapw.half * 2) / 6) + 2);
+    this.spatial.half = this.mapw.half;
+    this.buildingSpatial = new SpatialHash(12, Math.ceil((this.mapw.half * 2) / 12) + 2);
+    this.buildingSpatial.half = this.mapw.half;
+    this.resourceSpatial = new SpatialHash(8, Math.ceil((this.mapw.half * 2) / 8) + 2);
+    this.resourceSpatial.half = this.mapw.half;
+    this.pathFinder = new PathFinder(this.world.nav.cells, this.world.nav.cell, this.mapw.half);
     /* Nav layers, from the bottom up:
          terrain  -- water, cliffs, whatever the island generator decided
          build    -- buildings and walls (block everyone)
@@ -120,13 +132,13 @@ export class Game {
     this.navFinalEnemy.set(this.navTerrain);
     this.navDirty = false;
     this.navTimer = 0;
-    this.pathFinder.setGrid(this.navFinal, WORLD.half);
-    this.pathFinderEnemy = new PathFinder(this.world.nav.cells, this.world.nav.cell, WORLD.half);
+    this.pathFinder.setGrid(this.navFinal, this.mapw.half);
+    this.pathFinderEnemy = new PathFinder(this.world.nav.cells, this.world.nav.cell, this.mapw.half);
     /* both grids string-pull against the *continuous* world, not just cells */
     const fine = (a, b, c, d) => this.segmentBlocked(a, b, c, d);
     this.pathFinder.lineBlocked = fine;
     this.pathFinderEnemy.lineBlocked = fine;
-    this.pathFinderEnemy.setGrid(this.navFinalEnemy, WORLD.half);
+    this.pathFinderEnemy.setGrid(this.navFinalEnemy, this.mapw.half);
     // Ships search the same domain grid with the opposite passability mask.
     // Create this lazily so land-only matches do not pay for another A* grid.
     this.waterPathFinder = null;
@@ -197,8 +209,9 @@ export class Game {
     /* one ledger per crown, in team order (the roster is known by now) */
 
     // fog of war (player vision only; the AI plays fair with its own grid)
-    this.fow = new Uint8Array(FOW * FOW);        // 0 hidden, 1 explored, 2 visible
-    this._fogExpiry = new Uint32Array(FOW * FOW);
+    const fowCells = this.mapw.fowCells;
+    this.fow = new Uint8Array(fowCells * fowCells);   // 0 hidden, 1 explored, 2 visible
+    this._fogExpiry = new Uint32Array(fowCells * fowCells);
     this._fogEpoch = 0;
     this.fowStamp = 0;                           // bumped whenever the mask changes
     this.fowDirty = true;
@@ -478,7 +491,7 @@ export class Game {
      standing on a 22 cm crossing were reported as drowning. A ford is
      wading depth by design; knees, not necks. */
   isWater(x, z) { return this.world.height.sample(x, z) < -1.1; }
-  isInside(x, z) { return x > -WORLD.half + 2 && x < WORLD.half - 2 && z > -WORLD.half + 2 && z < WORLD.half - 2; }
+  isInside(x, z) { const h = this.mapw.half; return x > -h + 2 && x < h - 2 && z > -h + 2 && z < h - 2; }
 
   /**
    * Unit-level passability. Deliberately independent of the coarse A* grid so
@@ -503,21 +516,21 @@ export class Game {
             const d = nav.domain[i];
             blocked[i] = d === DOMAIN.WATER_ONLY || d === DOMAIN.AMPHIBIOUS_SHALLO_FORD ? 0 : 1;
           } else {
-            const wx = (x + 0.5) * nav.cell - WORLD.half;
-            const wz = (z + 0.5) * nav.cell - WORLD.half;
+            const wx = (x + 0.5) * nav.cell - this.mapw.half;
+            const wz = (z + 0.5) * nav.cell - this.mapw.half;
             blocked[i] = this.world.height.sample(wx, wz) < -0.3 ? 0 : 1;
           }
         }
-        const pf = new PathFinder(nav.cells, nav.cell, WORLD.half);
-        pf.setGrid(blocked, WORLD.half);
+        const pf = new PathFinder(nav.cells, nav.cell, this.mapw.half);
+        pf.setGrid(blocked, this.mapw.half);
         // Bresenham alone can smooth diagonally through a cell corner. Sample
         // the continuous segment as well, so the ship can follow its route.
         pf.lineBlocked = (x0, z0, x1, z1) => {
           const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / (nav.cell * 0.35)));
           for (let i = 0; i <= steps; i++) {
             const t = i / steps;
-            const x = Math.floor((x0 + (x1 - x0) * t + WORLD.half) / nav.cell);
-            const z = Math.floor((z0 + (z1 - z0) * t + WORLD.half) / nav.cell);
+            const x = Math.floor((x0 + (x1 - x0) * t + this.mapw.half) / nav.cell);
+            const z = Math.floor((z0 + (z1 - z0) * t + this.mapw.half) / nav.cell);
             if (pf.isBlocked(x, z)) return true;
           }
           return false;
@@ -530,7 +543,7 @@ export class Game {
     if (this.navGateCount === 0) return team === TEAM_PLAYER ? this.pathFinder : this.pathFinderEnemy;
     let rec = this._teamPf.get(team);
     if (!rec) {
-      const pf = new PathFinder(this.world.nav.cells, this.world.nav.cell, WORLD.half);
+      const pf = new PathFinder(this.world.nav.cells, this.world.nav.cell, this.mapw.half);
       pf.lineBlocked = (a, b, c, d) => this.segmentBlocked(a, b, c, d);
       rec = { pf, grid: new Uint8Array(this.navGateTeam.length), ready: false };
       this._teamPf.set(team, rec);
@@ -543,7 +556,7 @@ export class Game {
         const o = owners[i];
         if (o && o !== team) grid[i] = 1;
       }
-      rec.pf.setGrid(grid, WORLD.half);
+      rec.pf.setGrid(grid, this.mapw.half);
       rec.ready = true;
     }
     return rec.pf;
@@ -582,7 +595,7 @@ export class Game {
     // cell of margin. It may only skip the building query, never the precise
     // terrain/domain test above. Oversized custom units use the full query.
     const cell = this.world.nav.cell, n = this.world.nav.cells;
-    const cx = Math.floor((x + WORLD.half) / cell), cz = Math.floor((z + WORLD.half) / cell);
+    const cx = Math.floor((x + this.mapw.half) / cell), cz = Math.floor((z + this.mapw.half) / cell);
     const radiusPad = unit ? unit.radius * 0.4 : 0.2;
     let near;
     if (radiusPad <= cell && cx >= 0 && cz >= 0 && cx < n && cz < n) {
@@ -790,7 +803,7 @@ export class Game {
     const dx = x1 - x0, dz = z1 - z0;
     const d = Math.hypot(dx, dz);
     if (d < 0.001) return true;
-    const N = this.world.nav.cells, cell = this.world.nav.cell, half = WORLD.half;
+    const N = this.world.nav.cells, cell = this.world.nav.cell, half = this.mapw.half;
     const grid = this.pfFor(unit).blocked;
     const steps = Math.min(40, Math.ceil(d / 1.6));
     for (let i = 1; i <= steps; i++) {
@@ -1119,6 +1132,14 @@ export class Game {
     }
     u.statsCache = null;
     this.units.push(u);
+    /* Index it NOW, not at the top of the next tick. The unit hash is rebuilt
+       once per frame, so anything spawned between two ticks is invisible to
+       every spatial query until the next one -- and a query is how a gate
+       decides whether to raise its leaf, how an aura finds its friends, and
+       how a squad finds its men. A body that exists and cannot be found for a
+       frame is a body that flickers in and out of those systems, and the gate
+       below a man standing in its own gateway is the visible symptom. */
+    if (this.spatial) this.spatial.insert(u);
     if (this.elites) this.elites.enrol(u);
     if (this.modHost) this.modHost.onSpawn(u);
     if (team === TEAM_PLAYER) this.popDirty = true;
@@ -1273,7 +1294,7 @@ export class Game {
     if (b.def.walkable) return;
     const N = this.world.nav.cells;
     const cell = this.world.nav.cell;
-    const half = WORLD.half;
+    const half = this.mapw.half;
     /* Cells are stamped by *centre containment*, not by box overlap.
        Overlap inflated every footprint by up to a full cell in each direction,
        so two wall segments standing 2 m apart (the lattice pitch) shared their
@@ -1396,12 +1417,12 @@ export class Game {
 
   refreshNav() {
     this.navDirty = false;
-    this.pathFinderEnemy.setGrid(this.navFinalEnemy, WORLD.half);
+    this.pathFinderEnemy.setGrid(this.navFinalEnemy, this.mapw.half);
     this.invalidateTeamNav();
     /* navFinal is already up to date (markBuildingFootprint patches it), so
        this is just a byte copy into the pathfinder + a version bump. A full
        recombine is only needed when the terrain layer itself changes. */
-    this.pathFinder.setGrid(this.navFinal, WORLD.half);
+    this.pathFinder.setGrid(this.navFinal, this.mapw.half);
   }
 
   /* ==========================================================
@@ -2572,10 +2593,10 @@ export class Game {
      exploring is the opening move. The edge is intentionally ragged. */
   surveyHome(base) {
     const fow = this.fow;
-    const size = WORLD.fowCell;
-    const half = WORLD.half;
-    for (let cz = 0; cz < FOW; cz++) {
-      for (let cx = 0; cx < FOW; cx++) {
+    const size = this.mapw.fowCell;
+    const half = this.mapw.half;
+    for (let cz = 0; cz < this.mapw.fowCells; cz++) {
+      for (let cx = 0; cx < this.mapw.fowCells; cx++) {
         const wx = (cx + 0.5) * size - half;
         const wz = (cz + 0.5) * size - half;
         const dx = wx - base.x, dz = wz - base.z;
@@ -2584,7 +2605,7 @@ export class Game {
         // three cheap harmonics: a ragged, organic edge, identical every match
         const wob = Math.sin(a * 3.1 + 1.7) * 5.5 + Math.sin(a * 7.3 - 0.4) * 3.2
           + Math.sin(a * 13.7 + 2.2) * 1.8;
-        if (d < 96 + wob * 1.8) fow[cz * FOW + cx] = 1;
+        if (d < 96 + wob * 1.8) fow[cz * this.mapw.fowCells + cx] = 1;
       }
     }
   }
@@ -2600,16 +2621,16 @@ export class Game {
    */
   _fogStamp(x, z, radius) {
     const fow = this.fow;
-    const size = WORLD.fowCell;
-    const half = WORLD.half;
+    const size = this.mapw.fowCell;
+    const half = this.mapw.half;
     const r2 = radius * radius;
     const cx0 = Math.max(0, Math.floor((x - radius + half) / size));
-    const cx1 = Math.min(FOW - 1, Math.floor((x + radius + half) / size));
+    const cx1 = Math.min(this.mapw.fowCells - 1, Math.floor((x + radius + half) / size));
     const cz0 = Math.max(0, Math.floor((z - radius + half) / size));
-    const cz1 = Math.min(FOW - 1, Math.floor((z + radius + half) / size));
+    const cz1 = Math.min(this.mapw.fowCells - 1, Math.floor((z + radius + half) / size));
     for (let cz = cz0; cz <= cz1; cz++) {
       const wz = (cz + 0.5) * size - half;
-      const row = cz * FOW;
+      const row = cz * this.mapw.fowCells;
       const dz = wz - z;
       for (let cx = cx0; cx <= cx1; cx++) {
         const wx = (cx + 0.5) * size - half;
@@ -2659,16 +2680,16 @@ export class Game {
   }
 
   isVisible(x, z) {
-    const cx = Math.floor((x + WORLD.half) / WORLD.fowCell);
-    const cz = Math.floor((z + WORLD.half) / WORLD.fowCell);
-    if (cx < 0 || cz < 0 || cx >= FOW || cz >= FOW) return false;
-    return this.fow[cz * FOW + cx] === 2;
+    const cx = Math.floor((x + this.mapw.half) / this.mapw.fowCell);
+    const cz = Math.floor((z + this.mapw.half) / this.mapw.fowCell);
+    if (cx < 0 || cz < 0 || cx >= this.mapw.fowCells || cz >= this.mapw.fowCells) return false;
+    return this.fow[cz * this.mapw.fowCells + cx] === 2;
   }
   isExplored(x, z) {
-    const cx = Math.floor((x + WORLD.half) / WORLD.fowCell);
-    const cz = Math.floor((z + WORLD.half) / WORLD.fowCell);
-    if (cx < 0 || cz < 0 || cx >= FOW || cz >= FOW) return false;
-    return this.fow[cz * FOW + cx] > 0;
+    const cx = Math.floor((x + this.mapw.half) / this.mapw.fowCell);
+    const cz = Math.floor((z + this.mapw.half) / this.mapw.fowCell);
+    if (cx < 0 || cz < 0 || cx >= this.mapw.fowCells || cz >= this.mapw.fowCells) return false;
+    return this.fow[cz * this.mapw.fowCells + cx] > 0;
   }
 
   /* ==========================================================
@@ -3223,7 +3244,7 @@ export class Game {
     const def = BUILDING_DEFS[type];
     const half = (def.size || 3) * 0.5;
     if (!this.isInside(x, z)) return { ok: false, reason: 'edge' };
-    if (x < -WORLD.half + half || x > WORLD.half - half || z < -WORLD.half + half || z > WORLD.half - half) return { ok: false, reason: 'edge' };
+    if (x < -this.mapw.half + half || x > this.mapw.half - half || z < -this.mapw.half + half || z > this.mapw.half - half) return { ok: false, reason: 'edge' };
     // must be on reasonably flat land (or water for docks)
     const h = this.heightAt(x, z);
     if (def.water) {
@@ -3348,7 +3369,7 @@ export class Game {
     /* snap to the middle of a nav cell, not to its corner: a 2 m segment
        centred on a cell boundary claims four cells, one centred on the cell
        claims exactly one */
-    const edge = WORLD.half - size;
+    const edge = this.mapw.half - size;
     const navCell = this.world.nav.cell;
     const off = (size >= navCell ? navCell : size) * 0.5;
     const step = (v) => clamp(Math.round((v - off) / size), -Math.round(edge / size), Math.round(edge / size));

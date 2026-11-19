@@ -348,9 +348,27 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
   const fords = [];
   const bridges = [];
 
+  /* Every river plan below is authored in 512 m coordinates: "enters at the
+     west edge, -168 m, swings past -96". A 1024 m map wants that same plan at
+     twice the size, so the control points are scaled into the map that is
+     actually being built -- positions AND half-widths AND beds, because a
+     channel that is twice as long and no wider is a ditch. At 512 m the
+     factor is exactly 1 and the plan is the one it always was. */
+  const riverScale = Math.max(1e-6, size / 512);
   const add = (name, kind, controls, perSpan = 14) => {
+    /* Position and width scale; DEPTH does not. A river that spans a map
+       twice the size is twice as long and twice as wide, but it is not twice
+       as deep -- and scaling the bed was quietly breaking every crossing on
+       the map: the channel floor went to 14 m, so the ford's shelf could only
+       breach the surface over a thin sliver of its ellipse and there was no
+       wading route across at all. Depth is a property of the river, not of
+       the map. */
+    const pts = riverScale === 1 ? controls : controls.map((c) => ({
+      x: c.x * riverScale, z: c.z * riverScale,
+      w: c.w * riverScale, d: c.d, ...(c.k !== undefined ? { k: c.k } : {})
+    }));
     const r = new River(name, kind, splineSamples(
-      controls, perSpan, rng() * 40));
+      pts, perSpan, rng() * 40));
     r.compile();
     rivers.push(r);
     return r;
@@ -658,12 +676,30 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
     }
   };
 
+  /* Every landform above is authored in 512 m coordinates: the isles of the
+     archipelago, the basin of the inland sea, the dunes' rim, the plateau's
+     ramps. Rather than rewrite six hand-tuned shapes for each of three sizes,
+     the whole landform is sampled in classic space and scaled up -- so a
+     1024 m archipelago is the 512 m archipelago at twice the scale, with its
+     bays, its centre island and its deep channels in the same relationship to
+     each other. At 512 m the scale is exactly 1 and every sample is the one it
+     always was, which is why the classic map is untouched to the bit. */
+  const shapeScale = Math.max(1e-6, size / 512);
+  const invShape = 1 / shapeScale;
   for (let j = 0; j < n; j++) {
     const wz = j * cell - half;
     for (let i = 0; i < n; i++) {
       const wx = i * cell - half;
       const k = j * n + i;
-      heights[k] = macro(wx, wz, k);
+      /* Horizontally only. The map is the same landform stretched over more
+         ground, so its hills are wider and, at the same height, gentler --
+         which is what a bigger landscape is. Height stays in metres, which
+         matters because everything downstream is authored in metres: the
+         water level, the terrace bands, the wading depth of a ford, the
+         altitude a seat needs. Scaling the relief instead multiplied it
+         against those absolute bands, cut new scarps across the map and
+         walled off a fifth of the ground. At 512 m none of this applies. */
+      heights[k] = macro(wx * invShape, wz * invShape, k);
     }
   }
 
@@ -776,12 +812,67 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
     }
   }
 
+  /* Every ford on this map was measured against a 512 m channel, and a ford
+     has to REACH ACROSS the water: it is the shallow stretch you wade. Build
+     the same map at 1024 m and the channel is twice as wide, so a 15 m shelf
+     becomes a stepping stone marooned in 50 m of river -- which is exactly
+     what the domain grid reported at Large: three fords, none of them
+     crossing, and a far bank you could not reach on foot. The shelf grows
+     with the river it is cut into. */
+  if (riverScale !== 1) {
+    for (const f of fords) {
+      f.radius *= riverScale;
+      if (f.length) f.length *= riverScale;
+    }
+  }
+
+  /* --- 3.65 tributary crossings ------------------------------------------
+     One ford on the trunk is a crossing; it is not the whole map. Every
+     tributary is drawn from the highlands down to the water, and a tributary
+     is a river -- it cuts the ground it crosses in two. At 512 m the tributary
+     is short enough that the severed lobe is a corner you would never fight
+     over. Build the same map at 1024 m and that tributary is a kilometre long:
+     it severs a fifth of the map, and that fifth has no crossing on it at
+     all, so a third of the ground and every resource on it is unreachable on
+     foot. A ford per tributary, cut where the channel is narrowest, fixes the
+     map rather than papering over it: it is ordinary ford geometry, and the
+     pathfinder and the AI already understand a ford. */
+  if (riverScale !== 1) {
+    for (let r = 0; r < rivers.length; r++) {
+      const rv = rivers[r];
+      if (rv.kind !== 'tributary') continue;
+      if (fords.some((f) => Math.hypot(f.x - rv.samples[0].x, f.z - rv.samples[0].z) < 40)) continue;
+      /* narrowest reachable stretch: walk the samples, take the thinnest */
+      const sm = rv.samples;
+      let pick = null, pickW = 1e9;
+      for (let q = Math.floor(sm.length * 0.45); q < sm.length - 1; q++) {
+        if (sm[q].w < pickW) { pickW = sm[q].w; pick = sm[q]; }
+      }
+      if (!pick) continue;
+      rv.nearest(pick.x, pick.z, probe);
+      fords.push({
+        x: pick.x, z: pick.z, radius: Math.max(14, pickW * 1.7),
+        angle: Math.atan2(probe.tz, probe.tx), kind: 'stone ford'
+      });
+    }
+  }
+
   /* --- 3.6 fords -------------------------------------------------------
      A ford is a paved shelf lifted to 22 cm under the surface: it is a real
      crossing for land units (AMPHIBIOUS) and still floats a shallow hull, so
      the fleet and the army fight over the same ground. */
   for (const f of fords) {
-    const r = f.radius;
+    /* How wide is the water here? Every ford was authored with a radius to
+       match the river at 512 m; when the channel is rebuilt at another size,
+       or refitted on another map shape, that number is a guess. Measure it.
+       At 512 m nothing is measured and nothing changes: that map is the one
+       that already shipped and its crossing is the one people know. */
+    let r = f.radius;
+    const fk = clamp(Math.round((f.z + half) / cell), 0, n - 1) * n
+      + clamp(Math.round((f.x + half) / cell), 0, n - 1);
+    if (riverScale !== 1 && nearW[fk] > 1 && nearD[fk] < nearW[fk] * 1.5) {
+      r = Math.max(r, nearW[fk] * 1.55);
+    }
     const i0 = Math.max(0, Math.floor((f.x - r + half) / cell));
     const i1 = Math.min(res, Math.ceil((f.x + r + half) / cell));
     const j0 = Math.max(0, Math.floor((f.z - r + half) / cell));
@@ -796,9 +887,19 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
         /* The shelf is wider across the flow than along it. */
         const along = Math.abs((wx - f.x) * Math.cos(f.angle) + (wz - f.z) * Math.sin(f.angle));
         const across = Math.abs(-(wx - f.x) * Math.sin(f.angle) + (wz - f.z) * Math.cos(f.angle));
-        const shape = clamp01(1 - Math.max(along / (r * 0.62), across / r));
-        if (shape <= 0) continue;
-        const t = smoothstep(shape);
+        const u = Math.max(along / (r * 0.62), across / r);
+        if (u >= 1) continue;
+        /* A flat tread with a short ramp, not a dome. A dome's rim barely
+           lifts the bed, so on a wide channel the shelf only breached the
+           surface in a puddle at its centre and the rest of the water stayed
+           six metres deep -- a ford three quarters of the river could walk
+           around, and did. The tread reaches wading depth out to 72 % of the
+           shelf, which is the full width of the water it was cut for, and the
+           ramp outside that does the bank work. At 512 m the old dome stands,
+           unchanged, because that is the crossing the shipped map has. */
+        const t = riverScale === 1
+          ? smoothstep(clamp01(1 - u))
+          : 1 - smoothstep(clamp01((u - 0.72) / 0.28));
         heights[k] = Math.max(heights[k], lerp(heights[k], SHALLOW_BED, t));
         heights[k] = Math.min(heights[k], lerp(heights[k], SHALLOW_BED, t));
         /* A ford cell is a cell you can WADE. The ellipse's rim only lifts
@@ -1020,6 +1121,145 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
     seats.push({ x, z, h: sample(x, z), near: 'land' });
   }
 
+  /* --- 3.65 corner land corridors ---------------------------------------
+     A river map has one answer to "how do I get across": the ford. One
+     chokepoint, one fight, and the match is decided there. So the two corners
+     at the ends of the trunk river get a land bridge instead -- a low shelf
+     of dry ground that the channel runs past rather than through.
+
+     It is deliberately the worse road: it is out at the corner, the walk is
+     half again as long as the ford, and the ground either side of it is
+     broken. That is the point. A player who takes it is trading time for
+     surprise, and the defender now has two things to watch instead of one --
+     which is the whole reason a river map has a shape at all.
+
+     These are recorded on the world so the AI and the minimap can name them,
+     and they are ordinary LAND_ONLY cells: pathing already knows what to do
+     with dry ground. */
+  const corridors = [];
+  if (trunkRiver && size !== 512) {
+    const pts = trunkRiver.samples || trunkRiver.points || [];
+    /* Where does the trunk actually cross the water's edge? That is the only
+       place a land flank can be BOTH out on the map's flank and *on* the
+       river: the channel runs the width of the map through its middle, so the
+       geometric corners are half a kilometre from any water and a shelf
+       parked there would bridge nothing at all. The two crossings at the map
+       borders are the flanks: one at each end of the river, the longest way
+       round there is, and each of them is a real crossing of the same water
+       the ford crosses.
+
+       A flank is meant to be the worse road — a march out to the edge and
+       back — so this deliberately does not try to make it competitive with
+       the ford.
+
+       The shelf is flat across most of its radius, not a dome: a dome's rim
+       barely lifts the bed and leaves the middle of the channel six metres
+       deep either side of it, which is a crossing you can walk around and
+       drown in. */
+    if (pts.length > 2) {
+      for (const which of [0, 1]) {
+        const q = which === 0 ? 0 : pts.length - 1;
+        const pt = pts[q];
+        const px = pt.x !== undefined ? pt.x : pt[0];
+        const pz = pt.z !== undefined ? pt.z : pt[1];
+        /* pull it a little inside the border so the whole shelf is on the map */
+        const lim = half - 6;
+        let cx = clamp(px, -lim, lim), cz = clamp(pz, -lim, lim);
+        /* Measure the water at the crossing, do not estimate it: the shelf is
+           only a crossing if its dry tread spans the full width of the river
+           here. Where the trunk is widest, that is a wide shelf. */
+        const pr = rivers[0] ? rivers[0] : null;
+        void pr;
+        let crossW = pt.w || 16;
+        for (let r = 0; r < rivers.length; r++) {
+          rivers[r].nearest(cx, cz, probe);
+          if (probe.d < probe.w * 1.5) crossW = Math.max(crossW, probe.w);
+        }
+        /* Centre the shelf on the middle of the channel, not on the point the
+           river's spline happens to pass through: on a bend the spline is a
+           chord and the water bulges to one side, so a shelf centred on the
+           chord leaves a strip of deep water along one rim -- a crossing with
+           a hole in it. Walk the bank normal out to both waterlines and take
+           the midpoint. */
+        {
+          let bx = cx, bz = cz;
+          let nx = 1, nz = 0;
+          if (trunkRiver) {
+            trunkRiver.nearest(cx, cz, probe);
+            const tl = Math.hypot(probe.tx, probe.tz) || 1;
+            nx = -probe.tz / tl; nz = probe.tx / tl;
+          }
+          const edge = (sgn) => {
+            let d = 0;
+            for (let q = 0; q < crossW * 3; q++) {
+              const t = q * 2;
+              if (sample(bx + nx * sgn * t, bz + nz * sgn * t) > WATER_LEVEL + 0.03) break;
+              d = t;
+            }
+            return d;
+          };
+          const left = edge(1), right = edge(-1);
+          const mid = (left - right) / 2;
+          bx += nx * mid; bz += nz * mid;
+          const lim2 = half - 6;
+          const cx2 = clamp(bx, -lim2, lim2), cz2 = clamp(bz, -lim2, lim2);
+          if (Math.hypot(cx2 - cx, cz2 - cz) < crossW * 1.5) { cx = cx2; cz = cz2; }
+        }
+        /* Stamp the shelf in RIVER coordinates, not world ones: a band that
+           follows the channel is a crossing wherever the channel goes, and a
+           shelf described by a circle around a point is only ever right on a
+           straight river. So: measure each cell's distance to the trunk's
+           centreline and how far along the trunk it sits, and raise the cells
+           within reach of this crossing, across the full width of the water
+           and a little way along it.
+
+           A flank is meant to be the worse road -- a march out to the map's
+           edge and back -- so this deliberately does not make it competitive
+           with the ford. */
+        const L = Math.max(24, crossW * 1.5);         // along the trunk
+        let t0 = 0, flowX = 1, flowZ = 0;
+        if (trunkRiver) {
+          trunkRiver.nearest(cx, cz, probe);
+          t0 = probe.t;
+          const tl = Math.hypot(probe.tx, probe.tz) || 1;
+          flowX = probe.tx / tl; flowZ = probe.tz / tl;
+        }
+        corridors.push({
+          x: cx, z: cz, r: L * 1.6, t: which, t0,
+          /* the shelf's breadth is ACROSS the flow; the test reads this angle
+             the same way the stamp does */
+          angle: Math.atan2(flowZ, flowX),
+          border: half - Math.max(Math.abs(cx), Math.abs(cz))
+        });
+        const riverLen = (trunkRiver && trunkRiver.seginx && trunkRiver.seginx.len)
+          ? trunkRiver.seginx.len.reduce((a, b) => a + b, 0) : size;
+        for (let j = 0; j < n; j++) {
+          const wz = (j / res) * size - half;
+          for (let i = 0; i < n; i++) {
+            const wx = (i / res) * size - half;
+            if (!trunkRiver) continue;
+            trunkRiver.nearest(wx, wz, probe);
+            const alongT = Math.abs(probe.t - t0) * riverLen;
+            const acrossD = probe.d;
+            if (alongT > L) continue;
+            const halfW = Math.max(probe.w * 1.55, crossW * 1.2);
+            if (acrossD > halfW) continue;
+            /* soft edge: only the far shoulders ramp */
+            const k = Math.min(
+              1 - smoothstep(clamp01((acrossD / halfW - 0.80) / 0.20)),
+              1 - smoothstep(clamp01((alongT / L - 0.78) / 0.22))
+            );
+            const idx = j * n + i;
+            if (k >= 1) heights[idx] = Math.max(heights[idx], 0.55);
+            else if (heights[idx] < 0.55) heights[idx] += (0.55 - heights[idx]) * k;
+            if (fordMask[idx] !== 2) fordMask[idx] = 2;
+            riverMask[idx] *= 1 - k;
+          }
+        }
+      }
+    }
+  }
+
   /* --- 3.7 domain grid -------------------------------------------------- */
   const N = opts.navCells || 256;
   const navCell = size / N;
@@ -1048,6 +1288,12 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
   }
   /* A ford that is a single nav cell wide is not a crossing, it is a trap. */
   widenFords(domain, N, navCell, half, fords, 2, { heights, res, n, cell });
+  /* At 512 m the authored landform is the map people already know: its cliff
+     chains cut off a corner or two and nobody has ever missed them, and the
+     promise for this size is that it is untouched. At 1024 m and up a chain
+     can run a kilometre and seal a fifth of the map, so the safety net is
+     switched on where the geometry got big enough to need it. */
+  if (size !== 512) connectLandmasses(domain, N);
 
   const domainAt = (x, z) => {
     const cx = clamp(((x + half) / navCell) | 0, 0, N - 1);
@@ -1191,7 +1437,7 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
       points: r.samples.filter((_, i) => i % 3 === 0).map((p) => [p.x, p.z]),
       width: r.samples[0].w
     })),
-    fords, bridges, seats,
+    fords, bridges, seats, corridors,
     stealthForests, sacredSites, tradePosts, deepFish, shoreFish,
     extraGold, palmGroves, reedBeds, gravelBars,
     waterLevel: WATER_LEVEL,
@@ -1276,6 +1522,112 @@ function pickSeat(hint, sample, slopeAt, rng, taken, minGap, nearD, nearW, n, ce
 }
 
 /** Grow each ford by `rings` cells so a crossing is never a one-cell squeeze. */
+/**
+ * Every region of walkable ground must touch the rest of the map.
+ *
+ * Terracing, border rims and ridged noise all produce steep ground, and a
+ * nav grid marks steep ground blocked. On their own each blocked cell is
+ * nothing -- but this movement model is eight-way with no corner cutting, so
+ * a *diagonal chain* of individually harmless blocked cells is a wall you
+ * cannot walk around, and from above it looks like open country. On a 512 m
+ * map those chains are short and cut off a corner nobody wanted. Build the
+ * same landform at 1024 m and a chain can run a kilometre and seal off a
+ * fifth of the map -- with its resources, and in one case with the whole far
+ * bank of the river -- behind a wall that has no gate in it.
+ *
+ * Rather than guess at how steep is too steep, this asks the question that
+ * actually matters: after the grid is built, is every substantial patch of
+ * walkable ground reachable from the largest patch? Where the answer is no,
+ * it opens the fewest cells it can find between them -- a mountain pass, a
+ * climb, a lip -- and only ever through blocked ground. Water stays water:
+ * a region cut off by the sea is an island, and an island is a naval problem,
+ * not a pathing one.
+ */
+function connectLandmasses(domain, N) {
+  const WALK = (v) => v === DOMAIN.LAND_ONLY || v === DOMAIN.AMPHIBIOUS_SHALLO_FORD;
+  const DIRS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  const n2 = N * N;
+  const label = new Int32Array(n2).fill(-1);
+  const sizes = [];
+  const stack = [];
+  /* Same neighbour rules as the pathfinder: a diagonal step needs both
+     orthogonal cells open, or the walker is squeezing through a crack. */
+  for (let seed = 0; seed < n2; seed++) {
+    if (label[seed] >= 0 || !WALK(domain[seed])) continue;
+    const id = sizes.length;
+    let count = 0;
+    label[seed] = id;
+    stack.length = 0;
+    stack.push(seed);
+    while (stack.length) {
+      const u = stack.pop();
+      count++;
+      const ux = u % N, uz = (u / N) | 0;
+      for (let d = 0; d < 8; d++) {
+        const nx = ux + DIRS8[d][0], nz = uz + DIRS8[d][1];
+        if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
+        const nk = nz * N + nx;
+        if (label[nk] >= 0 || !WALK(domain[nk])) continue;
+        if (d >= 4 && (!WALK(domain[uz * N + nx]) || !WALK(domain[nz * N + ux]))) continue;
+        label[nk] = id;
+        stack.push(nk);
+      }
+    }
+    sizes.push(count);
+  }
+  if (sizes.length < 2) return 0;
+
+  let main = 0;
+  for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[main]) main = i;
+
+  /* 0-1 BFS outward from the main landmass: entering open ground is free,
+     entering blocked ground costs one breach. Water is never entered. */
+  const best = new Int32Array(n2).fill(0x7fffffff);
+  const via = new Int32Array(n2).fill(-1);
+  const dq = new Int32Array(n2 * 4);
+  let head = 0, tail = 0;
+  for (let k = 0; k < n2; k++) {
+    if (label[k] === main) { best[k] = 0; dq[tail++] = k; }
+  }
+  while (head < tail) {
+    const u = dq[head++];
+    const du = best[u];
+    const ux = u % N, uz = (u / N) | 0;
+    for (let d = 0; d < 4; d++) {
+      const nx = ux + DIRS8[d][0], nz = uz + DIRS8[d][1];
+      if (nx < 0 || nz < 0 || nx >= N || nz >= N) continue;
+      const nk = nz * N + nx;
+      if (domain[nk] === DOMAIN.WATER_ONLY) continue;
+      const step = domain[nk] === DOMAIN.BLOCKED ? 1 : 0;
+      const nd = du + step;
+      if (nd >= best[nk]) continue;
+      best[nk] = nd;
+      via[nk] = u;
+      if (step === 0) { if (tail < dq.length - 1) dq[tail++] = nk; }
+      else if (tail < dq.length - 1) dq[tail++] = nk;
+    }
+  }
+
+  /* How small an orphan is not worth a pass through the mountains. */
+  const floor = Math.max(48, (sizes[main] + sizes.reduce((a, b) => a + b, 0)) * 0.0006);
+  let opened = 0;
+  for (let id = 0; id < sizes.length; id++) {
+    if (id === main || sizes[id] < floor) continue;
+    let pick = -1, pickCost = 3;
+    for (let k = 0; k < n2; k++) {
+      if (label[k] !== id || best[k] >= pickCost) continue;
+      let open = 0;
+      for (let q = k; q !== -1; q = via[q]) if (domain[q] === DOMAIN.BLOCKED) open++;
+      if (open > 0 && open <= 2) { pick = k; pickCost = open; }
+    }
+    if (pick < 0) continue;
+    for (let q = pick; q !== -1; q = via[q]) {
+      if (domain[q] === DOMAIN.BLOCKED) { domain[q] = DOMAIN.LAND_ONLY; opened++; }
+    }
+  }
+  return opened;
+}
+
 function widenFords(domain, N, navCell, half, fords, rings, hfArgs) {
   const isFord = (v) => v === DOMAIN.AMPHIBIOUS_SHALLO_FORD;
   const grow = [];

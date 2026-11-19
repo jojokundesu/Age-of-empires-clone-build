@@ -344,6 +344,9 @@ class App {
       const vh = this.canvas.clientHeight || window.innerHeight;
       this.camera.setAspect(vw / Math.max(1, vh));
       this.camera.setViewport(vw, vh);
+      /* A phone turned upright sees a narrower world, so the same map needs a
+         longer lens to frame: re-solve the zoom-out limit on every resize. */
+      if (this.worldHalf) this.camera.setWorldExtent(this.worldHalf);
     }
     const portrait = window.innerHeight > window.innerWidth * 1.1;
     document.getElementById('rotateHint')?.classList.toggle('hidden', !portrait || !this.running);
@@ -451,7 +454,21 @@ class App {
     /* The menu can opt into experimental hydrology maps. Old saves retain
        their original terrain by defaulting to the classic generator. */
     const mapType = opts.load ? (opts.load.mapType || 'confluence') : (opts.mapType || this.settings.mapType || 'confluence');
-    const world = generateWorld(seed, { sites: kingdoms > 2 ? kingdoms : 2, mapType });
+    /* The map's size. A loaded save keeps the ground it was played on; a new
+       match takes the menu's choice. A world made before sizes existed has no
+       `sizeId`, and Classic is exactly that map.
+
+       The fallback for a caller that names no size at all is Classic, not the
+       menu's default. `startMatch({ seed: 20261 })` is a hundred call sites in
+       the suites and in saved replays, and every one of them means "the map
+       this seed has always made". Growing the default must not silently
+       redraw them: a seed that no longer rebuilds its own island breaks
+       determinism, replays and every assertion written against that ground.
+       The menu always passes an explicit `mapSize`, so a real player still
+       starts on Large. */
+    const sizeId = opts.load ? (opts.load.sizeId || 'classic')
+      : (opts.mapSize || this.settings.mapSize || 'classic');
+    const world = generateWorld(seed, { sites: kingdoms > 2 ? kingdoms : 2, mapType, size: sizeId });
     /* world.mapType is the *resolved* archetype ('confluence', not 'classic'):
        a save records what was actually generated, so reloading it cannot
        silently pick a different landform. 'classic' is still accepted on the
@@ -495,8 +512,16 @@ class App {
 
     const camera = new Camera({ yaw: Math.PI * 0.24, pitch: 0.86, dist: 44, fov: 47 });
     camera.heightAt = world.heightAt;
-    camera.worldHalf = 256;
+    camera.worldHalf = world.half;
+    /* The zoom-out limit is solved against the frustum rather than guessed:
+       the whole map has to fit the screen, with the far corner still legible,
+       on a phone held upright as well as on a desktop. `setWorldExtent` also
+       exports a `<half * linear>` constant's job to the camera, which is the
+       only thing that knows its own field of view. */
+    camera.far = Math.max(820, world.half * 4);
     camera.setAspect((this.canvas.clientWidth || window.innerWidth || 900) / Math.max(1, this.canvas.clientHeight || window.innerHeight || 420));
+    camera.setWorldExtent(world.half);
+    this.worldHalf = world.half;
     camera.setTarget(world.playerBase.x + 6, world.playerBase.z + 10, true);
     game.camera = camera;
 
@@ -979,6 +1004,9 @@ class App {
       version: SAVE_VERSION,
       seed: g.world.seed,
       mapType: g.world.mapType,
+      /* the ground it was fought on: a save reloads onto its own map, never
+         onto whatever size the menu happens to be showing */
+      sizeId: g.mapw.id,
       civ: g.civ,
       mode: g.mode,
       difficulty: g.difficultyKey,

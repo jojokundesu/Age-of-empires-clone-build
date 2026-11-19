@@ -196,7 +196,10 @@ export class UI {
         const r = mini.getBoundingClientRect();
         const nx = clamp((e.clientX - r.left) / r.width, 0, 1);
         const nz = clamp((e.clientY - r.top) / r.height, 0, 1);
-        const x = nx * 512 - 256, z = nz * 512 - 256;
+        /* and a tap on the minimap has to land where the tap landed, on
+           whatever size map is being played */
+        const wh = (this.game.world && this.game.world.half) || 256;
+        const x = nx * wh * 2 - wh, z = nz * wh * 2 - wh;
         this.camera.setTarget(x, z);
       };
       listen(mini, 'pointerdown', (e) => {
@@ -1713,8 +1716,14 @@ export class UI {
       ctx.imageSmoothingEnabled = true;
       ctx.drawImage(fc, 0, 0, W, H);
     }
-    const px = (x) => ((x + 256) / 512) * W;
-    const pz = (z) => ((z + 256) / 512) * H;
+    /* The minimap maps the WHOLE world onto the whole canvas. It used to
+       divide by a hard 512 m, which put a 1024 m map's blips, buildings and
+       view rectangle into the top-left quarter of the panel and left the other
+       three quarters empty -- the minimap showed a corner of the war and
+       called it the war. */
+    const wHalf = (g.world && g.world.half) || 256;
+    const px = (x) => ((x + wHalf) / (wHalf * 2)) * W;
+    const pz = (z) => ((z + wHalf) / (wHalf * 2)) * H;
     // resource blips (tiny, only when explored)
     if (this.miniMode !== 2) {
       ctx.fillStyle = 'rgba(60,110,60,0.85)';

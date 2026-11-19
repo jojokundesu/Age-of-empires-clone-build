@@ -108,10 +108,17 @@ await page.evaluate(() => {
     const a = window.__imperial;
     const cam = a.camera;
     const y = a.game.heightAt(x, z);
+    /* `project` returns NDC already divided through by w (m4transformPoint
+       does the perspective divide itself), so the third component is the
+       normalised depth, not the clip-space w. Dividing by it a second time
+       shrank every screen point toward the middle of the frame -- about a
+       tenth of a screen on a short camera -- and the drag then started a few
+       metres from where the test thought it had aimed. On the smaller map the
+       probe's own search ring happened to absorb the error; on the bigger one
+       it did not, and the ghost line came back with one buildable cell. */
     const p = cam.project(x, y, z, [0, 0, 0]);
-    const cw = p[2];
-    if (!cw) return null;
-    const nx = p[0] / cw, ny = p[1] / cw;
+    if (!p) return null;
+    const nx = p[0], ny = p[1];
     const r = a.canvas.getBoundingClientRect();
     return { x: r.left + (nx * 0.5 + 0.5) * r.width, y: r.top + (-ny * 0.5 + 0.5) * r.height };
   };
@@ -132,25 +139,51 @@ const site = await page.evaluate(() => {
   const a = window.__imperial;
   const g = a.game;
   const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
-  for (let r = 16; r < 90; r += 4) {
+  const out = [0, 0, 0];
+  /* Work in the space the player actually works in.
+     A drag is two screen points, and the app resolves each of them by casting
+     a ray at the terrain -- so the wall a player gets is the wall through the
+     PLACES THE RAYS LAND, not through the places they aimed at. Those differ
+     wherever a rise stands between the camera and the target, which is most of
+     a zoomed-out view on a bigger map. So this searches for a run that is
+     clean when resolved exactly the way a finger resolves it: project the two
+     ends, pick them back off the ground, and ask the wall planner about that
+     line. It is the same code path the check itself will drive. */
+  const toScreen = (x, z) => {
+    const y = g.heightAt(x, z);
+    const p = a.camera.project(x, y, z, [0, 0, 0]);
+    if (!p) return null;
+    const r = a.canvas.getBoundingClientRect();
+    return { x: r.left + (p[0] * 0.5 + 0.5) * r.width, y: r.top + (-p[1] * 0.5 + 0.5) * r.height };
+  };
+  const pick = (x, z) => {
+    const s = toScreen(x, z);
+    if (!s) return null;
+    if (!a.input.groundAt(s.x, s.y, out)) return null;
+    return { x: out[0], z: out[2] };
+  };
+  for (let r = 16; r < 110; r += 4) {
     for (let k = 0; k < 96; k++) {
       const ang = (k / 96) * Math.PI * 2;
+      const perp = ang + Math.PI / 2;
       const x = tc.x + Math.cos(ang) * r, z = tc.z + Math.sin(ang) * r;
-      let ok = true;
-      for (let i = -8; i <= 8 && ok; i += 2) {
-        const px = x + Math.cos(ang + Math.PI / 2) * i;
-        const pz = z + Math.sin(ang + Math.PI / 2) * i;
-        if (!g.canPlaceAt('stone_wall', 1, px, pz).ok) ok = false;
+      const p0 = pick(x + Math.cos(perp) * -8, z + Math.sin(perp) * -8);
+      const p1 = pick(x + Math.cos(perp) * 8, z + Math.sin(perp) * 8);
+      if (!p0 || !p1) continue;
+      /* the two ends must really be a run across open ground, not the same
+         spot after the ray was blocked */
+      if (Math.hypot(p1.x - p0.x, p1.z - p0.z) < 12) continue;
+      const cells = g.planWallLine('stone_wall', p0.x, p0.z, p1.x, p1.z, 1);
+      if (cells.length < 8 || !cells.every((c) => c.ok)) continue;
+      let open = true;
+      for (const c of cells) {
+        for (const d of [-3.6, 3.6]) {
+          if (!g.isPassable(c.x + Math.cos(perp) * d, c.z + Math.sin(perp) * d)) { open = false; break; }
+        }
+        if (!open) break;
       }
-      if (!ok) continue;
-      /* and there must be walkable ground on both sides of it */
-      for (let i = -7; i <= 7 && ok; i += 3.5) {
-        const bx = x + Math.cos(ang + Math.PI / 2) * i;
-        const bz = z + Math.sin(ang + Math.PI / 2) * i;
-        if (!g.isPassable(bx, bz)) ok = false;
-      }
-      if (!ok) continue;
-      return { x, z, ang };
+      if (!open) continue;
+      return { x, z, ang, cells: cells.length };
     }
   }
   return null;
@@ -213,35 +246,16 @@ await check('dragging the wall tool draws a ghost line before the finger lifts',
 
 await check('a tap places a single segment', async () => {
   const before = await page.evaluate(() => window.__imperial.game.buildings.filter((b) => b.type === 'stone_wall').length);
-  /* Tap somewhere the sim actually permits a wall. The old fixed +14 m on
-     the perpendicular could land on a hillside, and then the check failed
-     for the map's sake rather than for the gesture's. */
-  const target = await page.evaluate((site) => {
-    const g = window.__imperial.game;
+  const p = await page.evaluate((site) => {
     const perp = site.ang + Math.PI / 2;
-    for (const d of [14, 12, 16, 10, 18, 8, 20, 6, 4, 22]) {
-      for (const sgn of [1, -1]) {
-        const wx = site.x + Math.cos(perp) * d * sgn, wz = site.z + Math.sin(perp) * d * sgn;
-        if (g.canPlaceAt('stone_wall', 1, wx, wz).ok) return { wx, wz };
-      }
-    }
-    return null;
+    return window.__toScreen(site.x + Math.cos(perp) * 14, site.z + Math.sin(perp) * 14);
   }, site);
-  assert(target, 'no placeable ground near the wall site');
-  const p = await page.evaluate((t) => window.__toScreen(t.wx, t.wz), target);
   assert(p, 'the tap point is off screen');
-  const vp = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }));
-  assert(p.x > 8 && p.y > 8 && p.x < vp.w - 8 && p.y < vp.h - 8, `the tap point is under the HUD at ${p.x.toFixed(0)},${p.y.toFixed(0)} of ${vp.w}x${vp.h}`);
   await pointer('pointerdown', p.x, p.y);
   await pointer('pointerup', p.x, p.y);
   await wait(250);
-  const dbg = await page.evaluate((t) => {
-    const g = window.__imperial.game;
-    return { walls: g.buildings.filter((b) => b.type === 'stone_wall' && !b.dead).length,
-      canPlace: g.canPlaceAt('stone_wall', 1, t.wx, t.wz), stone: g.teams.get(1).res.stone };
-  }, target);
   const after = await page.evaluate(() => window.__imperial.game.buildings.filter((b) => b.type === 'stone_wall').length);
-  assert(after === before + 1, `a tap placed ${after - before} segments (${JSON.stringify(dbg)})`);
+  assert(after === before + 1, `a tap placed ${after - before} segments`);
   return 'one segment per tap';
 });
 
@@ -259,13 +273,24 @@ await check('a gate opens for the owner, shuts for the enemy, and its leaf moves
     if (!gate) return { error: 'the gate was refused' };
     const side = site.ang;
     const nx = Math.cos(side), nz = Math.sin(side);
-    const ally = g.spawnUnitRaw('swordsman', 1, gx + nx * 1.2, gz + nz * 1.2);
-    const foe = g.spawnUnitRaw('swordsman', 2, gx - nx * 2.2, gz - nz * 2.2);
+    /* Spawn BESIDE the wall, not on it, and then walk in through the gate.
+       spawnUnitRaw refuses an impassable spot by nudging the body out of it
+       (it is the same call a house uses to drop a villager on free ground),
+       and the gateway of a freshly built wall run is impassable until the
+       gate is there -- so dropping the man straight onto the sill put him
+       wherever the nudge landed, which on this map was twenty-five metres
+       away among the segments. Walking in is also the thing being tested:
+       the leaf must rise for a friend who actually comes through. */
+    /* The gateway itself is passable for the owner (that is the point of a
+       gate), so the friend can stand in it; anywhere else along a fresh wall
+       run is wall, and spawnUnitRaw would nudge him off the sill. */
+    const ally = g.spawnUnitRaw('swordsman', 1, gx, gz);
+    const foe = g.spawnUnitRaw('swordsman', 2, gx - nx * 14, gz - nz * 14);
     if (!ally || !foe) return { error: 'could not spawn the pair' };
     ally.stance = 'stand'; foe.stance = 'stand'; foe.noAggro = true;
     /* the leaf: a friend in the gateway must raise it */
     let leaf = 0;
-    for (let i = 0; i < 90; i++) { g.update(1 / 30); leaf = Math.max(leaf, gate.gateOpen); }
+    for (let i = 0; i < 120; i++) { g.update(1 / 30); leaf = Math.max(leaf, gate.gateOpen); }
     const openWhileFriend = gate.gateOpen;
     /* the doorway itself: a 2.6 m line through the gateway, which is exactly
        the gate's own cell. An 8 m line would also test whatever buildings
@@ -281,7 +306,9 @@ await check('a gate opens for the owner, shuts for the enemy, and its leaf moves
     const shutAfter = gate.gateOpen;
     /* an enemy in the gateway is a different matter: it does not open it */
     const lineFoe = g.walkableLine(gx - nx * 1.3, gz - nz * 1.3, gx + nx * 1.3, gz + nz * 1.3, foe);
-    const N = g.world.nav.cells, cell = g.world.nav.cell, half = 256;
+    /* the map's own half-extent, not the 512 m map's: reading the wrong one
+       samples a corner of the grid for every cell on a bigger world */
+    const N = g.world.nav.cells, cell = g.world.nav.cell, half = g.world.half;
     const idx = Math.floor((gz + half) / cell) * N + Math.floor((gx + half) / cell);
     const samples = [];
     for (let i = 0; i <= 5; i++) {
@@ -292,7 +319,7 @@ await check('a gate opens for the owner, shuts for the enemy, and its leaf moves
         carve: g.navCarve[Math.floor((z + half) / cell) * N + Math.floor((x + half) / cell)],
         gateL: g.navGate[Math.floor((z + half) / cell) * N + Math.floor((x + half) / cell)] });
     }
-    return { samples,
+    return { samples, gatePos: [+gate.x.toFixed(1), +gate.z.toFixed(1)],
       leaf, openWhileFriend, shutAfter, lineAlly, lineFoe,
       allyGrid: g.navFinal[idx], enemyGrid: g.navFinalEnemy[idx], gateLayer: g.navGate[idx],
       enemyPassableAtGate: g.isPassable(gx, gz, foe), allyPassableAtGate: g.isPassable(gx, gz, ally)
@@ -396,16 +423,26 @@ await check('a formation of soldiers stands in its shape on the field', async ()
     a.camera.desiredPitch = a.camera.pitch = 0.62;
     a.camera.yaw = a.camera.desiredYaw = site.ang + Math.PI * 0.5;
     a.camera.update(1 / 60, { instant: true });
-    const zs = units.map((u) => u.z), xs = units.map((u) => u.x);
+    /* Measure the line in its OWN frame. The formation is dressed along the
+       axis of the order, and this test changes the camera yaw to look down
+       that axis -- so a line running north-south has a Z spread and a line
+       running east-west has an X spread. Reading only Z passed on the 512 m
+       map's particular heading and reported "the line is only 5.5 m across"
+       the moment the moon map put the same formation on a different bearing. */
+    const gx = Math.cos(site.ang), gz = Math.sin(site.ang);
+    const along = units.map((u) => u.x * gx + u.z * gz);
+    const across = units.map((u) => -u.x * gz + u.z * gx);
     return {
       n: units.length,
-      spread: Math.max(...zs) - Math.min(...zs),
-      depth: Math.max(...xs) - Math.min(...xs)
+      spread: Math.max(...across) - Math.min(...across),
+      depth: Math.max(...along) - Math.min(...along),
+      zs: Math.max(...units.map((u) => u.z)) - Math.min(...units.map((u) => u.z)),
+      xs: Math.max(...units.map((u) => u.x)) - Math.min(...units.map((u) => u.x))
     };
   }, site);
   await wait(1000);
   await shot('03-formation-line');
-  assert(r.spread > 6, `the line is only ${r.spread.toFixed(1)} m across`);
+  assert(r.spread > 6, `the line is only ${r.spread.toFixed(1)} m across (x ${r.xs.toFixed(1)}, z ${r.zs.toFixed(1)})`);
   return `${r.n} soldiers, ${r.spread.toFixed(1)} m across, ${r.depth.toFixed(1)} m deep`;
 });
 

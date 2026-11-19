@@ -55,6 +55,95 @@ export class Camera {
 
   setAspect(a) { this.aspect = Math.max(0.25, Math.min(5, Number.isFinite(a) && a > 0 ? a : 1)); }
 
+  /**
+   * How far back the eye has to stand for the whole map to fit the screen.
+   *
+   * This used to be `half * 1.45`, a linear guess that framed a 512 m island
+   * and nothing else: 1024 m was given 742 m of distance, and the corners of
+   * the map projected to nearly five times the edge of the viewport, so the
+   * overview cropped the battlefield it was supposed to show. Framing is not
+   * linear in map size, it is geometric -- and the geometry has a wrinkle that
+   * an approximate closed form gets wrong: the pitch tips the map so the back
+   * corner is further from the eye than the front one, and a square's corners
+   * are at +-45 degrees from the view axis, not on the axis.
+   *
+   * So this does not approximate. It projects the map's own corners through
+   * this camera's real frustum, at this screen's real aspect and this pitch,
+   * and grows the distance until all four are inside the frame with a margin.
+   * Four corners, a handful of iterations, once per map and once per resize.
+   */
+  fitDistance(half, margin = 1.12) {
+    /* The view basis is taken from the camera's own eye and target rather than
+       re-derived from yaw and pitch: the class does not own the only copy of
+       those angles (the app overrides the yaw it starts from), and a framing
+       solved against the wrong basis is 16 % short in exactly the way the
+       corner check in tests/mapsize.mjs reports. */
+    const sp = Math.sin(this.pitch), cp = Math.cos(this.pitch);
+    const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
+    /* `update` puts the eye at target + (sy*cp, sp, cy*cp) * dist. */
+    const toward = [sy * cp, sp, cy * cp];
+    const eyeOf = (d) => [toward[0] * d, toward[1] * d, toward[2] * d];
+    /* The view axis is a direction, not an offset: it is -`toward`, unit
+       length, independent of how far back the eye stands. Dividing by `d`
+       here zeroed the horizontal terms and tilted the solved basis, which is
+       what left the framing 16 % short. */
+    const fwd = [-toward[0], -toward[1], -toward[2]];
+    const vHalf = (this.fov * Math.PI / 180) * 0.5;
+    const tanV = Math.tan(vHalf);
+    const tanH = tanV * this.aspect;
+    const corners = [[-half, -half], [half, -half], [half, half], [-half, half]];
+    const over = (d) => {
+      const e = eyeOf(d);
+      const f = fwd;
+      const right = [f[1] * 0 - f[2] * 1, f[2] * 0 - f[0] * 0, f[0] * 1 - f[1] * 0];
+      const rl = Math.hypot(right[0], right[1], right[2]) || 1;
+      right[0] /= rl; right[1] /= rl; right[2] /= rl;
+      const up = [
+        right[1] * f[2] - right[2] * f[1],
+        right[2] * f[0] - right[0] * f[2],
+        right[0] * f[1] - right[1] * f[0]
+      ];
+      let worst = 0;
+      for (let i = 0; i < 4; i++) {
+        const vx = corners[i][0] - e[0];
+        const vy = -e[1];                       // the target sits at y = 0 here
+        const vz = corners[i][1] - e[2];
+        const depth = vx * f[0] + vy * f[1] + vz * f[2];
+        if (depth <= 1) return Infinity;
+        const rx = vx * right[0] + vy * right[1] + vz * right[2];
+        const uy = vx * up[0] + vy * up[1] + vz * up[2];
+        worst = Math.max(worst, Math.abs(rx) / (depth * tanH), Math.abs(uy) / (depth * tanV));
+      }
+      return worst;
+    };
+    /* `over` falls as the eye climbs, so the bracket runs the other way:
+       `lo` is the distance that is still too close, `hi` the one that fits. */
+    let lo = half * 0.5, hi = half * 40;
+    if (over(hi) > 1) return hi;
+    for (let i = 0; i < 48; i++) {
+      const mid = (lo + hi) * 0.5;
+      if (over(mid) > margin) lo = mid; else hi = mid;
+    }
+    return Math.max(92, hi);
+  }
+
+  /** Re-solve the zoom-out limit for this map and this screen. */
+  setWorldExtent(half, margin = 1.12) {
+    this.worldHalf = half;
+    /* The margin means the same thing in both places: `fitDistance` solves the
+       distance at which no corner is further than `margin` from the centre of
+       the frame, and 1.12 leaves an eighth of the screen as breathing room. */
+    const fit = this.fitDistance(half, margin);
+    this.maxDist = Math.max(92, Math.round(fit));
+    /* The far plane has to reach the far corner from the eye, which at the
+       overview is the distance plus the map's own diagonal. */
+    const needFar = this.maxDist + 2 * Math.SQRT2 * half + 64;
+    if (!(this.far >= needFar)) this.far = needFar;
+    /* Never let a stale zoom-out sit outside the new limit. */
+    if (this.desiredDist > this.maxDist) this.desiredDist = this.maxDist;
+    if (this.dist > this.maxDist) this.dist = this.maxDist;
+  }
+
   /** Canvas size in CSS pixels. Drag maths needs it to map pixels to metres. */
   setViewport(w, h) {
     this.viewportW = Math.max(2, w | 0);
