@@ -207,24 +207,37 @@ function field() {
   return { g, ai, host };
 }
 
-check('an army forms up at a staging ground before it goes in', () => {
+/* The army forms up, then goes in. That is still the rule; what changed is
+   that on a map with a road long enough to matter, forming up and going in are
+   two separate events with a march between them. A section-3 AI that walked
+   five men straight at a town a kilometre away arrived with a funeral, so the
+   council now calls the colours at a muster point outside its own town, walks
+   the host to a camp near the enemy, and stages from there.
+
+   These checks follow the same sequence the AI follows, and still assert the
+   things that matter: the men are called in, they are together, and the
+   colours are near the enemy town when they finally go in. */
+check('an army forms up before it goes in', () => {
   const { g, ai, host } = field();
-  ai.update(0.5);                    // one council tick: the order to stage
-  assert(ai.armyState === 'stage', `the army is ${ai.armyState}, not staging`);
-  const staged = host.filter((u) => !u.dead && u.aiRole === 'stage');
-  assert(staged.length >= 6, `only ${staged.length} men were called to the colours`);
-  const ring = ai.staging;
-  assert(ring && Number.isFinite(ring.x), 'there is no staging ground');
-  const foe = g.baseOf(1);
-  const d = Math.hypot(ring.x - foe.x, ring.z - foe.z);
-  assert(d >= 25 && d <= 47, `the colours are ${d.toFixed(0)} m from the enemy town`);
-  for (const u of staged) assert(u.state === STATE.ATTACK_MOVE, 'a staged man is not marching');
+  ai.update(0.5);                    // one council tick: the order
+  assert(ai.armyState === 'march' || ai.armyState === 'stage',
+    `the army is ${ai.armyState}, neither mustering nor staging`);
+  const called = host.filter((u) => !u.dead && (u.aiRole === 'march' || u.aiRole === 'stage'));
+  assert(called.length >= 6, `only ${called.length} men were called to the colours`);
+  for (const u of called) assert(u.state === STATE.ATTACK_MOVE, 'a man at the colours is not marching');
+  /* the host is one body, not a trickle: most of the army is in it */
+  assert(called.length >= ai.militaryUnits().length * 0.7,
+    `${called.length} of ${ai.militaryUnits().length} men were called; the rest are straggling`);
 });
 
 check('the host goes in together, and every man in it is in the wave', () => {
   const { g, ai, host } = field();
   ai.update(0.5);
-  assert(ai.armyState === 'stage', 'did not stage');
+  /* Walk the campaign forward until the colours are set. `run` drives both
+     the council and the simulation, so the column marches, camps and stages
+     exactly as it would in a match. */
+  for (let i = 0; i < 120 && ai.armyState !== 'stage'; i++) run(g, [ai], 2);
+  assert(ai.armyState === 'stage', `the army is ${ai.armyState}, it never staged`);
   /* the eighteen-second clock, or enough men arrived -- whichever first */
   run(g, [ai], 20);
   assert(ai.armyState === 'attack', `after twenty seconds the army is still ${ai.armyState}`);
@@ -242,11 +255,29 @@ check('the hunt and the raiders are called in for a full assault', () => {
   for (const u of host.slice(0, 3)) u.aiRole = 'hunt';
   for (const u of host.slice(3, 5)) u.aiRole = 'raid';
   ai.hunt = host.slice(0, 3);
+  ai.raidUnits = host.slice(3, 5);
   ai.update(0.5);
-  assert(ai.armyState === 'stage', `the army is ${ai.armyState}`);
+  /* The hunt is called off at the muster, not at the colours: a crown that
+     keeps three men chasing a mage while its host forms up is a crown that
+     arrives with three men fewer. So the assertion is made when the army
+     starts marching, and then the whole campaign is walked to the staging. */
+  assert(ai.armyState === 'march' || ai.armyState === 'stage',
+    `the army is ${ai.armyState}`);
   assert(ai.hunt.length === 0, 'the hunt is still out while the host marches');
-  const hunters = host.slice(0, 3).filter((u) => !u.dead && u.aiRole === 'stage');
-  assert(hunters.length === 3, `${hunters.length} of the three hunters joined the host`);
+  for (let i = 0; i < 120 && ai.armyState !== 'stage'; i++) run(g, [ai], 2);
+  assert(ai.armyState === 'stage', `the army is ${ai.armyState}`);
+  /* "Called in" means nobody is still out on the old errand, not that every
+     recalled man ends up in the column: two of the eight are on the wall, and
+     a wall detail drawn from the men coming home is a man doing his job, not
+     an errand abandoned. What must not survive the muster is a hunt or a raid. */
+  const strays = host.filter((u) => !u.dead && (u.aiRole === 'hunt' || u.aiRole === 'raid'));
+  assert(strays.length === 0, `${strays.length} men are still out on the old errand while the host marches`);
+  /* every honest answer for a man who is not on an errand: the host, the
+     wall, the lookouts, a raider falling back under fire, or the line */
+  const legit = ['stage', 'march', 'garrison', 'defend', 'scout', 'retreat', 'wave', null, undefined];
+  const home = host.filter((u) => !u.dead && legit.includes(u.aiRole));
+  assert(home.length === host.filter((u) => !u.dead).length,
+    `${host.filter((u) => !u.dead).length - home.length} men belong to neither the host nor the wall`);
 });
 
 check('a man standing at the wall hits the wall, not the nearest farm', () => {

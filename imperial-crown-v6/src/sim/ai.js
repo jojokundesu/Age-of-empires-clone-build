@@ -116,6 +116,16 @@ export class AIController {
        AI must not either. `plan` is the answer the council gives the
        barracks: which arm the next wave needs. */
     this.staging = null;
+    /* --- the road to the war ------------------------------------------
+       Where the column is, which men are in it, what it has left behind to
+       hold the town, and which way in it has picked. See `startMarch`. */
+    this.line = null;
+    this.muster = null;
+    this.approach = null;
+    this.scouts = [];
+    this.scoutRider = null;
+    this.scoutTimer = 0;
+    this.scoutNextAt = 0;
     this.census = null;
     this.censusAt = -99;
     this.plan = { role: null, why: '', siege: 0, defend: 0 };
@@ -141,8 +151,17 @@ export class AIController {
   // indexed into all cells its sight circle overlaps; the final radius test
   // remains exact, so the grid never grants extra information.
   sightQuery(observers = this.observers()) {
-    const cell = 16, n = 32, buckets = new Map();
-    const coord = v => Math.floor((v + 256) / cell);
+    /* The bucket grid is sized from the world, not from the map this was
+       written on. It used to be a literal 32 buckets of 16 m centred on the
+       origin -- a 512 m square -- so on anything bigger every point outside
+       the middle kilometre fell off the edge of the grid and the crown was
+       blind there. That is what "the AI never scouts" looked like from the
+       outside: it had riders, they had eyes, and the lookup said no. */
+    const cell = 16;
+    const half = (this.game.world && this.game.world.size ? this.game.world.size : 512) / 2;
+    const n = Math.max(32, Math.ceil((half * 2) / cell) + 1);
+    const buckets = new Map();
+    const coord = v => Math.floor((v + half) / cell);
     for (const o of observers) {
       const radius = o.kind === 'building'
         ? (o.def.sight || 8) * (o.buildProgress >= 1 ? 1 : 0.5)
@@ -672,8 +691,25 @@ export class AIController {
    */
   decidePlan(c) {
     const plan = { role: null, why: '', siege: 0, defend: 0 };
-    if (!c.total) { plan.why = 'no contact'; this.plan = plan; return plan; }
-    const share = (n) => n / Math.max(1, c.total);
+    /* A town with nobody in it is still a town.
+       "Contact" used to mean "an enemy *unit* I can see", so a crown whose
+       army had already been destroyed and whose roofs were in plain view read
+       as no contact at all: the council had nothing to answer, the siege
+       decision never fired, and the AI that had just won the field sat in the
+       ruins of the village it had taken because nobody told it there was
+       anything there. Roofs are contact. */
+    if (c.total) {
+      /* a unit's own share of the enemy's fighting arms */
+    } else if (!c.roofs) { plan.why = 'no contact'; this.plan = plan; return plan; }
+    else { plan.why = 'roofs and nobody behind them'; }
+    /* What share of the enemy's *fighting* arms is this one? Cavalry plus
+       spears plus bows, not cavalry plus everything on the map. Counted
+       against the total, eight knights and ten swordsmen is a 44% cavalry
+       army, and the council answered it with spears -- correct by the letter
+       of the rule and wrong about the battle, where the ten swordsmen are the
+       thing standing in front of you. The biggest arm is the one to answer. */
+    const arms = Math.max(1, c.infantry + c.archer + c.cavalry + c.siege);
+    const share = (n) => n / arms;
     /* A legend is not a soldier; a line of spears will not kill him and
        feeding him more spears is how a match is lost. Monks convert what
        cannot be killed, and archers mass fire faster than a banner heals. */
@@ -731,8 +767,17 @@ export class AIController {
       }
     }
 
-    // military: keep a mix and never stall the barracks
-    const armyTarget = Math.min(this.diff.maxArmy, 6 + Math.floor((g.time - 60) / 40));
+    /* Military: keep a mix and never stall the barracks.
+       On a road map the war bar is not `maxArmy` -- it is `maxArmy` plus the
+       march surcharge, less the distance discount, and it is that number the
+       council tests before it marches. Capping training at the plain
+       `maxArmy` therefore made the bar literally unreachable on Large: the
+       crown stopped at sixteen men in the middle of the sixteenth minute and
+       sat there for the rest of the match, because the army it was told to
+       wait for was eighteen. Train to whichever bar is higher. */
+    const warNeed = Math.min(this.diff.maxArmy + 6,
+      this.diff.maxArmy + Math.min(6, Math.round(this.marchDistance() / 400)));
+    const armyTarget = Math.min(warNeed, 6 + Math.floor((g.time - 60) / 40));
     const armyCount = this.militaryUnits().length;
     if (armyCount < armyTarget && !this.ageReserve(st, age)) {
       const buildings = this.myBuildings().filter((b) => b.buildProgress >= 1 && b.queue.length < 1);
@@ -844,7 +889,13 @@ export class AIController {
   }
 
   /** True when paying `cost` still leaves the age-up reserve intact. */
+  /* Returns true when the item can be queued *now*. There is no reserve in
+     this build, so the answer is just whether the crown can pay -- the
+     reserve branch below was returning true only while a reserve existed and
+     false otherwise, which is how a barracks sat empty while the stores
+     climbed into four figures. */
   affordableWithReserve(st, age, cost) {
+    if (!this.game.canAfford(this.team, cost)) return false;
     const reserve = this.ageReserve(st, age);
     if (!reserve) return true;
     return this.game.canAfford(this.team, {
@@ -1234,10 +1285,25 @@ export class AIController {
     for (const u of this.hunt) {
       u.aiRole = 'hunt';
       u.noAggro = false;
-      if (u.target !== best || (u.state !== STATE.ATTACK && u.state !== STATE.MOVE)) {
+      u.unreachable = false;
+      /* Distance decides the order, not zeal.
+         `state = ATTACK` means "chase and swing", and the chase half of it
+         gives up after 24 m -- so a squad told to attack a mage 166 m away
+         dropped the order the next frame, idled, was re-ordered, dropped it
+         again, and stood in a field twitching. From outside, a hunt that never
+         leaves home. Far away, the squad walks: an attack-move towards the
+         target keeps its feet and picks off whatever it meets on the road.
+         Close in, it commits. */
+      const gap = Math.hypot(u.x - best.x, u.z - best.z);
+      if (gap > 18) {
+        if (u.state !== STATE.ATTACK_MOVE || !u.destX) {
+          u.target = null;
+          u.state = STATE.ATTACK_MOVE;
+          u.moveTo(best.x, best.z, true);
+        }
+      } else if (u.target !== best || (u.state !== STATE.ATTACK && u.state !== STATE.MOVE)) {
         u.target = best;
         u.state = STATE.ATTACK;
-        u.unreachable = false;
       }
     }
 
@@ -1267,11 +1333,50 @@ export class AIController {
      They are cheap enough to lose and annoying enough that the player has to
      answer them — which is the point: an opponent that only ever attacks in
      one big wave is a metronome, not an enemy. */
+  /** Call the bounty off and put the hunters back in the line. */
+  releaseHunt(army) {
+    if (!this.hunt || !this.hunt.length) return;
+    for (const u of this.hunt) {
+      if (u.dead) continue;
+      /* Stamp the recall: a man coming back from an errand is marching, and
+         the garrison detail must not quietly take him for the wall instead. */
+      if (u.aiRole === 'hunt') { u.aiRole = null; u.recalledAt = this.game.time; }
+    }
+    this.hunt.length = 0;
+    this.huntTarget = null;
+  }
+
   manageRaids(army) {
     const g = this.game;
     if (this.aggression < 0.5 || g.time < 55) return;
     /* keep an existing raid pointed at a target that still exists */
     this.raidUnits = this.raidUnits.filter((u) => !u.dead);
+    /* ---- preservation ----
+       A raiding party that is outnumbered withdraws. This is the single
+       biggest difference between a bot that feels alive and one that feeds:
+       the old party fought whatever it met, one skirmish at a time, until
+       there was nothing left to come home. Now it counts the opposition it
+       can see and leaves while it still can, and it does not go back out
+       until the men it lost have been replaced. */
+    if (this.raidUnits.length) {
+      let cx = 0, cz = 0;
+      for (const u of this.raidUnits) { cx += u.x; cz += u.z; }
+      cx /= this.raidUnits.length; cz /= this.raidUnits.length;
+      const foes = this.defendersNear(cx, cz, 30);
+      const mine = this.raidUnits.filter((u) => !u.dead).length;
+      if (foes >= mine + 2) {
+        this.raidTimer = Math.max(this.raidTimer, 30 + this.rng() * 20);
+        for (const u of this.raidUnits) {
+          u.aiRole = 'wave';
+          u.target = null;
+          u.state = STATE.MOVE;
+          u.moveTo(this.base.x + (this.rng() - 0.5) * 12, this.base.z + (this.rng() - 0.5) * 12, true);
+        }
+        this.raidUnits = [];
+        this.raidGoal = null;
+        return;
+      }
+    }
     if (this.raidUnits.length && g.time > this.raidRefresh) {
       this.raidRefresh = g.time + 8;
       const goal = this.pickRaidGoal();
@@ -1286,14 +1391,26 @@ export class AIController {
       }
     }
     if (this.raidTimer > 0) return;
-    const want = Math.min(6, 2 + Math.floor((g.time - 55) / 170));
+    /* While a column is on the road, the raiders come from the garrison and
+       from men who joined after it left -- never from the column itself. Ten
+       of sixteen men peeling off to chase villagers is how a campaign turns
+       into two half-armies that both lose. */
+    const onTheRoad = this.armyState === 'march' || this.armyState === 'stage';
+    const want = Math.min(onTheRoad ? 3 : 6, 2 + Math.floor((g.time - 55) / 170));
     /* A raid is a small, cheap thing; a siege is the war. Taking the raid out
        of the line that is standing at the enemy hall is how a wave of forty
        men evaporates into a wave of eighteen, looks "broken" to its own
        commander, and walks home -- over and over, for an hour. Raiders are
        found among the men who are not already committed. */
     const siegeLive = this.armyState === 'attack' || this.armyState === 'stage';
-    const pool = army.filter((u) => (!u.aiRole || (u.aiRole === 'wave' && !siegeLive)));
+    let pool = army.filter((u) => (!u.aiRole || (u.aiRole === 'wave' && !siegeLive)));
+    if (onTheRoad) {
+      /* the garrison is the only pool a marching crown may raid from, and it
+         only lends men it can spare */
+      const garrison = army.filter((u) => u.aiRole === 'garrison');
+      if (garrison.length < want + 3) return;
+      pool = garrison;
+    }
     /* never strip the home defence bare */
     if (pool.length < want + 4 || army.length < want + 5) return;
     const goal = this.pickRaidGoal();
@@ -1334,6 +1451,824 @@ export class AIController {
       if (score > bestScore) { bestScore = score; best = b; }
     }
     return best;
+  }
+
+  /* ============================================================
+     THE ROAD TO THE WAR
+     ------------------------------------------------------------
+     Every number in this brain was tuned on a 512 m map, where the
+     enemy's town is a ninety-second walk: five men could set out and
+     the reinforcement trickle would catch them up before they lost the
+     advantage of numbers. On a 3 km map the same order is a
+     nine-minute march, so the wave arrived as a trickle of exhausted
+     men, one at a time, into a defended town -- and if it met a real
+     garrison on the road it was destroyed in detail a kilometre from
+     home for no gain at all.
+
+     So a campaign is now a march followed by a war, and the march is
+     the part that has to be done properly:
+
+       - the army forms at a muster point just outside its own town,
+       - waits until it has left a garrison at home and enough men to
+         win the field,
+       - walks as one body to a forward camp near the enemy, with the
+         outriders scouting ahead of it,
+       - and only then storms the town.
+
+     The same code runs on Small, where the muster is a few steps and
+     the camp is in sight of the enemy, so the behaviour degrades to
+     the old one rather than being special-cased.
+     ============================================================ */
+
+  /** The fighting-strength band this crown believes it can win inside. */
+  foeBand() {
+    return Math.min(60, this.diff.maxArmy + 8);
+  }
+
+  /** How far the army must walk to bring the war to this crown. */
+  marchDistance() {
+    const base = this.base, e = this.enemyBase;
+    if (!base || !e) return 0;
+    return Math.hypot(e.x - base.x, e.z - base.z);
+  }
+
+  /**
+   * Is it time to go to war?
+   *
+   * Two things decide it: how strong the army is, and how far away the enemy
+   * is. The strength bar rises with the distance, because a long road costs
+   * you the men who would have joined along the way and the reinforcements
+   * that cannot arrive in time. It also rises with the enemy's own army,
+   * because walking a small force into a large one is not aggression, it is
+   * a gift.
+   */
+  wantsWar(waveUnits, foeHome, age) {
+    const g = this.game;
+    const army = this.waveArmy(age);
+    if (g.time < this.diff.firstWave) return false;
+    /* The strength the clock alone asks for, unchanged from the old rule so
+       that Small behaves exactly as it always did. */
+    const step = 3;
+    let need = Math.min(this.diff.maxArmy,
+      5 + Math.floor(Math.max(0, g.time - this.diff.firstWave) / this.diff.waveEvery) * step);
+    /* A long road asks for a few more men up front -- but not as many more
+       as a naive reading suggests, because a column on the road keeps
+       collecting the men trained behind it. What actually has to stay
+       constant is the time to contact: if the walk is six minutes, waiting
+       eight minutes for a bigger army means the war starts in fourteen
+       either way and the enemy has had eight minutes to fortify. So the bar
+       comes *down* with distance, and the road does the rest. */
+    need += Math.min(6, Math.round(this.marchDistance() / 400));
+    need -= Math.min(3, Math.floor(this.marchDistance() / 600));
+    /* do not walk into a host several times your size on a rumour: if we can
+       see the garrison and it outweighs us, wait. The bar is deliberately
+       loose -- a crown that waits for a perfect army never marches. */
+    if (foeHome >= 4 && army.length < Math.round((foeHome + 2) * 1.4)) return false;
+    /* an undefended town is an open gate, and the whole point of marching is
+       to arrive while it is still open */
+    if (foeHome <= 2 && army.length >= 5) return true;
+    return army.length >= Math.min(this.diff.maxArmy + 4, need);
+  }
+
+  /** Does this campaign have a road long enough that it has to be run? */
+  hasRoad() {
+    return this.marchDistance() > 320;
+  }
+
+  /** The men who would march: everything not already on another errand. */
+  waveArmy(age) {
+    return this.militaryUnits().filter((u) =>
+      (!u.aiRole || u.aiRole === 'wave' || u.aiRole === 'march' || u.aiRole === 'stage')
+      && !u.garrison);
+  }
+
+  /** Hostile men standing inside this crown's own ground. */
+  intruders() {
+    const g = this.game, base = this.base;
+    const out = [];
+    for (const u of g.units) {
+      if (u.dead || u.team === 0 || u.wild || !g.canFight(this.team, u.team)) continue;
+      if (dist2(u.x, u.z, base.x, base.z) < 34 * 34) out.push(u);
+    }
+    return out;
+  }
+
+  /**
+   * How much of the army stays home.
+   *
+   * A crown that empties its town to go raiding loses the town. The garrison
+   * is drawn from the army, so it costs something to keep: it is the same
+   * rectangle of men whether the map is 512 m or 3 km, which is the point --
+   * a defence that scaled with the map would be a second army.
+   */
+  garrisonSize(army, age) {
+    const g = this.game;
+    const foeNear = this.intruders().length > 0;
+    if (foeNear) return Math.min(army.length, 6);
+    if (g.time < 90) return Math.min(army.length, 2);
+    const walls = g.buildings.some((b) => !b.dead && b.team === this.team && (b.def.tower || b.type === 'castle'));
+    return Math.min(army.length, walls ? 3 : 2);
+  }
+
+  /** Where the army forms up: just outside its own town, not inside it. */
+  musterPoint() {
+    const base = this.base;
+    if (this.muster && this.game.time < this.muster.until) return this.muster;
+    const e = this.enemyBase;
+    const dx = e.x - base.x, dz = e.z - base.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const r = Math.min(46, Math.max(18, this.marchDistance() * 0.12));
+    this.muster = {
+      x: base.x + (dx / len) * r,
+      z: base.z + (dz / len) * r,
+      until: this.game.time + 25
+    };
+    return this.muster;
+  }
+
+  /** How far from the enemy town the army camps before it goes in. */
+  forwardOffset() {
+    /* How far from the enemy town the army forms up. It has to be further out
+       than the town is wide, or half the men are given destinations inside
+       somebody's house: the hall sits at the middle of a village of farms,
+       houses and camps, and a camp 70 m from the hall put a twelve-man
+       column's scattered destinations in the buildings around it. Every one
+       of those orders was refused, every refused order reset the man, and
+       the column stood in a field 170 m away for twenty minutes at full
+       health. Two hundred and fifty metres is a town's width and a minute's
+       walk. */
+    const d = this.marchDistance();
+    if (d < 260) return Math.max(28, d * 0.34);
+    return Math.min(320, Math.max(250, d * 0.22));
+  }
+
+  /**
+   * The road, as a list of places to be, rather than one place to be at the
+   * end of it.
+   *
+   * A man ordered to walk 1.5 km over a river is a man the movement code has
+   * to solve that problem for, twelve metres at a time, and it does the wrong
+   * thing: it steps straight at the destination, which is into the water, and
+   * progress falls to about half a metre a second while the column drifts
+   * sideways. The map already knows the answer -- it has fords and corner
+   * crossings -- so the planner hands them over as waypoints and every hop is
+   * a short walk on dry ground.
+   */
+  marchWaypoints(approach) {
+    const out = [];
+    if (approach) out.push({ x: approach.x, z: approach.z });
+    const off = this.forwardOffset();
+    const base = this.base, e = this.enemyBase;
+    const dx = e.x - base.x, dz = e.z - base.z;
+    const len = Math.hypot(dx, dz) || 1;
+    out.push({ x: e.x - (dx / len) * off, z: e.z - (dz / len) * off });
+    return out;
+  }
+
+  startMarch(enemyBase, age) {
+    const g = this.game;
+    /* The raiders come in for the campaign. A crown that marches with half
+       its army chasing villagers arrives with a quarter of it. */
+    for (const u of this.raidUnits || []) {
+      if (u.dead) continue;
+      u.aiRole = null;
+      u.target = null;
+      u.recalledAt = g.time;
+    }
+    this.raidUnits = [];
+    this.raidGoal = null;
+    this.raidTimer = Math.max(this.raidTimer, 40);
+    /* and the hunt too: a squad of hunters is a party left behind */
+    if (this.hunt && this.hunt.length) {
+      for (const u of this.hunt) {
+        if (u.dead) continue;
+        if (u.aiRole === 'hunt') { u.aiRole = null; u.recalledAt = g.time; }
+      }
+      this.hunt.length = 0;
+      this.huntTarget = null;
+    }
+    const army = this.waveArmy(age);
+    const keep = this.garrisonSize(army, age);
+    /* Who stays home is a choice, not an accident of array order. The army
+       list is in spawn order, and the men just recalled from the hunt are the
+       oldest in it -- so "the first two stay behind" kept the two veterans who
+       had been walking back to the muster anyway, and sent the rest without
+       them. The wall wants men who are already here: the ones nearest the
+       town, and never a man who was on an errand and has not yet come in. */
+    const fromErrand = (u) => (u.recalledAt && g.time - u.recalledAt < 120) ? 1 : 0;
+    const ranked = army.slice().sort((a, b) =>
+      (fromErrand(a) - fromErrand(b)) ||
+      (dist2(a.x, a.z, this.base.x, this.base.z) - dist2(b.x, b.z, this.base.x, this.base.z)));
+    const staying = new Set(ranked.slice(0, keep));
+    const marching = army.filter((u) => !staying.has(u));
+    if (!marching.length) return false;
+    for (const u of ranked.slice(0, keep)) {
+      u.aiRole = 'garrison';
+      u.target = null;
+      u.garrison = true;
+      u.state = STATE.MOVE;
+      const a = this.rng() * Math.PI * 2, r = 4 + this.rng() * 6;
+      u.moveTo(this.base.x + Math.cos(a) * r, this.base.z + Math.sin(a) * r, true);
+    }
+    this.muster = null;
+    const m = this.musterPoint();
+    for (const u of marching) {
+      u.aiRole = 'march';
+      u.garrison = false;
+      u.target = null;
+      u.noAggro = true;              // the column does not stop to chase
+      u.state = STATE.ATTACK_MOVE;
+      const a = this.rng() * Math.PI * 2, r = 3 + this.rng() * 5;
+      u.moveTo(m.x + Math.cos(a) * r, m.z + Math.sin(a) * r, true);
+    }
+    /* Which way in? Decided before the column moves, because the column has
+       to walk to the crossing -- the camp is on the far bank, and an order to
+       walk straight at a town across a river parks the army at the water's
+       edge with nowhere to go. On a map with no river this is null and the
+       column walks at the town, which is what it always did. */
+    const cross = this.pickApproach(marching);
+    this.line = {
+      at: g.time,
+      home: { x: this.base.x, z: this.base.z },
+      goal: { x: enemyBase.x, z: enemyBase.z },
+      strength: marching.length,
+      formUntil: g.time + Math.min(30, 8 + marching.length * 0.6),
+      formed: false,
+      cross,
+      waypoints: this.marchWaypoints(cross),
+      leg: 0,
+      phase: 'approach',
+      camp: null,
+      arrivedAt: 0
+    };
+    this.armyState = 'march';
+    this.sendScouts(marching.length);
+    return true;
+  }
+
+  /**
+   * One frame of the march. Returns true when it has handled the army, so the
+   * caller stops.
+   *
+   * The column has three phases: form at the muster, walk to the camp, and
+   * wait at the camp for the stragglers. A column that is ambushed on the road
+   * is not chased home -- it is allowed to fight back where it stands, and if
+   * it has clearly lost it goes back to the muster and tries again with a
+   * bigger army, which is what a commander does instead of feeding men into a
+   * bad fight one squad at a time.
+   */
+  runMarch(army, waveUnits, age) {
+    const g = this.game, line = this.line;
+    const column = army.filter((u) => u.aiRole === 'march' || u.marchDirect);
+    if (!column.length) {
+      this.armyState = 'gather';
+      this.line = null;
+      for (const u of army) if (u.aiRole === 'garrison' && !this.intruders().length) u.garrison = false;
+      return false;
+    }
+    /* the enemy seat has moved (their hall fell): re-aim the campaign */
+    const foe = this.enemyBase;
+    if (Math.hypot(line.goal.x - foe.x, line.goal.z - foe.z) > 90) {
+      line.goal = { x: foe.x, z: foe.z };
+      line.camp = null;
+      line.formed = true;
+      line.arrivedAt = 0;
+    }
+    line.strength = Math.max(line.strength, column.length);
+
+    /* ---- form at the muster ---- */
+    if (!line.formed) {
+      const m = this.musterPoint();
+      let at = 0;
+      for (const u of column) if (dist2(u.x, u.z, m.x, m.z) < 22 * 22) at++;
+      if (at >= Math.max(3, column.length * 0.55) || g.time > line.formUntil) {
+        line.formed = true;
+        line.leg = 0;
+        const first = line.waypoints[0];
+        for (const u of column) {
+          const a = this.rng() * Math.PI * 2, r = 2 + this.rng() * 6;
+          u.state = STATE.ATTACK_MOVE;
+          u.noAggro = true;
+          u.moveTo(first.x + Math.cos(a) * r, first.z + Math.sin(a) * r, true);
+        }
+        this.scoutTimer = 0;
+      } else {
+        for (const u of column) {
+          if (u.state === STATE.IDLE) {
+            const a = this.rng() * Math.PI * 2, r = this.rng() * 7;
+            u.state = STATE.ATTACK_MOVE;
+            u.moveTo(m.x + Math.cos(a) * r, m.z + Math.sin(a) * r, true);
+          }
+        }
+      }
+      return true;
+    }
+
+    /* ---- the second company ----
+       Men trained while the column is on the road are not left behind to
+       garrison an empty town: they march to the colours and join it. This is
+       what makes an early start pay rather than punish, and it is how the
+       army that arrives is bigger than the army that left. */
+    for (const u of this.militaryUnits()) {
+      if (u.garrisoned || u.aiRole) continue;
+      if (u.garrison || u.marchDirect) continue;
+      if ((this.scouts || []).includes(u)) continue;
+      /* a man who was already spoken for by another errand this frame has an
+         order and a destination; re-rolling it every decision is how a column
+         loses men it never lost in battle */
+      if (u.targetPos && u.state !== STATE.IDLE) continue;
+      u.aiRole = 'march';
+      u.noAggro = true;
+      u.state = STATE.ATTACK_MOVE;
+      const target = line.phase === 'approach' && line.cross ? line.cross : (line.camp || this.campPoint());
+      const a = this.rng() * Math.PI * 2, r = 2 + this.rng() * 6;
+      u.moveTo(target.x + Math.cos(a) * r, target.z + Math.sin(a) * r, true);
+    }
+
+    /* ---- the scout rides ahead ---- */
+    this.manageScouting(column);
+    if (!(this.plan && this.plan.why && this.plan.why !== 'no contact')) this.scoutAhead();
+
+    /* ---- a road that has turned into a battle ---- */
+    const foesNear = this.foesOnTheRoad(column, 26);
+    if (foesNear.length >= 2) {
+      const theirs = 0 + foesNear.reduce((n, u) => n + unitThreat(u), 0);
+      const mine = column.reduce((n, u) => n + unitThreat(u), 0);
+      /* If the road is lost, go home and come back with the rest of the
+         army. If it is even, stand: a column that runs from every skirmish
+         never arrives. */
+      if (column.length >= 3 && theirs > mine * 1.7 && g.time - line.at > 4) {
+        this.abortMarch(army, 'outmatched on the road');
+        return true;
+      }
+      for (const u of foesNear) this.micro(column, { x: u.x, z: u.z });
+      return true;
+    }
+
+    /* ---- the legs of the road ----
+       Each waypoint is walked in turn. A leg is done when most of the column
+       is standing on it, and the leg after the last is the town itself. */
+    const centre = this.columnCentre();
+    if (line.phase === 'approach') {
+      const wp = line.waypoints[line.leg];
+      if (!wp) {
+        line.phase = 'camp';
+        line.camp = this.campPoint();
+        return true;
+      }
+      let on = 0;
+      for (const u of column) if (dist2(u.x, u.z, wp.x, wp.z) < 40 * 40) on++;
+      const done = on >= Math.max(3, Math.ceil(column.length * 0.7));
+      const late = g.time - line.at > 40 + line.leg * 60;
+      if (done || late) {
+        line.leg++;
+        const next = line.waypoints[line.leg];
+        if (next) {
+          for (const u of column) {
+            const a = this.rng() * Math.PI * 2, r = 3 + this.rng() * 8;
+            u.state = STATE.ATTACK_MOVE;
+            u.noAggro = true;
+            u.unreachable = false;
+            u.moveTo(next.x + Math.cos(a) * r, next.z + Math.sin(a) * r, true);
+          }
+        } else {
+          line.phase = 'camp';
+          line.camp = this.campPoint();
+        }
+        return true;
+      }
+      for (const u of column) {
+        const walking = u.targetPos && (u.path ? u.pathIdx < u.path.length : false);
+        if (walking && !u.unreachable) continue;
+        if (u.state === STATE.IDLE || u.unreachable) {
+          u.unreachable = false;
+          const a = this.rng() * Math.PI * 2, r = 3 + this.rng() * 8;
+          u.state = STATE.ATTACK_MOVE;
+          u.noAggro = true;
+          u.moveTo(wp.x + Math.cos(a) * r, wp.z + Math.sin(a) * r, true);
+        }
+      }
+      return true;
+    }
+
+    /* ---- at the camp ---- */
+    const camp = line.camp || (line.camp = this.campPoint());
+    /* "At the camp" is a property of the army, not of each man.
+       A camp beside a town is a patch of ground with houses and camps in it;
+       the men scatter across it, some of them stand 90 m out because that is
+       where the open ground is, and asking every one of them to reach the
+       same coordinate is asking the map a question it has already answered.
+       When the body of the army is on the camp, the army is at the camp. */
+    const centreNow = this.columnCentre() || camp;
+    /* Either the army is on the camp, or it is close enough to the town that
+       the road is over. The second test matters because the camp is on the
+       enemy's doorstep: the last eighty metres are through their farms, and a
+       column that insists on forming up in a village stands in it. What the
+       storm needs is that the army has arrived, and it has arrived when it is
+       at army scale from the hall. */
+    const spread = Math.max(45, Math.sqrt(column.length) * 12);
+    const atCamp = Math.hypot(centreNow.x - camp.x, centreNow.z - camp.z) < spread;
+    const atTown = Math.hypot(centreNow.x - this.enemyBase.x, centreNow.z - this.enemyBase.z) < spread + 90;
+    const gathered = atCamp || atTown;
+    /* The road is over when the army has arrived, and it has arrived when it
+       is at the camp it was sent to. If it cannot get the last hundred metres
+       because the enemy's own farms are in the way, that IS the battle -- a
+       column stopped by a village is a column that should be storming it. A
+       march that has been running this long with the enemy this close is not
+       going to be improved by another lap of the camp. */
+    const stalled = g.time - line.at > 150 &&
+      Math.hypot(centreNow.x - this.enemyBase.x, centreNow.z - this.enemyBase.z) < 420;
+    if (stalled) { this.stormTown(column, army); return true; }
+    if (gathered && !line.arrivedAt) line.arrivedAt = g.time;
+    /* walk to the colours if straggling, but not forever: a man caught on a
+       fence is not worth the whole campaign */
+    if (gathered || g.time - (line.arrivedAt || g.time) > 40) {
+      this.stormTown(column, army);
+      return true;
+    }
+    /* A man with no order here is a man standing still at the colours. Send
+       him at the camp -- not back at the crossing he is already past, where
+       setPath sees a destination half a metre away and refuses to move him,
+       which reads as a unit that will not march and is really a unit that was
+       told to stay. */
+    for (const u of column) {
+      /* Re-order a man only if he has actually stopped.
+         This loop runs twice a second, and it re-issued a move order to every
+         idle-looking man on every pass -- which reset the 60 m hop he was in
+         the middle of walking, so he took one step, was handed the same short
+         path again, and shuffled in place for ten minutes. A unit with a hop in
+         progress is a unit that is walking; leave him alone. `stalled` is the
+         honest test: no order, or an order he has been unable to execute for a
+         while. */
+      const walking = u.targetPos && (u.path ? u.pathIdx < u.path.length : false);
+      if (walking && !u.unreachable) { u.stalledAt = 0; continue; }
+      if (u.state === STATE.IDLE || u.unreachable || (u.stalledAt && g.time - u.stalledAt > 6)) {
+        if (!u.stalledAt) u.stalledAt = g.time;
+        u.unreachable = false;
+        u.reorderTries = (u.reorderTries || 0) + 1;
+        if (u.reorderTries <= 4) {
+          const a = this.rng() * Math.PI * 2, r = 5 + this.rng() * 9;
+          u.state = STATE.ATTACK_MOVE;
+          u.noAggro = true;
+          u.stalledAt = 0;
+          u.moveTo(camp.x + Math.cos(a) * r, camp.z + Math.sin(a) * r, true);
+        } else if (line.phase === 'camp') {
+          /* Four refusals is the map talking: this man cannot get to the camp,
+             and a fifth order will not change that. He stays in the column and
+             walks at the town instead of being cut loose -- as a loose 'wave'
+             he was invisible to the march and got picked up by the next
+             garrison or hunt order, which is how a fifteen-man column turned
+             into seven men and five hunters without a shot being fired. */
+          u.marchDirect = true;
+          u.state = STATE.ATTACK_MOVE;
+          u.noAggro = true;
+          u.moveTo(this.enemyBase.x + (this.rng() - 0.5) * 20, this.enemyBase.z + (this.rng() - 0.5) * 20, true);
+        } else {
+          u.unreachable = false;
+          u.state = STATE.IDLE;      // still on the approach: wait for the others
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Where the column camps: near enough to strike, far enough not to be seen.
+   *
+   * The point has to be somewhere an army can actually stand. The obvious
+   * choice -- a fraction of the way in from the enemy, along the straight line
+   * from home -- is on the far bank of the river about half the time, and an
+   * order to a point across water is an order that fails: the whole column
+   * stopped dead 500 m out with "no way through" and the campaign sat there.
+   * So the camp is walked back along the approach until the pathfinder agrees
+   * a man standing here can get there.
+   */
+  campPoint() {
+    if (this._campCache && this._campCache.goal === this.enemyBase
+        && this.game.time < this._campCache.until) return this._campCache.point;
+    const base = this.base, e = this.enemyBase;
+    const dx = e.x - base.x, dz = e.z - base.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const ux = dx / len, uz = dz / len;
+    const off = this.forwardOffset();
+    /* The camp is a *place to gather*, not a coordinate to stand on.
+       It used to be a point, checked for clearance, and pushed towards the
+       army whenever the check failed -- which it always does next to a town
+       full of houses, so the camp kept sliding back until it was seventy
+       metres from the enemy's hall and every man in the column was being
+       ordered to stand inside a farmyard. An army occupies ground; the men
+       scatter across it and the map decides who can stand where. */
+    const point = { x: e.x - ux * off, z: e.z - uz * off };
+    this._campCache = { goal: this.enemyBase, point, until: this.game.time + 40 };
+    return point;
+  }
+
+  /** Is there room for a body of men here, clear of buildings? */
+  groundIsClear(x, z, half, want) {
+    const g = this.game;
+    for (const b of g.buildings) {
+      if (b.dead) continue;
+      const r = (b.radius || 2) + 2.5;
+      if (dist2(b.x, b.z, x, z) < (r + half * 0.5) ** 2) return false;
+    }
+    const pf = g.pathFinder;
+    if (!pf || !pf.blocked) return true;
+    const cs = pf.cellSize, n = pf.cells;
+    let free = 0, total = 0;
+    const step = Math.max(cs, half / 3);
+    for (let dz = -half; dz <= half; dz += step) {
+      for (let dx = -half; dx <= half; dx += step) {
+        const cx = Math.round((x + dx) / cs + (n - 1) / 2);
+        const cz = Math.round((z + dz) / cs + (n - 1) / 2);
+        if (cx < 0 || cz < 0 || cx >= n || cz >= n) continue;
+        total++;
+        if (!pf.blocked[cz * n + cx]) free++;
+      }
+    }
+    return total > 0 && free >= Math.ceil(total * Math.max(0.6, want));
+  }
+
+  /**
+   * Is this point on the enemy's side of the crossing?
+   *
+   * Measured along the line from the crown's own town to the enemy's: a point
+   * that projects further toward the enemy than the crossing does has come out
+   * the other side. That works for a ford on the river and for a flank at the
+   * edge of the map, which are the two shapes the map generator makes.
+   */
+  hasCrossed(x, z, cross) {
+    const base = this.base, e = this.enemyBase;
+    const dx = e.x - base.x, dz = e.z - base.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const ux = dx / len, uz = dz / len;
+    const here = (x - base.x) * ux + (z - base.z) * uz;
+    const at = (cross.x - base.x) * ux + (cross.z - base.z) * uz;
+    return here > at + Math.max(30, cross.r * 0.5);
+  }
+
+  /** The middle of the marching column, or null when there is no column. */
+  columnCentre() {
+    const g = this.game;
+    let n = 0, x = 0, z = 0;
+    for (const u of g.units) {
+      if (u.dead || u.team !== this.team || u.aiRole !== 'march') continue;
+      x += u.x; z += u.z; n++;
+    }
+    return n ? { x: x / n, z: z / n } : null;
+  }
+
+  /**
+   * Can a man stand at `from` and walk to `x,z`?
+   *
+   * A one-off question, so it is asked off the tick: the per-frame budget will
+   * refuse a cross-map search by design, and that refusal looks exactly like
+   * "there is no way through".
+   */
+  canReach(from, x, z) {
+    const pf = this.game.pathFinder;
+    if (!pf || !from) return true;
+    const p = pf.find(from.x, from.z, x, z, 2, { offTick: true });
+    if (!p || !p.length) return false;
+    const end = p[p.length - 1];
+    return Math.hypot(end[0] - x, end[1] - z) < 40;
+  }
+
+  /** Hostile fighting men within `r` of the column's centre of mass. */
+  foesOnTheRoad(column, r) {
+    const g = this.game;
+    if (!column.length) return [];
+    let cx = 0, cz = 0;
+    for (const u of column) { cx += u.x; cz += u.z; }
+    cx /= column.length; cz /= column.length;
+    const out = [];
+    for (const u of g.units) {
+      if (u.dead || u.garrisoned || u.wild || !u.def || u.def.attack <= 0) continue;
+      if (u.def.classes.includes('villager')) continue;
+      if (!g.canFight(this.team, u.team)) continue;
+      if (dist2(u.x, u.z, cx, cz) < (r + column.length * 0.5) ** 2) out.push(u);
+    }
+    return out;
+  }
+
+  abortMarch(army, why) {
+    const g = this.game;
+    this.armyState = 'gather';
+    this.line = null;
+    this.staging = null;
+    this.attackTimer = Math.max(18, this.diff.waveEvery * 0.4);
+    for (const u of army) {
+      if (u.aiRole === 'hunt' || u.aiRole === 'raid') continue;
+      u.aiRole = null;
+      u.garrison = false;
+      u.marchDirect = false;
+      u.target = null;
+      u.state = STATE.MOVE;
+      u.moveTo(this.base.x + (this.rng() - 0.5) * 12, this.base.z + (this.rng() - 0.5) * 12, true);
+    }
+    if (this.team === this.game.playerTeam) this.game.notify(`Our column turns back: ${why}`, 'warn');
+  }
+
+  /**
+   * The camp is as far as the army goes until it decides how to go in.
+   *
+   * This is where the river is answered. A town behind a river has one short
+   * road (a ford) and one long one (the corner flank), and which is better is
+   * not simply which is shorter: men who wade a ford arrive wet and in single
+   * file, and a flank nobody is watching is often the cheaper road even
+   * though it is twice the distance. So the column weights the choices by
+   * length, by the defenders it can see on each, and by whether it has the
+   * numbers to survive a contested crossing.
+   */
+  stormTown(column, army) {
+    const g = this.game;
+    const enemyBase = this.enemyBase;
+    const route = this.pickApproach(column);
+    this.approach = route;
+    const goal = route ? { x: route.x, z: route.z } : { x: enemyBase.x, z: enemyBase.z };
+    const dx = enemyBase.x - this.base.x, dz = enemyBase.z - this.base.z;
+    const len = Math.hypot(dx, dz) || 1;
+    const stand = Math.max(26, Math.min(46, len * 0.32));
+    this.staging = {
+      x: enemyBase.x - (dx / len) * stand,
+      z: enemyBase.z - (dz / len) * stand,
+      until: g.time + 18,
+      strength: column.length
+    };
+    this.armyState = 'stage';
+    this.line = null;
+    for (const u of army) if (u.aiRole === 'hunt' || u.aiRole === 'raid') u.aiRole = null;
+    const host = army.filter((u) => !u.aiRole || u.aiRole === 'wave' || u.aiRole === 'march');
+    this.hunt.length = 0;
+    this.waveStrength = host.length;
+    for (const u of host) {
+      u.aiRole = 'stage';
+      u.garrison = false;
+      u.target = null;
+      u.noAggro = false;
+      u.state = STATE.ATTACK_MOVE;
+      u.moveTo(this.staging.x + (this.rng() - 0.5) * 12, this.staging.z + (this.rng() - 0.5) * 12, true);
+    }
+    return;
+  }
+
+  /**
+   * Which way in: the ford, or the long way round the corner?
+   *
+   * Returns null when there is nothing to choose (no river, or no flank
+   * within reach on this map) and the army walks straight at the town, which
+   * is what it should do on a map where the river is not in the way.
+   */
+  pickApproach(column) {
+    const g = this.game, world = g.world;
+    const crossings = [];
+    for (const f of world.fords || []) {
+      crossings.push({ kind: 'ford', x: f.x, z: f.z, r: f.radius || 24 });
+    }
+    for (const c of world.corridors || []) {
+      crossings.push({ kind: 'flank', x: c.x, z: c.z, r: c.r || 60 });
+    }
+    if (!crossings.length || !column.length) return null;
+    let cx = 0, cz = 0;
+    for (const u of column) { cx += u.x; cz += u.z; }
+    cx /= column.length; cz /= column.length;
+    const enemyBase = this.enemyBase;
+    const foeHome = this.foeHome || 0;
+    const myMen = column.length;
+    let best = null, bestScore = Infinity;
+    for (const c of crossings) {
+      if (dist2(c.x, c.z, cx, cz) > 1500 * 1500) continue;
+      const legA = Math.hypot(c.x - cx, c.z - cz);
+      const legB = Math.hypot(enemyBase.x - c.x, enemyBase.z - c.z);
+      let cost = legA + legB;
+      /* A watched ford is expensive: the men who die in the water are the
+         men who would have climbed the far bank. A ford with an empty far
+         bank is the cheapest road on the map. */
+      const guarded = this.defendersNear(c.x, c.z, c.r + 26);
+      if (c.kind === 'ford') {
+        cost *= 1 + (guarded / Math.max(3, myMen)) * 0.7;
+        /* wading a wide ford is slow and it is where a defender wants you */
+        cost += c.r * 0.35;
+      } else {
+        /* the flank is the long way round by construction; it is worth it
+           when it is unwatched and the army is big enough to be seen */
+        cost *= 1 + (guarded / Math.max(3, myMen)) * 1.1;
+        if (guarded === 0 && foeHome >= 3) cost *= 0.8;
+      }
+      if (cost < bestScore) { bestScore = cost; best = c; }
+    }
+    if (!best) return null;
+    /* if the best crossing is not actually cheaper than walking straight in,
+       the river is not in the way on this map -- do not detour for nothing */
+    const straight = Math.hypot(enemyBase.x - cx, enemyBase.z - cz);
+    if (bestScore > straight * 1.9) return null;
+    return best;
+  }
+
+  /** How many fighting men this crown can see around a point. */
+  defendersNear(x, z, r) {
+    const g = this.game;
+    let n = 0;
+    for (const u of g.units) {
+      if (u.dead || u.garrisoned || u.wild || !u.def || u.def.attack <= 0) continue;
+      if (u.def.classes.includes('villager')) continue;
+      if (!g.canFight(this.team, u.team)) continue;
+      if (dist2(u.x, u.z, x, z) < r * r) n++;
+    }
+    return n;
+  }
+
+  /* ============================================================
+     SCOUTING
+     ------------------------------------------------------------
+     The council in decidePlan() can only answer an army it has seen,
+     and a crown that never looks reports "no contact" for the whole
+     match: it trains the same men regardless of what is coming at it
+     and walks into a counter it could have read. A light rider is
+     cheap and it fixes both. If there is no rider, the column's own
+     fastest men go and have a look on the way.
+     ============================================================ */
+
+  /** Pick men to ride ahead, and keep them out of the line. */
+  sendScouts(want = 1) {
+    const g = this.game;
+    this.scouts = (this.scouts || []).filter((u) => !u.dead);
+    if (this.scouts.length >= 2 || g.time < 45) return;
+    if (this.scoutTimer > g.time) return;
+    this.scoutTimer = g.time + 30;
+    /* A crown with no cavalry still has eyes. The first version of this only
+       ever looked for a rider with speed 4.2, so a crown that never trained a
+       horse scouted nothing for the whole match and its council answered an
+       army it had never seen -- which is exactly the behaviour the section was
+       written about, coming back through a different door. If there is no
+       rider, the fastest man in the line goes. */
+    const riders = this.militaryUnits().filter((u) =>
+      !u.dead && u.def.attack > 0 && (!u.aiRole || u.aiRole === 'garrison'
+        || u.aiRole === 'march')
+      && (u.def.classes.includes('cavalry') || u.def.speed >= 4.2 || this.armyState === 'gather'));
+    riders.sort((a, b) => (b.def.speed || 0) - (a.def.speed || 0));
+    const pick = riders.slice(0, Math.min(want, 2, riders.length));
+    for (const u of pick) {
+      u.aiRole = 'scout';
+      u.target = null;
+      u.noAggro = true;
+      u.state = STATE.ATTACK_MOVE;
+      u.moveTo(this.enemyBase.x + (this.rng() - 0.5) * 30, this.enemyBase.z + (this.rng() - 0.5) * 30, true);
+      this.scouts.push(u);
+    }
+  }
+
+  /** Keep the scouts moving and let them come home rather than die out there. */
+  manageScouting(column) {
+    const g = this.game;
+    this.scouts = (this.scouts || []).filter((u) => !u.dead);
+    for (const u of this.scouts) {
+      if (u.hp < u.maxHp * 0.35 || (u.state === STATE.IDLE && dist2(u.x, u.z, this.base.x, this.base.z) < 40 * 40)) {
+        u.aiRole = null;
+        u.noAggro = false;
+        u.state = STATE.MOVE;
+        u.moveTo(this.base.x + (this.rng() - 0.5) * 10, this.base.z + (this.rng() - 0.5) * 10, true);
+        continue;
+      }
+      if (u.state !== STATE.IDLE) continue;
+      /* a scout that has seen the town rides a ring around it */
+      const a = g.time * 0.12 + (u.id || 0);
+      const r = 55 + (u.id % 3) * 14;
+      u.state = STATE.ATTACK_MOVE;
+      u.noAggro = true;
+      u.moveTo(this.enemyBase.x + Math.cos(a) * r, this.enemyBase.z + Math.sin(a) * r, true);
+    }
+    /* while the column is on the road, its outriders look ahead of it */
+    if (column.length && this.scouts.length < 1 && g.time > 90) this.sendScouts(1);
+  }
+
+  /**
+   * No riders yet: send the lead element of the column itself to look.
+   *
+   * This is the fallback that makes scouting work at every age, because the
+   * first cavalry is not guaranteed and a crown that waits for one scouts
+   * nothing for the first six minutes of the match.
+   */
+  scoutAhead() {
+    const g = this.game;
+    this.scouts = (this.scouts || []).filter((u) => !u.dead);
+    if (this.scouts.length) return;
+    if (this.scoutNextAt && g.time < this.scoutNextAt) return;
+    /* The lookout comes from the column first, because that is where the men
+       are, and from the line otherwise. He keeps count in `scouts`, so the
+       next pass does not quietly promote another man and another after him. */
+    const column = g.units.filter((u) => !u.dead && u.team === this.team && u.aiRole === 'march');
+    const pool = column.length >= 4 ? column : this.militaryUnits().filter((u) => u.def.attack > 0 && !u.aiRole);
+    if (!pool.length) return;
+    let fastest = null;
+    for (const u of pool) if (!fastest || (u.def.speed || 0) > (fastest.def.speed || 0)) fastest = u;
+    if (!fastest) return;
+    this.scoutNextAt = g.time + 25;
+    this.scoutRider = fastest;
+    this.scouts.push(fastest);
+    fastest.aiRole = 'scout';
+    fastest.noAggro = true;
+    fastest.state = STATE.ATTACK_MOVE;
+    fastest.moveTo(this.enemyBase.x, this.enemyBase.z, true);
   }
 
   /* ---------------- military ---------------- */
@@ -1395,10 +2330,58 @@ export class AIController {
       return;
     }
     for (const u of army) if (u.aiRole === 'defend') u.aiRole = null;
+    /* A garrison job that outlives its march turns into a soldier who will
+       not march again: the flag is set when a column leaves and nothing was
+       clearing it when the column came home. */
+    if (this.armyState !== 'march' && this.armyState !== 'stage') {
+      for (const u of army) {
+        if (u.aiRole === 'garrison' || u.garrison) { u.aiRole = null; u.garrison = false; }
+      }
+    }
+    if (this.armyState === 'march' || this.armyState === 'stage') {
+      /* ...and while it is on the road nobody may take a man out of it */
+      for (const u of army) {
+        if (u.aiRole === 'hunt' || u.aiRole === 'raid') { u.aiRole = 'march'; u.huntTarget = null; }
+      }
+    }
 
-    /* 2. the standing bounty, then 3. the raid clock */
-    this.manageHunt(army);
-    this.manageRaids(army);
+    /* ---- eyes ----
+       Scouting is not part of the march; it is part of being a crown with men
+       to spare. It used to be called only from the march, which meant a crown
+       that had not marched yet had never looked -- so the council's census
+       was always empty, the plan was always "no contact", and the counter it
+       built was always the same army. */
+    this.manageScouting([]);
+    if (g.time > 60 && army.length >= 2) this.sendScouts(1);
+
+    /* 2. the standing bounty, then 3. the raid clock
+
+       ...but not while the column is on the road. A crown whose enemy is a
+       kilometre away has to concentrate: sixteen men split into six raiders,
+       five hunters and two men left in the line is not an army, it is three
+       small defeats.
+
+       This budget has been got wrong in both directions now, so the rule is
+       written down. Drying up the errands for the whole opening starved a
+       crown of its hunt and its raids, which is not concentration, it is
+       paralysis -- but turning them fully on did something worse: on Large the
+       crown reached eighteen soldiers with *none* in the line, ten riding at
+       villages and six chasing a mage, and because the march is fed by the
+       line it never marched at all. An army is the reserves, not the
+       detachments.
+
+       The line's floor is what matters, and it is a floor on the *line*, not a
+       fraction of a table: the errands are refused while fewer than four men
+       are left standing in the line itself. That is the cheap, honest form of
+       the rule -- it stops the crown that has split itself into nothing, and
+       it does not stop a crown that has one detachment out and eight men at
+       home, which is a normal way to fight a war. */
+    const atWar = this.armyState === 'march' || this.armyState === 'stage';
+    const inLine = army.filter((u) => !u.aiRole || u.aiRole === 'wave').length;
+    const reserve = this.hasRoad() && this.armyState === 'gather' && inLine < 4;
+    if (atWar) this.releaseHunt(army);
+    else this.manageHunt(army);
+    if (!atWar && !reserve) this.manageRaids(army);
     this.manageWounded(army);
 
     /* the line: everything that is not already hunting or raiding */
@@ -1457,7 +2440,15 @@ export class AIController {
        same men back to the same field, which is how an army can stand at the
        edge of an enemy town for ten minutes without ever touching it. */
     const alreadyStaging = this.armyState === 'stage' && this.staging;
-    if (canAttack && waveUnits.length >= 4 && this.armyState !== 'attack' && !alreadyStaging) {
+    if (g.time > this.diff.firstWave && waveUnits.length >= 3 &&
+        this.armyState !== 'attack' && !alreadyStaging && this.wantsWar(waveUnits, foeHome, age)) {
+      /* Start the march instead of the siege. Everything that used to happen
+         when the first five men were ready now happens at the end of the
+         road, with the whole army at the colours. */
+      this.startMarch(enemyBase, age);
+      return;
+    }
+    if (canAttack && waveUnits.length >= 4 && this.armyState !== 'attack' && !alreadyStaging && !this.hasRoad()) {
       /* ---- staging ----
          An army that walks at the enemy town one unit at a time is defeated
          in detail: the defender's whole garrison meets each man as he
@@ -1547,6 +2538,16 @@ export class AIController {
         }
       }
       return;
+    }
+
+    /* The march has to be rehearsed before the men reach the enemy, or the
+       wave is spent on the road. On a 512 m map the whole map is a 90-second
+       walk, so "march at the enemy when there are five of you" was fine: the
+       reinforcement trickle caught up and the wave grew as it went. On a
+       3 km map that same order walks single-file for eight minutes and
+       arrives as a funeral. */
+    if (this.armyState === 'march' && this.line) {
+      if (this.runMarch(army, waveUnits, age)) return;
     }
 
     if (this.armyState === 'attack') {

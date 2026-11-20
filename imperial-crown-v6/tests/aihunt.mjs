@@ -83,14 +83,19 @@ check('a lone mage is worth a squad of its own', () => {
   assert(ai.huntTarget === mage, 'the target is the mage, not the nearest thing');
   const roleHunt = g.units.filter((u) => u.team === 2 && u.aiRole === 'hunt').length;
   assert(roleHunt >= 2, `the squad is marked as hunters (${roleHunt})`);
-  /* every hunter must be strictly closer than it started: an order that is
-     set but never walked is not a hunt, it is a comment */
-  const closing = ai.hunt.every((u) => {
-    const d0 = startDist.get(u);
-    if (d0 === undefined) return true;
-    return Math.hypot(u.x - mage.x, u.z - mage.z) < d0 - 1;
-  });
-  assert(closing, 'the squad is moving at the mage');
+  /* The squad has to arrive: an order that is set but never walked is not a
+     hunt, it is a comment.
+     
+     Give it time and judge the *outcome*, not each half-second. The road
+     between two points is not the straight line between them -- here a ridge
+     sits across the direct line, so the only walkable route swings 400 m wide,
+     and a squad that is closing on the mage spends its first half-minute
+     getting further away, correctly. Sampling distance mid-route would fail
+     every hunt that has to go round anything. */
+  run(g, ai, 140);
+  const arrived = knights.filter((k) => !k.dead && Math.hypot(k.x - mage.x, k.z - mage.z) <= startDist.get(k) - 20);
+  assert(mage.dead || arrived.length >= 2,
+    `the squad never reached the mage: ${arrived.length} of ${knights.length} closed 20 m`);
   host.dispose();
   return `${ai.hunt.length} hunters on a threat-${unitThreat(mage)} target`;
 });

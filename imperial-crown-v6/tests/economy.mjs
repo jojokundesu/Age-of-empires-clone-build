@@ -120,10 +120,15 @@ check('a villager with nothing left nearby finds work again by himself', () => {
   v.gatherTarget = null; v.homeNode = null; v.lastGatherKind = 'wood';
   v.state = STATE.IDLE;
   let first = null;
-  for (let t = 0; t < 400 && !first; t++) {
+  /* The search is deliberately staggered -- a villager's retask timer starts
+     at up to four and a half seconds -- so "he stood about" has to be judged
+     after the timer has had its chance, not the instant he goes idle. He also
+     has to walk to the old spot and discover it is empty first, which is a
+     couple of seconds on top. Sixteen seconds is comfortably more than the
+     worst case and still short enough to fail a man who never looks. */
+  for (let t = 0; t < 480 && !first; t++) {
     g.update(1 / 30);
     if (v.gatherTarget && v.gatherTarget.amount > 0) first = Math.hypot(v.gatherTarget.x - v.x, v.gatherTarget.z - v.z);
-    if (v.state === STATE.IDLE && t > 200) break;
   }
   assert(first !== null, 'he stood about instead of looking further out');
   assert(first > 26, `the search should reach past the old ring (${first.toFixed(0)} m)`);

@@ -353,9 +353,19 @@ console.log('\nLONG MATCH');
     assert(seen.size >= 2 || g.gameOver, 'AI never fielded soldiers: ' + [...seen].join(','));
   });
 
+  /* Wading is not drowning. A ford is shallow water that a man is *supposed*
+     to walk through -- it is the whole reason the AI can cross the river at
+     all -- and `isWater` (height below -1.1) is a terrain reading, not a
+     verdict on the unit. A spearman crossing at (-3.5, 6.7) sits at -1.08 m
+     with the nav domain saying "amphibious shallow ford", and was reported
+     here as a man walking into the sea by a check that could not tell the
+     difference. What must never happen is a man standing where he cannot
+     stand: deep water, which is exactly what isPassable() refuses. */
   check('nothing is left walking into the sea', () => {
-    const drowned = g.units.filter((u) => !u.dead && g.isWater(u.x, u.z));
-    assert(drowned.length === 0, drowned.length + ' units are in the water (' + [...new Set(drowned.map((u) => u.type))].join(',') + ')');
+    const stranded = g.units.filter((u) => !u.dead && !u.def.naval && !g.isPassable(u.x, u.z, u)
+      && g.isWater(u.x, u.z));
+    assert(stranded.length === 0, stranded.length + ' units are standing in deep water ('
+      + [...new Set(stranded.map((u) => u.type))].join(',') + ')');
   });
 }
 

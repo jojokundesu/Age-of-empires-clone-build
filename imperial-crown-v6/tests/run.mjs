@@ -52,6 +52,10 @@ const SUITES = [
      pathfinder's reach, and the camera fitting a 3 km world on screen. None of
      these are visible on Small, so they belong in the suite the release runs. */
   ['mapsize', 'tests/mapsize.mjs'],
+  /* The war across the river: crossing, mustering, marching, camping and
+     storming, on both map sizes, plus the behaviours that only show up when
+     the enemy is a long walk away. 70 s. */
+  ['riverwar', 'tests/riverwar.mjs'],
   ['wallsite', 'tests/wallsite.mjs', true],
   ['modsite', 'tests/modsite.mjs', true],
   ['kingdoms', 'tests/kingdoms.mjs'],

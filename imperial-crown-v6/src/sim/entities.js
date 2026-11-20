@@ -360,17 +360,49 @@ export class Unit extends Entity {
       this.arrived = false;
       return;
     }
-    // Long marches are chained through 60 m hops: A* searches stay small,
-    // the per-tick search budget is never blown and units keep walking.
+    /* Long marches are chained through hops: A* searches stay small, the
+       per-tick search budget is never blown and units keep walking.
+
+       How long a hop can be is a property of the thread the man is walking
+       along, not of the distance to his goal. A fixed 60 m hop steps straight
+       at the destination, which on open ground is the right direction and
+       across a river is not: the straight line leaves the thread at the water's
+       edge, the search fails, and because a failed search also resets the
+       move, an army with a kilometre to walk and a river in between shuffled
+       back and forth on the bank for ten minutes at a time. Twelve metres is
+       short enough to stay on any road the pathfinder carved -- a ford is
+       thirty metres wide -- and long enough that a cross-map march is a few
+       hundred cheap searches rather than thousands of tiny ones. */
+    /* Try the whole road first. A hop is a *saving*, not a rule: if the
+       pathfinder can answer for the real destination in one search, the man
+       gets the real route and walks it. Chaining hops unconditionally meant a
+       soldier with a clean twelve-metre-wide road to a point 443 m away was
+       handed a two-point path (himself, and twelve metres up the road),
+       walked it, was handed the same two points again, and never arrived --
+       and because the failed search also clears the order, a blocked hop left
+       him standing still with a destination he could see.
+
+       A long march still needs chaining: the searches have to stay small, and
+       a cross-map walk would otherwise be one enormous search per man. So the
+       rule is "hop only when the hop is what makes it affordable", which is
+       what the 70 m threshold below is. */
     let goalX = destX, goalZ = destZ;
     let hop = false;
     if (dist > 70 && !this.def.naval) {
-      const f = 60 / dist;
+      const f = 70 / dist;
       goalX = this.x + ddx * f;
       goalZ = this.z + ddz * f;
       hop = true;
     }
-    const p = pf.find(this.x, this.z, goalX, goalZ, this.def.naval ? 3 : 4);
+    let p = pf.find(this.x, this.z, goalX, goalZ, this.def.naval ? 3 : 4);
+    if (hop && (!p || !p.length)) {
+      /* the long step is blocked -- take a short one instead of giving up */
+      const f = Math.min(24, dist * 0.5) / dist;
+      goalX = this.x + ddx * f;
+      goalZ = this.z + ddz * f;
+      p = pf.find(this.x, this.z, goalX, goalZ, this.def.naval ? 3 : 4);
+      hop = true;
+    }
     if (p && p.length) {
       // A one-point path means the goal shares our navigation cell. Walk the
       // straight line instead of standing still, otherwise units deadlock on
@@ -688,6 +720,22 @@ export class Unit extends Entity {
 
   updateIdle(dt, stats) {
     this.moving = false;
+    /* An order outlives the fight that interrupted it.
+       A soldier told to march somewhere, who then killed the man who walked
+       into him, went idle with the destination still in his hand and stood
+       there for the rest of the match -- from the outside, an army that had
+       arrived and lost interest. If there is still somewhere to be, go. */
+    if (this.def.attack > 0 && !this.def.classes.includes('monk') &&
+        this.destX != null && this.destZ != null &&
+        (this.destX - this.x) ** 2 + (this.destZ - this.z) ** 2 > 6.25) {
+      /* Soldiers only. A villager who has gone idle is choosing his next job
+         -- he has his own search for work, and a stale destination on a
+         stripped-out wood is exactly what he must *not* walk back to, or he
+         stands in an empty clearing all match. */
+      this.state = STATE.MOVE;
+      this.setPath(this.destX, this.destZ, true);
+      return;
+    }
     /* An idle villager is a job the player has to notice and fix with a thumb,
        and on a phone that is a summon-and-retask ritual per man. A villager who
        has worked before looks for work again by himself, on a slow staggered
