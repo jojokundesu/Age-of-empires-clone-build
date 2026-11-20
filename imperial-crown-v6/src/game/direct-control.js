@@ -1186,7 +1186,7 @@ export class DirectControl {
     if (!this.canAct() || u.type !== 'villager' || !def) return;
     if ((BUILDING_AGE[type] || 0) > g.ageOf(u.team)) { this.ui.toast('Requires a later age', 'warn'); return; }
     if (!g.canAfford(u.team, g.buildingCost(type, u.team))) { this.ui.toast('Not enough resources', 'warn'); return; }
-    g.placing = { type, builders: [u], x: u.x, z: u.z, y: u.y, footprint: def.size || 3, valid: false };
+    g.placing = { type, def, builders: [u], x: u.x, z: u.z, y: u.y, footprint: def.size || 3, valid: false };
     this.el.fpBuildShelf?.classList.add('hidden');
     this.ui.toast(`Aim at the ground and press PLACE for ${def.name}`, 'gold');
     this.updateHud();

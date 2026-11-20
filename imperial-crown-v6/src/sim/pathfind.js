@@ -79,6 +79,11 @@ export class PathFinder {
     this.cells = cells;
     this.cellSize = cellSize;
     this.half = half;
+    /* Which weight class the search currently runs as: 0 foot, 1 mounted,
+       2 heavy. `find` sets it per call; it is declared here so a direct
+       `isBlocked` from outside a search reads foot rules rather than
+       `undefined`. */
+    this.traversal = 0;
     const n = cells * cells;
     this.blocked = new Uint8Array(n);
     this.cost = new Float32Array(n);
@@ -163,9 +168,25 @@ export class PathFinder {
     return [cx * this.cellSize - this.half + this.cellSize * 0.5, cz * this.cellSize - this.half + this.cellSize * 0.5];
   }
 
-  isBlocked(cx, cz) {
+  /**
+   * Is this cell closed to the class currently searching?
+   *
+   * The grid holds 0 (open), 1 (solid) and -- on a map with climbs -- 4, 5
+   * or 6, the three climb classes from hydrology's DOMAIN. Packing them into
+   * the byte the grid already has is what keeps a weight-gated mountain free
+   * of extra nav RAM: there is no second grid, no parallel mask, and no
+   * per-unit copy of anything.
+   *
+   * `traversal` is 0 foot / 1 mounted / 2 heavy, and a climb cell admits a
+   * class when `value - 4 >= traversal`. Everything that does not set it
+   * searches as foot, which is the class that existed before climbs did.
+   */
+  isBlocked(cx, cz, traversal) {
     if (cx < 0 || cz < 0 || cx >= this.cells || cz >= this.cells) return true;
-    return this.blocked[cz * this.cells + cx] !== 0;
+    const v = this.blocked[cz * this.cells + cx];
+    if (v === 0) return false;
+    if (v === 1) return true;
+    return v - 4 < (traversal === undefined ? this.traversal : traversal);
   }
 
   setBlockedWorld(x, z, w, d, blocked, pad = 0) {
@@ -204,9 +225,52 @@ export class PathFinder {
    * into an array lookup so A* never has to explore the whole island to find
    * out that the answer is no.
    */
+  /**
+   * The component labels for one traversal class.
+   *
+   * Three classes could mean three label arrays, which on the huge map is
+   * 4 MB each -- so they are allocated only when they can actually differ.
+   * A map with no climb cells has one answer for all three classes, and
+   * that is every map below Normal and every map whose ladders are all
+   * built to the top tier; those share a single array. The extra cost is
+   * paid by exactly the maps that gate a mountain, and only for the classes
+   * that are asked.
+   */
+  /** Does this grid contain any class-gated cell at all? */
+  _hasGatedCells() { this._components(); return !!this._climbMask; }
+
+  _compFor(traversal) {
+    const t = traversal | 0;
+    this._components();
+    if (!this._climbMask) return this.comp;     // no gated cells: one answer
+    if (t === 0) return this.comp;
+    if (!this._compAlt) this._compAlt = [null, null];
+    const slot = t - 1;
+    const rec = this._compAlt[slot];
+    if (rec && rec.version === this.version) return rec.comp;
+    const comp = (rec && rec.comp) || new Int32Array(this.cells * this.cells);
+    this._floodComponents(comp, t);
+    this._compAlt[slot] = { comp, version: this.version };
+    return comp;
+  }
+
   _components() {
     if (!this.compDirty && this._compVersion === this.version) return;
-    const cells = this.cells, blocked = this.blocked, comp = this.comp;
+    /* Does this grid gate anybody? One pass, and it decides whether the two
+       heavier classes need label arrays of their own at all. */
+    let climb = false;
+    const b = this.blocked;
+    for (let i = 0; i < b.length; i++) { if (b[i] > 1) { climb = true; break; } }
+    this._climbMask = climb;
+    this._floodComponents(this.comp, 0);
+    this.compDirty = false;
+    this._compVersion = this.version;
+  }
+
+  _floodComponents(comp, traversal) {
+    const cells = this.cells, blocked = this.blocked;
+    this._compOverflow = false;
+    const shut = (i) => { const v = blocked[i]; return v === 1 || (v > 1 && v - 4 < traversal); };
     comp.fill(0);
     const stack = this.compQueue;
     let id = 0;
@@ -217,12 +281,12 @@ export class PathFinder {
       const row = z * cells;
       for (let x = 0; x < cells; x++) {
         const i = row + x;
-        if (comp[i] || blocked[i]) continue;
+        if (comp[i] || shut(i)) continue;
         id++;
         let head = 0, tail = 0;
         // seed span
         let x0 = x, x1 = x;
-        while (x1 + 1 < cells && !blocked[row + x1 + 1] && !comp[row + x1 + 1]) x1++;
+        while (x1 + 1 < cells && !shut(row + x1 + 1) && !comp[row + x1 + 1]) x1++;
         for (let k = x0; k <= x1; k++) comp[row + k] = id;
         stack[tail++] = z;
         stack[tail++] = x0;
@@ -236,13 +300,37 @@ export class PathFinder {
             const nrow = nz * cells;
             let k = sx0;
             while (k <= sx1) {
-              if (blocked[nrow + k] || comp[nrow + k]) { k++; continue; }
+              if (shut(nrow + k) || comp[nrow + k]) { k++; continue; }
+              /* A run in the next row is followed to *its* own ends, not
+                 clipped to the span that found it.
+                 Clipping is the classic span-fill bug and it was in here:
+                 a region that widens as it goes was filled only as wide as
+                 the row below it, so anything that is not a vertically
+                 convex column came apart into fragments. Measured on the
+                 default Normal map it broke open country into 1861
+                 components with the largest only 18 220 cells -- which made
+                 "is this goal reachable" answer no for most of the map. It
+                 went unnoticed because the labels were consulted only in
+                 A*'s out-of-budget fallback; a weight-gated climb asks the
+                 question on every order, and gets it right only if the
+                 answer is. */
+              let s = k;
+              while (s - 1 >= 0 && !shut(nrow + s - 1) && !comp[nrow + s - 1]) s--;
               let e = k;
-              while (e + 1 <= sx1 && !blocked[nrow + e + 1] && !comp[nrow + e + 1]) e++;
-              for (let m = k; m <= e; m++) comp[nrow + m] = id;
-              stack[tail++] = nz;
-              stack[tail++] = k;
-              stack[tail++] = e;
+              while (e + 1 < cells && !shut(nrow + e + 1) && !comp[nrow + e + 1]) e++;
+              for (let m = s; m <= e; m++) comp[nrow + m] = id;
+              if (tail + 3 <= stack.length) {
+                stack[tail++] = nz;
+                stack[tail++] = s;
+                stack[tail++] = e;
+              } else {
+                /* The span stack is one Int32 per cell and a wide region can
+                   want more. Dropping a span silently splits a component in
+                   two, which is the bug above wearing a different hat, so
+                   the overflow is recorded and the labels are rebuilt with
+                   room next time rather than quietly lying. */
+                this._compOverflow = true;
+              }
               k = e + 1;
             }
           }
@@ -250,13 +338,19 @@ export class PathFinder {
       }
     }
     this.compId = id;
-    this.compDirty = false;
-    this._compVersion = this.version;
+    if (this._compOverflow && stack.length < cells * cells * 3) {
+      /* Grow once and redo it. Three ints per span, worst case one span per
+         row of the region; `cells * cells` was the old guess and it is not
+         always enough on the big maps. */
+      this.compQueue = new Int32Array(cells * cells * 3);
+      this._compOverflow = false;
+      this._floodComponents(comp, traversal);
+    }
   }
 
   /** Nearest walkable cell to (cx,cz) that shares `want`'s component. */
-  _snapToComponent(cx, cz, want, maxRing = 18) {
-    const cells = this.cells, comp = this.comp;
+  _snapToComponent(cx, cz, want, maxRing = 18, comp = this.comp) {
+    const cells = this.cells;
     for (let r = 0; r <= maxRing; r++) {
       let best = -1, bestD = 1e9;
       for (let dz = -r; dz <= r; dz++) {
@@ -318,6 +412,11 @@ export class PathFinder {
   _searchTo(start, goal, sx0, sz0, stamp) {
     const cells = this.cells, gArr = this.g, fromArr = this.from;
     const stampArr = this.stamp, closedArr = this.closed, blockedArr = this.blocked;
+    /* Climb cells (4/5/6) are open to some classes and solid to others, so
+       the inner loop asks the class rather than the byte. On a map with no
+       climbs this is one extra compare against 1 and nothing else changes. */
+    const tCls = this.traversal | 0;
+    const shutArr = (i) => { const v = blockedArr[i]; return v === 1 || (v > 1 && v - 4 < tCls); };
     const gxw = goal % cells, gzw = (goal / cells) | 0;
     const heur = (cx, cz) => {
       const dx = Math.abs(cx - gxw), dz = Math.abs(cz - gzw);
@@ -342,8 +441,8 @@ export class PathFinder {
         const nx = cx + dir[0], nz = cz + dir[1];
         if (nx < 0 || nz < 0 || nx >= cells || nz >= cells) continue;
         const ni = nz * cells + nx;
-        if (blockedArr[ni] || closedArr[ni] === stamp) continue;
-        if (d >= 4 && (blockedArr[cz * cells + nx] || blockedArr[nz * cells + cx])) continue;
+        if (shutArr(ni) || closedArr[ni] === stamp) continue;
+        if (d >= 4 && (shutArr(cz * cells + nx) || shutArr(nz * cells + cx))) continue;
         const ng = gc + dir[2] * STEP;
         if (stampArr[ni] !== stamp || ng < gArr[ni]) {
           stampArr[ni] = stamp;
@@ -452,6 +551,11 @@ export class PathFinder {
    */
   find(sx, sz, gx, gz, radius = 2, opts = null) {
     const offTick = !!(opts && opts.offTick);
+    /* Which weight class is walking. Set for the whole search, because every
+       cell test below -- the start nudge, the line-of-sight shortcut, the A*
+       inner loop and the reachability fallback -- has to agree about what is
+       solid, or a cavalryman gets a straight line up a ladder. */
+    this.traversal = (opts && opts.traversal) | 0;
     if (offTick) {
       /* A search with no frame to protect answers to `maxNodes` only. */
       this.beginTick();
@@ -472,6 +576,16 @@ export class PathFinder {
     let [sx0, sz0] = this.worldToCell(sx, sz);
     let [gx0, gz0] = this.worldToCell(gx, gz);
 
+    /* ---- the O(1) refusal ------------------------------------------
+       A ram ordered onto a ladder-only summit is not a hard search, it is
+       an impossible one, and discovering that by exhausting the node budget
+       costs the same as a cross-map march -- every tick, for every unit in
+       the order, for as long as the player leaves the order standing. The
+       component labels already answer it: if the goal's island is not the
+       unit's island for *this class*, say so now. `reachable` is exact for
+       the class and costs two array reads once the labels exist. */
+    this.lastGated = false;
+
     if (this.isBlocked(sx0, sz0)) {
       // walk out of a blocked start cell
       let found = false;
@@ -483,6 +597,43 @@ export class PathFinder {
         }
       }
       if (!found) return null;
+    }
+
+    /* ---- the O(1) refusal ------------------------------------------
+       A ram ordered onto a ladder-only summit is not a hard search, it is
+       an impossible one, and discovering that by exhausting the node budget
+       costs the same as a cross-map march -- every tick, for every unit in
+       the order, for as long as the player leaves the order standing. The
+       component labels answer it with two array reads.
+
+       It runs after the start has been nudged out of a cell this class may
+       not stand in, because otherwise a cavalryman shoved a metre onto a
+       ladder is "nowhere" and every order he is given is refused. */
+    if (this._hasGatedCells()) {
+      const comp = this._compFor(this.traversal);
+      const si = sz0 * this.cells + sx0, gi = gz0 * this.cells + gx0;
+      const a = comp[si], b = comp[gi];
+      /* Two ways to be shut out, and the second one is easy to miss: the
+         goal may be a climb cell this class simply may not stand on -- a
+         cataphract ordered onto the crown above a ladder. That cell has no
+         component label for him at all, so a plain `a !== b` reads as
+         "don't know" and lets A* spend the whole budget proving it. */
+      const gv = this.blocked[gi];
+      const goalGated = gv > 1 && gv - 4 < this.traversal;
+      if (goalGated || (a && b && a !== b)) {
+        /* Shut out, not merely far. Whether it is worth telling the player
+           about depends on *why*: a goal across a lake is geography, and a
+           goal up a ladder this unit is too heavy for is a decision he can
+           act on. The difference is one more lookup, paid only on a
+           rejection -- could a man on foot have got there? */
+        if (this.traversal > 0) {
+          const onFoot = this._compFor(0);
+          if (goalGated || onFoot[si] === onFoot[gi]) this.lastGated = true;
+        }
+        this.stats.unreachable++;
+        this.lastUnreachable = true;
+        return null;
+      }
     }
 
     /* A straight, clear line needs no search at all -- but "clear" has to mean
@@ -546,6 +697,11 @@ export class PathFinder {
     heap.clear();
     const gArr = this.g, costArr = this.cost, fromArr = this.from;
     const stampArr = this.stamp, closedArr = this.closed, blockedArr = this.blocked;
+    /* Climb cells (4/5/6) are open to some classes and solid to others, so
+       the inner loop asks the class rather than the byte. On a map with no
+       climbs this is one extra compare against 1 and nothing else changes. */
+    const tCls = this.traversal | 0;
+    const shutArr = (i) => { const v = blockedArr[i]; return v === 1 || (v > 1 && v - 4 < tCls); };
 
     const gxw = goal % cells, gzw = (goal / cells) | 0;
     const heur = (cx, cz) => {
@@ -577,8 +733,8 @@ export class PathFinder {
         const nx = cx + dir[0], nz = cz + dir[1];
         if (nx < 0 || nz < 0 || nx >= cells || nz >= cells) continue;
         const ni = nz * cells + nx;
-        if (blockedArr[ni] || closedArr[ni] === stamp) continue;
-        if (d >= 4 && (blockedArr[cz * cells + nx] || blockedArr[nz * cells + cx])) continue;   // no corner cutting
+        if (shutArr(ni) || closedArr[ni] === stamp) continue;
+        if (d >= 4 && (shutArr(cz * cells + nx) || shutArr(nz * cells + cx))) continue;   // no corner cutting
         const ng = gCur + dir[2] * STEP;
         if (stampArr[ni] !== stamp || ng < gArr[ni]) {
           stampArr[ni] = stamp;
@@ -596,10 +752,10 @@ export class PathFinder {
          island or shut inside a wall: ask connectivity once (lazily, and only
          in this rare case), then walk to the closest reachable cell instead.
          Normal orders never pay for the labeling at all. */
-      this._components();
-      const want = this.comp[start];
-      if (this.comp[goal] !== want) {
-        const snapped = this._snapToComponent(gx0, gz0, want, 24);
+      const comp = this._compFor(this.traversal);
+      const want = comp[start];
+      if (comp[goal] !== want) {
+        const snapped = this._snapToComponent(gx0, gz0, want, 24, comp);
         if (snapped >= 0) {
           this.stats.unreachable++;
           goal = snapped;
@@ -638,5 +794,72 @@ export class PathFinder {
   /** Straight-line walk check for a unit radius. */
   canWalk(sx, sz, gx, gz) {
     return this.lineClear(sx, sz, gx, gz);
+  }
+
+  /**
+   * Are these two points in the same walkable island for this class?
+   *
+   * Cheaper than a search and, unlike one, it answers for ground the unit
+   * cannot see a route to yet. Used to decide which end of a mountain climb
+   * a builder should walk to.
+   */
+  sameComponent(sx, sz, gx, gz, traversal = 0) {
+    const comp = this._compFor(traversal | 0);
+    const [sx0, sz0] = this.worldToCell(sx, sz);
+    const [gx0, gz0] = this.worldToCell(gx, gz);
+    const a = this._labelNear(comp, sx0, sz0), b = this._labelNear(comp, gx0, gz0);
+    return a !== 0 && a === b;
+  }
+
+  /** The component label at a cell, or of the nearest cell that has one. */
+  _labelNear(comp, cx, cz, maxRing = 4) {
+    const i0 = cz * this.cells + cx;
+    if (comp[i0]) return comp[i0];
+    for (let r = 1; r <= maxRing; r++) {
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dz) !== r) continue;
+          const nx = cx + dx, nz = cz + dz;
+          if (nx < 0 || nz < 0 || nx >= this.cells || nz >= this.cells) continue;
+          const v = comp[nz * this.cells + nx];
+          if (v) return v;
+        }
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Would this class be refused at that goal, purely because of a climb?
+   *
+   * The same two lookups `find` makes, without running a search -- so an
+   * order can be split by who can actually obey it *before* forty units
+   * each discover it for themselves. False whenever the map has no gated
+   * ground at all, which is every map below Normal.
+   */
+  goalGatedFor(sx, sz, gx, gz, traversal) {
+    if (!this._hasGatedCells()) return false;
+    const t = traversal | 0;
+    if (t === 0) return false;
+    const [gx0, gz0] = this.worldToCell(gx, gz);
+    const gi = gz0 * this.cells + gx0;
+    const onFoot = this._compFor(0);
+    /* Where the unit is standing is often not a cell anybody can stand in
+       -- bodies are round and cells are two metres square, and a man at
+       the foot of a ramp is frequently inside the cliff as far as the grid
+       is concerned. `find` nudges the start before it decides anything;
+       so must this, or the answer is "he is nowhere" and every order from
+       a crowded hillside is waved through to a doomed search. */
+    const [sx0, sz0] = this.worldToCell(sx, sz);
+    const startFoot = this._labelNear(onFoot, sx0, sz0);
+    if (!startFoot) return false;
+    const goalFoot = this._labelNear(onFoot, gx0, gz0);
+    const gv = this.blocked[gi];
+    const comp = this._compFor(t);
+    const a = this._labelNear(comp, sx0, sz0), b = this._labelNear(comp, gx0, gz0);
+    const gated = (gv > 1 && gv - 4 < t) || (a && b && a !== b);
+    if (!gated) return false;
+    /* ...and only call it a climb problem if a man could have made it. */
+    return startFoot === goalFoot;
   }
 }

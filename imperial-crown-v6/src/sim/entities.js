@@ -45,6 +45,12 @@ const _edge = [0, 0];
    shared spatial-query buffer before isPassable() can overwrite it */
 const _strideWalls = [];
 
+/**
+ * What a load off a mountain is worth, against the same load off the plain.
+ * Tuned against the round trip, not picked: see Unit._gatherTick.
+ */
+export const ALPINE_HAUL = 1.6;
+
 export const STATE = {
   IDLE: 'idle', MOVE: 'move', ATTACK: 'attack', ATTACK_MOVE: 'attackmove',
   GATHER: 'gather', RETURN: 'return', BUILD: 'build', REPAIR: 'repair',
@@ -352,6 +358,7 @@ export class Unit extends Entity {
 
   setPath(destX, destZ, force = false) {
     if (!this.game.pathFinder) return;
+    const g = this.game;
     /* Plan against the ground as it is now.
        The nav grid is recombined in batches, and a wall run or a gate stamped
        in this tick has not reached the pathfinder yet. Every question below --
@@ -422,15 +429,24 @@ export class Unit extends Entity {
       goalZ = this.z + ddz * f;
       hop = true;
     }
-    let p = pf.find(this.x, this.z, goalX, goalZ, this.def.naval ? 3 : 4);
+    /* Which weight class is asking. A ladder is open ground to a spearman
+       and a wall to a cataphract, and the search has to know which before
+       it starts -- not after it has drawn a route up a cliff the horse
+       cannot take. */
+    const trav = { traversal: g.traversalOf ? g.traversalOf(this) : 0 };
+    let p = pf.find(this.x, this.z, goalX, goalZ, this.def.naval ? 3 : 4, trav);
     if (hop && (!p || !p.length)) {
       /* the long step is blocked -- take a short one instead of giving up */
       const f = Math.min(24, dist * 0.5) / dist;
       goalX = this.x + ddx * f;
       goalZ = this.z + ddz * f;
-      p = pf.find(this.x, this.z, goalX, goalZ, this.def.naval ? 3 : 4);
+      p = pf.find(this.x, this.z, goalX, goalZ, this.def.naval ? 3 : 4, trav);
       hop = true;
     }
+    /* Shut out, not merely far: the goal's ground is on the other side of a
+       climb this unit may not use. Park at the foot of the ascent instead of
+       grinding the order against the cliff, and let the caller say why. */
+    if (!p && pf.lastGated) this._climbRefused = g.frame || 0;
     if (p && p.length) {
       // A one-point path means the goal shares our navigation cell. Walk the
       // straight line instead of standing still, otherwise units deadlock on
@@ -510,6 +526,22 @@ export class Unit extends Entity {
   /** Walk to the nearest free edge of a building, never to its centre. */
   approachBuilding(b, pad = 1.2) {
     const g = this.game;
+    /* A cliff structure is never approached at its footprint: it stands in
+       the throat, which is sealed rock to everyone until it is finished.
+       A load goes to the hoist platform at the brow; a hammer goes to the
+       build stand on this man's own side of the mountain. */
+    if (b.def && b.def.climb) {
+      if (b.def.dropoff && b.buildProgress >= 0.99 && !b.dead && this.carry && this.carry.amount > 0) {
+        const [px, pz] = g.dropPointOf(b);
+        this.moveTo(px, pz, true);
+        if (this.path || this.targetPos) return;
+      }
+      const stand = g.climbStandFor ? g.climbStandFor(this, b.climb) : null;
+      if (stand) {
+        this.moveTo(stand.x, stand.z, true);
+        if (this.path || this.targetPos) return;
+      }
+    }
     /* Three pads, nearest side first. A town centre with a house and a farm
        pushed against it has sides whose "1.2 m outside the wall" point is
        inside the neighbour's footprint; the old code then asked for a path to
@@ -1255,7 +1287,16 @@ export class Unit extends Entity {
     }
     this.gatherCooldown = 0.55;
     node.amount -= take;
-    this.carry.amount += take;
+    /* ---- the Rich Alpine Haul ----
+       Ore off a summit is worth more in the pack than ore off the valley
+       floor, because the walk is the point: a villager who has climbed a
+       ladder, filled up and climbed back down has spent most of a minute
+       on the round trip, and at valley rates that is simply a worse mine
+       than the one next to his town centre. The bonus is applied to what
+       reaches the stockpile rather than to what comes out of the rock, so
+       the node still empties at the same speed and the mountain is not
+       secretly infinite. */
+    this.carry.amount += take * (node.summit ? ALPINE_HAUL : 1);
     this.lastGatherKind = kind;
     g.onGather(this, node, take);
     if (node.amount <= 0.01) {
@@ -1330,7 +1371,14 @@ export class Unit extends Entity {
       this.state = STATE.IDLE;
       return;
     }
-    const d = rectDist(this, drop);
+    /* The lift is handed its load at the brow; measure to the place the
+       villager is actually walking to, or he arrives, is told he is eight
+       metres short of a building halfway down a cliff, and walks back. */
+    let d;
+    if (drop.def && drop.def.climb && g.dropPointOf) {
+      const [px, pz] = g.dropPointOf(drop);
+      d = Math.max(0, Math.hypot(this.x - px, this.z - pz) - 1.2);
+    } else d = rectDist(this, drop);
     /* Two ways out of a jammed approach, because either one alone can be
        fooled:
          - progress: the distance stopped improving for 2.5 s (a crowd, a
@@ -2151,6 +2199,9 @@ export class ResourceNode extends Entity {
     this.facing = opts.facing !== undefined ? opts.facing : (this.game ? this.game.rng() : Math.random()) * 6.28;
     this.yOff = opts.yOff || 0;
     this.herd = !!opts.herd;
+    /* High-grade alpine ore: the node knows where it is, so the haul bonus
+       does not have to re-derive "is this a mountain" on every swing. */
+    this.summit = !!opts.summit;
     this.workers = 0;
     this.hp = 9999;
     this.maxHp = 9999;

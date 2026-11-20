@@ -17,6 +17,7 @@
    ============================================================ */
 import { clamp } from '../core/math.js';
 import { STATE } from '../sim/entities.js';
+import { CANNOT_BUILD } from '../sim/game.js';
 
 const TAP_MOVE_PX = 8;
 const TAP_TIME_MS = 250;
@@ -416,6 +417,15 @@ export class Input {
     }
     const g = this.groundAt(cx, cy, this._ghost || (this._ghost = [0, 0, 0]));
     if (!this._groundHit) { p.ghostInvalid = 'sky'; return p.ghost; }
+    /* A cliff structure does not go where the finger is, it goes in the
+       throat of the ramp -- which on a phone is a two-metre target halfway
+       up a mountain. Arm one from the Build Menu and the ghost jumps to the
+       nearest ramp mouth on its own, so the tap only has to say *which*
+       ramp. The snap radius is generous for the same reason. */
+    if (p.def && p.def.climb && this.game.climbNear) {
+      const c = this.game.climbNear(g[0], g[2], 90);
+      if (c) { g[0] = c.throat.x; g[2] = c.throat.z; g[1] = this.game.heightAt(g[0], g[2]); }
+    }
     const spot = this.game.canPlaceAt(p.type, 1, g[0], g[2], { ignoreUnits: true });
     p.ghost = { x: g[0], z: g[2], ok: spot.ok, reason: spot.reason };
     p.ghostInvalid = null;
@@ -589,7 +599,8 @@ export class Input {
           : spot.reason === 'resource' ? 'Resources are in the way'
           : spot.reason === 'unit' ? 'Someone is standing there'
           : spot.reason === 'edge' ? 'That is the edge of the world'
-          : spot.reason === 'contested' ? 'Enemies are too close to raise a town centre' : 'Cannot build there', 'warn');
+          : spot.reason === 'contested' ? 'Enemies are too close to raise a town centre'
+          : CANNOT_BUILD[spot.reason] || 'Cannot build there', 'warn');
         this.audio?.play('warn');
         navigator.vibrate?.(24);
         return;

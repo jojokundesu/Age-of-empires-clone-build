@@ -715,6 +715,193 @@ B('outpost_shrine', () => {
 });
 
 /* ============================================================
+   CLIFF INFRASTRUCTURE
+
+   All three stand in the throat of a mountain ramp, facing downhill, and
+   all three are read at a steep camera angle from a long way off -- so they
+   are built tall and thin rather than wide, and the silhouette does the
+   talking: a leaning ladder, a zigzag of trestles, a crane against the sky.
+
+   The local +Z axis points downhill (placeBuilding faces the structure out
+   of the throat), so the climb runs away from the camera into -Z and every
+   deck is tilted about X. A rung or an axle that runs across the climb is
+   a cylinder on axis 'x', whose length then runs from its origin along +X.
+   ============================================================ */
+
+/** Age I-II: lashed rails and rope rungs. Cheap, flammable, foot only. */
+B('cliff_ladder', () => {
+  const g = new Geo();
+  const H = 7.6, lean = 1.5;          // the head sits 1.5 m further uphill
+  g.material(M.STONE).color(0.56, 0.54, 0.5);
+  for (const sx of [-0.62, 0.62]) g.box(sx, 0.12, 0.55, 0.7, 0.24, 0.9);
+  g.material(M.WOOD).color(0.47, 0.35, 0.23);
+  for (const sx of [-0.55, 0.55]) g.beam(sx, 0.1, 0.6, sx * 0.86, H, 0.6 - lean, 0.11);
+  const rungs = 17;
+  for (let i = 1; i < rungs; i++) {
+    const t = i / rungs;
+    const y = 0.1 + (H - 0.1) * t;
+    const z = 0.6 - lean * t;
+    const hw = 0.55 - 0.077 * t;
+    g.material(M.WOOD).color(0.58, 0.44, 0.3);
+    g.cyl(-hw, y, z, 0.055, 0.055, hw * 2, 5, { axis: 'x' });
+    if (i % 4 === 0) {                 // a rope lashing every fourth rung
+      g.material(M.THATCH).color(0.78, 0.68, 0.46);
+      for (const sx of [-hw - 0.05, hw - 0.07]) g.cyl(sx, y, z, 0.085, 0.085, 0.12, 6, { axis: 'x' });
+    }
+  }
+  // guy ropes holding the head of the ladder in against the rock
+  g.material(M.THATCH).color(0.76, 0.66, 0.44);
+  for (const sx of [-1, 1]) g.beam(sx * 0.47, H, 0.6 - lean, sx * 1.5, 0.2, 1.5, 0.035);
+  // a stake and a coil of spare rope at the foot: this is a work site
+  g.material(M.WOOD).color(0.4, 0.3, 0.2);
+  g.cyl(1.25, 0, 1.4, 0.08, 0.1, 1.0, 6);
+  g.material(M.THATCH).color(0.8, 0.7, 0.48);
+  for (let i = 0; i < 3; i++) g.cyl(-1.2, 0.04 + i * 0.09, 1.35, 0.26, 0.26, 0.08, 8, { capTop: false });
+  g.color(1, 1, 1);
+  return { geo: g, height: H + 0.6 };
+});
+
+/** Age III: a trestle road that zigzags, so a horse can take the grade. */
+B('cliff_switchback', () => {
+  const g = new Geo();
+  const H = 8.6, flights = 3, span = 1.7;
+  // mortared footing: the thing a horse steps onto off the mountain path
+  g.material(M.STONE).color(0.6, 0.58, 0.54);
+  g.box(0, 0.16, 1.0, 4.0, 0.32, 1.6);
+  g.material(M.STONE).color(0.7, 0.68, 0.64);
+  for (const sx of [-1.7, 1.7]) g.box(sx, 0.45, 1.0, 0.55, 0.3, 1.5);
+  for (let f = 0; f < flights; f++) {
+    const y0 = 0.3 + (H - 0.3) * (f / flights);
+    const y1 = 0.3 + (H - 0.3) * ((f + 1) / flights);
+    const side = f % 2 ? 1 : -1;                 // alternating: the switchback
+    const z = 0.7 - f * 0.5;
+    const ax = -side * span, bx = side * span;
+    // ---- the deck: planks laid close enough to read as a road ----
+    g.material(M.WOOD).color(0.64, 0.5, 0.34);
+    for (let k = -2; k <= 2; k++) {
+      const o = k * 0.3;
+      g.beam(ax, y0 + 0.1, z + o, bx, y1 + 0.1, z - 0.45 + o, 0.22);
+    }
+    // ---- the trestle under it: two legs straight down to the rock ----
+    g.material(M.WOOD).color(0.46, 0.35, 0.24);
+    for (const t of [0.3, 0.72]) {
+      const lx = ax + (bx - ax) * t;
+      const ly = y0 + (y1 - y0) * t;
+      const lz = z - 0.45 * t;
+      g.beam(lx, Math.max(0.1, ly - 3.2), lz + 0.25, lx, ly - 0.05, lz, 0.17);
+      g.beam(lx - 0.5, Math.max(0.1, ly - 2.4), lz + 0.3, lx + 0.5, ly - 0.2, lz, 0.1);
+    }
+    // ---- guardrail on the open side ----
+    g.material(M.WOOD).color(0.5, 0.39, 0.27);
+    g.beam(ax, y0 + 1.0, z + 0.72, bx, y1 + 1.0, z + 0.27, 0.09);
+    g.beam(ax, y0 + 0.55, z + 0.72, bx, y1 + 0.55, z + 0.27, 0.07);
+    for (let i = 0; i <= 3; i++) {
+      const t = i / 3;
+      g.cyl(ax + (bx - ax) * t, y0 + (y1 - y0) * t + 0.1, z + 0.72 - 0.45 * t, 0.07, 0.07, 0.95, 5);
+    }
+    // ---- the landing where the road turns back on itself ----
+    g.material(M.WOOD).color(0.58, 0.45, 0.31);
+    g.box(bx, y1 + 0.16, z - 0.45, 1.5, 0.2, 1.4);
+    g.material(M.WOOD).color(0.44, 0.33, 0.22);
+    g.box(bx, y1 + 0.02, z - 0.45, 1.54, 0.12, 1.44);
+  }
+  // top platform, out onto the brow
+  g.material(M.WOOD).color(0.6, 0.47, 0.32);
+  g.box(0, H + 0.2, -1.1, 3.0, 0.24, 1.7);
+  g.material(M.WOOD).color(0.46, 0.35, 0.24);
+  for (const sx of [-1.35, 1.35]) g.cyl(sx, H + 0.32, -0.4, 0.08, 0.08, 1.0, 5);
+  g.beam(-1.35, H + 1.25, -0.4, 1.35, H + 1.25, -0.4, 0.08);
+  banner(g, 1.6, H + 0.32, -1.1, 0.95, 1.4);
+  g.color(1, 1, 1);
+  return { geo: g, height: H + 2.0 };
+});
+
+/**
+ * Age IV: cut stone and a freight crane.
+ *
+ * The pulley wheel is PART.EXTRA so the renderer can spin it, and the ore
+ * crate is a separate mesh (buildLiftCrate) that rides up and down -- the
+ * same trick as the gate leaf, because an instanced batch can only be moved
+ * as a whole. The rope is a closed loop over the wheel and is therefore
+ * static: on a real hoist the cable always spans the full drop.
+ */
+B('cliff_lift', () => {
+  const g = new Geo();
+  const H = 9.2;
+  // ---- cut-stone stairway ----
+  const steps = 16;
+  for (let i = 0; i < steps; i++) {
+    const t = i / steps;
+    g.material(M.STONE).color(0.72 - (i % 2) * 0.05, 0.70 - (i % 2) * 0.05, 0.66);
+    g.box(-0.95, 0.16 + (H - 1.4) * t, 1.5 - 2.3 * t, 1.9, 0.32, 0.3);
+  }
+  // the retaining wall the stair is cut into
+  g.material(M.STONE).color(0.64, 0.62, 0.58);
+  g.beam(-2.1, 0.3, 1.5, -2.1, H - 0.9, -0.8, 0.52);
+  g.material(M.STONE).color(0.8, 0.78, 0.74);
+  for (let i = 0; i < 5; i++) g.box(-1.95, 0.5 + i * 1.7, 1.3 - i * 0.44, 0.34, 0.9, 0.28);
+  // ---- brow platform: where a miner tips his basket ----
+  g.material(M.STONE).color(0.78, 0.76, 0.72);
+  g.box(0.1, H - 0.7, -1.6, 4.2, 0.5, 2.8);
+  g.material(M.STONE).color(0.86, 0.84, 0.8);
+  g.battlements(0.1, H - 0.45, -1.6, 4.2, 2.8, 0.55);
+  // ---- A-frame crane over the drop ----
+  g.material(M.WOOD).color(0.44, 0.33, 0.22);
+  for (const sx of [-1, 1]) {
+    g.beam(sx * 1.35, H - 0.45, -2.3, sx * 0.32, H + 3.3, -0.35, 0.16);
+    g.beam(sx * 1.35, H - 0.45, -2.3, sx * 1.35, H + 0.9, -2.3, 0.12);
+  }
+  g.beam(-0.32, H + 3.3, -0.35, 0.32, H + 3.3, -0.35, 0.14);
+  // the jib, reaching out over the cliff edge
+  g.beam(0, H + 3.25, -0.5, 0, H + 2.5, 1.9, 0.15);
+  g.material(M.WOOD).color(0.38, 0.29, 0.2);
+  g.beam(0, H + 3.2, -0.3, 0, H + 1.6, 1.0, 0.09);
+  // counterweight crate of rubble at the heel
+  g.material(M.WOOD).color(0.5, 0.38, 0.26);
+  g.box(0, H + 0.05, -2.55, 1.2, 0.9, 1.0);
+  g.material(M.GRAVEL).color(0.55, 0.52, 0.48);
+  g.box(0, H + 0.55, -2.55, 1.05, 0.2, 0.85);
+  // ---- the hoist rope: both runs of the loop, over the wheel, full drop ----
+  g.material(M.THATCH).color(0.8, 0.7, 0.48);
+  for (const dz of [-0.13, 0.13]) g.beam(0, H + 2.42, 1.86 + dz, 0, 0.1, 1.86 + dz, 0.038);
+  g.beam(0, H + 2.52, 1.2, 0, H + 3.12, -0.2, 0.038);
+  // ---- the pulley wheel: spins about its own axle (PART.EXTRA) ----
+  g.part_(PART.EXTRA, 0, H + 2.5, 1.86);
+  g.material(M.WOOD).color(0.56, 0.43, 0.3);
+  g.cyl(-0.09, H + 2.5, 1.86, 0.34, 0.34, 0.18, 10, { axis: 'x' });
+  g.material(M.IRON).color(0.46, 0.45, 0.42);
+  for (let i = 0; i < 3; i++) {                  // spokes, so the spin reads
+    const a = (i / 3) * Math.PI;
+    const cy = Math.cos(a) * 0.3, cz = Math.sin(a) * 0.3;
+    g.beam(0, H + 2.5 - cy, 1.86 - cz, 0, H + 2.5 + cy, 1.86 + cz, 0.06);
+  }
+  g.part_(PART.BODY);
+  g.material(M.IRON).color(0.4, 0.39, 0.36);
+  g.cyl(-0.25, H + 2.5, 1.86, 0.07, 0.07, 0.5, 6, { axis: 'x' });
+  g.color(1, 1, 1);
+  return { geo: g, height: H + 4.2 };
+});
+
+/**
+ * The lift's ore crate, modelled about its own centre so the renderer can
+ * drop it straight down the rope while the rope it hangs from stays put.
+ */
+export function buildLiftCrate() {
+  const g = new Geo();
+  g.material(M.WOOD).color(0.6, 0.46, 0.3);
+  g.box(0, 0, 0, 0.85, 0.7, 0.85);
+  g.material(M.WOOD).color(0.42, 0.32, 0.22);
+  for (const y of [-0.26, 0.26]) g.box(0, y, 0, 0.88, 0.1, 0.88);
+  g.material(M.IRON).color(0.45, 0.44, 0.41);
+  g.beam(-0.34, 0.33, 0, 0, 0.72, 0, 0.045);
+  g.beam(0.34, 0.33, 0, 0, 0.72, 0, 0.045);
+  g.material(M.GOLD).color(0.92, 0.74, 0.3);
+  g.box(0, 0.38, 0, 0.6, 0.14, 0.6);
+  g.color(1, 1, 1);
+  return g.finish();
+}
+
+/* ============================================================
    UNIT RIG
    ============================================================ */
 const humanBase = (g, o) => {
@@ -1714,6 +1901,30 @@ P('relic', () => {
   g.color(1, 1, 1);
   return { geo: g, height: 1.1 };
 });
+/**
+ * A trail post: the marker at the foot and the head of a mountain climb.
+ *
+ * Without one, a player who has not yet built a ladder has no way of
+ * knowing a ramp exists -- the throat is a two-metre gap in a cliff seen
+ * from above. A cairn and a painted board say "a way up starts here", in
+ * the same language every hiking trail on earth uses.
+ */
+P('trail_post', () => {
+  const g = new Geo();
+  g.material(M.STONE).color(0.62, 0.6, 0.56);
+  g.cyl(0, 0, 0, 0.26, 0.42, 0.5, 7);
+  g.cyl(0, 0.5, 0, 0.17, 0.26, 0.38, 6);
+  g.sphere(0, 0.95, 0, 0.18, 6, 4);
+  g.material(M.WOOD).color(0.45, 0.34, 0.23);
+  g.cyl(0.42, 0, 0.1, 0.07, 0.09, 1.95, 6);
+  g.material(M.WOOD).color(0.62, 0.5, 0.33);
+  g.box(0.42, 1.72, 0.1, 0.92, 0.28, 0.08, { rotY: 0.25 });
+  g.material(M.CLOTH).color(0.82, 0.3, 0.22);
+  g.box(0.42, 1.72, 0.06, 0.44, 0.1, 0.03, { rotY: 0.25 });
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.1 };
+});
+
 P('ruin', () => {
   const g = new Geo();
   g.material(M.MARBLE).color(0.82, 0.8, 0.74);

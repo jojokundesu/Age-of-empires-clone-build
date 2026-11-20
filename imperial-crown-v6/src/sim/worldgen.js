@@ -1005,6 +1005,11 @@ export function generateWorld(seed = 20261, opts = {}) {
   };
   world.nav = buildNavGrid(world);
   world.heightAt = (x, z) => hf.sample(x, z);
+  /* The ramps exist in the terrain; this is what turns each one into a
+     *socket* -- a sealed throat, two walkable build stands, and the strip of
+     nav cells the climb structure will own. It has to run after the nav grid
+     is built because every one of those is a cell index. */
+  prepareClimbs(world);
   /* The bed map the water shader reads for depth. The 128-cell heightfield is
      4 m per vertex, and a river's bank falls a metre over roughly two metres
      of ground: sampled straight, the shoreline comes out as a stair-stepped
@@ -1017,7 +1022,209 @@ export function generateWorld(seed = 20261, opts = {}) {
      and the water shader (via bedTex). Gameplay keeps hf.sample. */
   world.heightSmooth = (x, z) => sampleSmooth(hf, x, z);
   world.domainAtOrDefault = (x, z) => world.domainAt(x, z);
+  /**
+   * Is this rocky summit ground?
+   *
+   * Deliberately the *same* test the summit resources are laid out with
+   * (`onCrown`), rather than a radius picked to match it: a mountain whose
+   * mines are alpine and whose ground is not would be a rule the player
+   * cannot see. High, gentle, and on a crown.
+   */
+  world.isSummit = (x, z) => {
+    for (let i = 0; i < climbs.length; i++) {
+      const c = climbs[i];
+      const dx = x - c.x, dz = z - c.z;
+      if (dx * dx + dz * dz > 20 * 20) continue;
+      if (hf.sample(x, z) > c.h * 0.72) return true;
+    }
+    return false;
+  };
   return world;
+}
+
+/* ============================================================
+   CLIMB SOCKETS
+   ------------------------------------------------------------
+   A graded ramp is walkable ground, and walkable ground is not a decision.
+   What makes the mountain a contest is that the ascent is a *structure* --
+   something a player pays for, upgrades across the ages, and an enemy can
+   burn. So every ramp is turned into a socket:
+
+     - a THROAT: a band of cells across the ramp, three deep, that is
+       BLOCKED while no climb structure stands on it. Three deep because
+       movement is 8-neighbour: a one- or two-cell band can be stepped over
+       diagonally, and a summit "sealed" by a two-cell band is not sealed.
+       The band is also stamped a shoulder wider than the graded strip, so
+       the seal meets the untouched cliff on both flanks with no gap.
+
+     - a CORRIDOR: every cell of the graded strip. When a structure is
+       built, these take its domain code (4/5/6), which is what gates
+       cavalry off a ladder and makes the whole ascent slow rather than
+       just the three cells of the throat.
+
+     - two ANCHORS: footAnchor below the throat and summitAnchor above it.
+       A builder cannot path to the throat -- it is BLOCKED, that is the
+       entire point -- so a climb structure is built from a stand beside it.
+       Two of them, because the valley and the summit are different
+       components by construction: a villager stranded on top with wood must
+       be able to rebuild a ladder downwards, or burning one strands him for
+       the rest of the match.
+   ============================================================ */
+
+/** How deep the sealed band is, in nav cells. 8-neighbour movement needs 3. */
+const THROAT_CELLS = 3;
+
+/**
+ * Turn every graded ramp into a buildable, sealable climb socket.
+ * Mutates `world.climbs[]` in place and seals the throats.
+ */
+export function prepareClimbs(world) {
+  const climbs = world.climbs || [];
+  if (!climbs.length) return;
+  const nav = world.nav;
+  const N = nav.cells, cellSize = nav.cell, half = world.half;
+  const hf = world.height;
+  const cellOf = (x, z) => [
+    clamp(Math.floor((x + half) / cellSize), 0, N - 1),
+    clamp(Math.floor((z + half) / cellSize), 0, N - 1)
+  ];
+  const centreOf = (i, j) => [(i + 0.5) * cellSize - half, (j + 0.5) * cellSize - half];
+
+  for (const c of climbs) {
+    const dx = Math.cos(c.angle), dz = Math.sin(c.angle);
+    /* The throat sits in the lower half of the run. High on the face it
+       would leave the whole ramp open to anyone and gate only the last few
+       metres; at the very foot there is no gentle ground below it to stand
+       a builder on. Sixty per cent of the way down is on the graded ramp at
+       both ends, which is what both anchors need. */
+    const td = c.length * 0.6;
+    const [tx, tz] = [c.x + dx * td, c.z + dz * td];
+    c.throat = { x: tx, z: tz, h: hf.sample(tx, tz), d: td };
+
+    /* ---- the cells -------------------------------------------------- */
+    const depth = THROAT_CELLS * cellSize;
+    const wide = c.width + cellSize * 2;        // graded strip + a shoulder
+    const throat = new Set();
+    const corridor = new Set();
+    const stamp = (set, d0, d1, w) => {
+      for (let d = d0; d <= d1; d += cellSize * 0.4) {
+        const px = c.x + dx * d, pz = c.z + dz * d;
+        for (let s = -w; s <= w; s += cellSize * 0.4) {
+          const sx = px - dz * s, sz = pz + dx * s;
+          if (Math.abs(sx) > half - 2 || Math.abs(sz) > half - 2) continue;
+          const [i, j] = cellOf(sx, sz);
+          set.add(j * N + i);
+        }
+      }
+    };
+    /* The corridor is the ramp *above* the throat, not the whole ramp.
+       That is where the structure actually is -- a ladder spans the pitch
+       it is lashed to, and the ground below it is ordinary mountain path
+       that anybody may walk. Carrying the climb's domain code all the way
+       down to the valley would mean a cavalryman could not stand at the
+       foot of his own army's ladder, which is precisely the ground this
+       section needs him to be able to wait on. */
+    stamp(corridor, 0, td - depth * 0.5, c.width + cellSize);
+    stamp(throat, td - depth * 0.5, td + depth * 0.5, wide);
+    /* The throat is part of the ramp; a cell cannot be both the gate and the
+       road, or building the ladder would re-open the cells that seal it. */
+    for (const k of throat) corridor.delete(k);
+    c.throatCells = Int32Array.from(throat);
+    c.corridorCells = Int32Array.from(corridor);
+
+    /* ---- the two build stands ---------------------------------------- */
+    /* Walk away from the throat along the ramp until the ground is open,
+       off the sealed band, and genuinely standable. Anything else is a
+       villager ordered to a cell he can never occupy. */
+    /* A stand beside the gate, on the first cell past it that a body can
+       actually occupy. `dir` is -1 up the mountain, +1 down it. The summit
+       stand may be corridor (a climber is allowed to be on his own ladder);
+       the valley stand may not, or heavy classes could never wait there. */
+    const anchorAt = (dir) => {
+      for (let step = depth * 0.5 + cellSize; step < c.length * 0.9; step += cellSize * 0.5) {
+        const ax = tx + dx * dir * step, az = tz + dz * dir * step;
+        if (Math.abs(ax) > half - 4 || Math.abs(az) > half - 4) break;
+        const [i, j] = cellOf(ax, az);
+        const k = j * N + i;
+        if (throat.has(k)) continue;
+        if (dir > 0 && corridor.has(k)) continue;
+        if (nav.blocked[k]) continue;
+        if (hf.slope(ax, az) > 0.95) continue;
+        const [cx, cz] = centreOf(i, j);
+        return { x: cx, z: cz, h: hf.sample(cx, cz) };
+      }
+      return null;
+    };
+    c.summitAnchor = anchorAt(-1);              // towards the crown
+    c.footAnchor = anchorAt(1);                 // towards the valley
+    c.tier = 0;                                 // no structure yet
+
+    /* ---- trail markers ------------------------------------------------
+       A throat is a two-metre gap in a cliff seen from a long way up: with
+       nothing standing in it there is no reason for a player to believe a
+       way up exists at all. A cairn and a painted board at each stand say
+       "a climb starts here" in the language every mountain path on earth
+       uses, and they are pure decor -- no footprint, no nav, no cost. */
+    const decor = world.decor;
+    if (decor) {
+      for (const a of [c.footAnchor, c.summitAnchor]) {
+        if (!a) continue;
+        decor.push({
+          type: 'trail_post', x: a.x, z: a.z, y: hf.sample(a.x, a.z),
+          scale: 1, rot: Math.atan2(tx - a.x, tz - a.z), tint: 0.5
+        });
+      }
+      // two cairns part-way up, so the line of the ramp reads from the air
+      for (const f of [0.25, 0.45]) {
+        const mx = c.x + dx * c.length * f, mz = c.z + dz * c.length * f;
+        decor.push({
+          type: 'trail_post', x: mx - dz * (c.width * 0.5 + 1.5), z: mz + dx * (c.width * 0.5 + 1.5),
+          y: hf.sample(mx - dz * (c.width * 0.5 + 1.5), mz + dx * (c.width * 0.5 + 1.5)),
+          scale: 0.7, rot: c.angle, tint: 0.4
+        });
+      }
+    }
+  }
+
+  /* Seal them. From here the summits are islands until somebody pays for a
+     way up, which is the whole of this section's design. */
+  sealClimbThroats(world);
+}
+
+/**
+ * Write every climb's current state into the nav grid.
+ *
+ * One function, called at generation and again whenever a climb structure is
+ * finished or destroyed, so there is exactly one place that decides what a
+ * climb cell contains. `tier` is 0 (no structure) or a domain code 4/5/6.
+ */
+export function sealClimbThroats(world) {
+  const climbs = world.climbs || [];
+  if (!climbs.length) return;
+  const nav = world.nav;
+  for (const c of climbs) {
+    const open = c.tier >= DOMAIN.FOOT_CLIMB;
+    for (let n = 0; n < c.throatCells.length; n++) {
+      const k = c.throatCells[n];
+      nav.domain[k] = open ? c.tier : DOMAIN.BLOCKED;
+      nav.blocked[k] = open ? c.tier : 1;
+    }
+    /* The rest of the ramp is ordinary ground until a structure claims it.
+       Once one does, the whole ascent carries the structure's class -- that
+       is what makes a ladder slow for its full length and impassable to a
+       horse rather than merely awkward for three cells. */
+    for (let n = 0; n < c.corridorCells.length; n++) {
+      const k = c.corridorCells[n];
+      if (nav.domain[k] === DOMAIN.WATER_ONLY) continue;
+      if (open) {
+        nav.domain[k] = c.tier;
+        if (nav.blocked[k] !== 1) nav.blocked[k] = c.tier;
+      } else if (nav.domain[k] >= DOMAIN.FOOT_CLIMB) {
+        nav.domain[k] = DOMAIN.LAND_ONLY;
+        if (nav.blocked[k] !== 1) nav.blocked[k] = 0;
+      }
+    }
+  }
 }
 
 /**
@@ -1418,9 +1625,6 @@ function cutOneClimb(hf, summit, size, rng) {
   const n = hf.res + 1;
   const cell = hf.cell;
   const half = size * 0.5;
-  /* A man climbs at about 40 degrees; the nav grid refuses anything above
-     roughly 0.95 of slope, so the ramp is graded to stay well inside that. */
-  const GRAD = 0.42;
   /* Wide enough that the *blended* edges stay walkable. A ramp graded 4.5 m
      wide leaves a transition band on each side whose gradient is whatever the
      original cliff was, and a single cell of that band is a wall: the first
@@ -1429,6 +1633,40 @@ function cutOneClimb(hf, summit, size, rng) {
      climbable and is not. Nine metres of shoulder, and a two-stage blend at
      the crown, keeps the whole strip under the nav grid's slope limit. */
   const WIDTH = 9;
+  /* ---- the crown is lifted before anything is cut -------------------
+     A mountain that tops out eight metres above the ground it is measured
+     against is a hill with a view. The crowns are graded up to a common
+     target so the high ground reads as high ground from the valley floor,
+     and so the ramp has real height to shed -- which is what makes the
+     ascent long enough to be worth defending.
+
+     The ceiling is not arbitrary. `heightTex` / `bedTex` quantise terrain
+     into a byte over -8 m .. +38 m (renderer.js HEIGHT_RANGE 46, BIAS 8,
+     and the matching unpack in shaders.js), so a graded crown above ~35 m
+     would start losing resolution in the water shader's bed sample. 34 m
+     leaves a metre of headroom and still towers over a 1.8 m ramp foot. */
+  const CROWN_TARGET = 34;
+  const crownH = Math.max(summit.h, Math.min(CROWN_TARGET, summit.h + 7));
+  /* Lifting the crown steepens the ring where it meets the untouched
+     mountain. A six-metre lift blended over the old 13 m skirt is a 0.46
+     step at the junction on top of whatever the natural face already was,
+     which is how you turn a summit into an island ringed by its own BLOCKED
+     cells. The skirt widens with the lift so the junction gradient stays
+     where it was. */
+  const CROWN_R = 12;
+  const crownBlend = CROWN_R + 1 + (crownH - summit.h) * 1.7;
+  /* ---- and the ramp is graded to a gradient, not to the nearest exit ----
+     The run used to be "however far it is to the first gentle ground", which
+     on a steep face is a very short way: measured across the three big sizes
+     the cuts came out between 32 m and 150 m of run, and a 32 m run off a
+     31 m crown is a 0.97 gradient -- a 44-degree staircase that the nav grid
+     accepts only because it is graded perfectly straight. That is not a
+     climb a defender can intercept, it is a lift.
+
+     So the ramp declares its gradient and the *run* follows from the height
+     it has to shed: a 34 m crown over a 1.8 m foot at 0.56 needs 58 m of
+     ground, which is the 45-65 m band this section is after. */
+  const MAX_GRAD = 0.56;
   let best = null;
   for (let k = 0; k < 24; k++) {
     const a = (k / 24) * Math.PI * 2 + rng() * 0.05;
@@ -1440,6 +1678,11 @@ function cutOneClimb(hf, summit, size, rng) {
       if (Math.abs(px) > half - 8 || Math.abs(pz) > half - 8) { ok = false; break; }
       const h = hf.sample(px, pz);
       len = d;
+      /* Far enough out to shed the crown's height at a walkable gradient.
+         Without this the loop stops at the first gentle sample, which on the
+         downhill side of a steep face is often twenty metres away. */
+      const need = (crownH - Math.max(h, 0)) / MAX_GRAD;
+      if (d < need) continue;
       /* The foot is not merely "low ground" -- it is *gentle* ground. Stopping
          at the first sample under a third of the summit height put the foot on
          the talus, which is steep but not high: three BLOCKED cells sat
@@ -1468,46 +1711,45 @@ function cutOneClimb(hf, summit, size, rng) {
   /* grade the ramp: a strip of width WIDTH, each sample lowered to the line
      from the crown to the foot */
   const footH = hf.sample(summit.x + best.dx * best.stepped, summit.z + best.dz * best.stepped);
-  for (let d = 0; d <= best.stepped; d += 0.75) {
-    const t = d / best.stepped;
-    const target = summit.h + (footH - summit.h) * t;
-    const px = summit.x + best.dx * d, pz = summit.z + best.dz * d;
-    /* across the ramp */
-    for (let w = -WIDTH; w <= WIDTH; w += 0.75) {
-      const sx = px - best.dz * w, sz = pz + best.dx * w;
-      if (Math.abs(sx) > half - 4 || Math.abs(sz) > half - 4) continue;
-      const fall = 1 - smoothstep(Math.abs(w) / (WIDTH + 1.6));
-      gradeHeight(hf, sx, sz, target, fall);
+  const rampPass = () => {
+    for (let d = 0; d <= best.stepped; d += 0.75) {
+      const t = d / best.stepped;
+      const target = crownH + (footH - crownH) * t;
+      const px = summit.x + best.dx * d, pz = summit.z + best.dz * d;
+      /* across the ramp */
+      for (let w = -WIDTH; w <= WIDTH; w += 0.75) {
+        const sx = px - best.dz * w, sz = pz + best.dx * w;
+        if (Math.abs(sx) > half - 4 || Math.abs(sz) > half - 4) continue;
+        const fall = 1 - smoothstep(Math.abs(w) / (WIDTH + 1.6));
+        gradeHeight(hf, sx, sz, target, fall);
+      }
     }
-  }
+  };
+  rampPass();
   /* Flatten a crown at the top, so there is somewhere to stand, build and be
-     attacked -- and blend it out over a wider ring than the ramp so the
-     shoulder where the two meet is a slope rather than a step. */
-  for (let w = -12; w <= 12; w += 0.9) {
-    for (let q = -12; q <= 12; q += 0.9) {
+     attacked -- and blend it out over a ring that widens with the lift, so
+     the shoulder where the new summit meets the old mountain is a slope
+     rather than a step. */
+  for (let w = -crownBlend; w <= crownBlend; w += 0.9) {
+    for (let q = -crownBlend; q <= crownBlend; q += 0.9) {
       const r = Math.hypot(w, q);
-      if (r > 12) continue;
-      const fall = 1 - smoothstep(r / 13);
-      gradeHeight(hf, summit.x + w, summit.z + q, summit.h, fall);
+      if (r > crownBlend) continue;
+      const fall = 1 - smoothstep(Math.max(0, r - CROWN_R) / (crownBlend - CROWN_R));
+      gradeHeight(hf, summit.x + w, summit.z + q, crownH, fall);
     }
   }
   /* ...and once more along the ramp, now that the crown has settled, so the
-     junction is graded rather than left as the original face */
-  for (let d = 0; d <= best.stepped; d += 0.75) {
-    const t = d / best.stepped;
-    const target = summit.h + (footH - summit.h) * t;
-    const px = summit.x + best.dx * d, pz = summit.z + best.dz * d;
-    for (let w = -WIDTH; w <= WIDTH; w += 0.75) {
-      const sx = px - best.dz * w, sz = pz + best.dx * w;
-      if (Math.abs(sx) > half - 4 || Math.abs(sz) > half - 4) continue;
-      const fall = 1 - smoothstep(Math.abs(w) / (WIDTH + 1.6));
-      gradeHeight(hf, sx, sz, target, fall);
-    }
-  }
+     junction is graded rather than left as the original face. The lift makes
+     this pass load-bearing: the crown's own skirt now reaches out over the
+     top of the ramp, and without the regrade the first fifteen metres of the
+     descent are whatever the blend left behind. */
+  rampPass();
+  rampPass();
   return {
-    x: summit.x, z: summit.z, h: summit.h,
+    x: summit.x, z: summit.z, h: crownH, naturalH: summit.h,
     foot: { x: summit.x + best.dx * best.stepped, z: summit.z + best.dz * best.stepped, h: footH },
-    angle: best.a, length: best.stepped
+    angle: best.a, length: best.stepped, width: WIDTH,
+    grade: (crownH - footH) / best.stepped
   };
 }
 

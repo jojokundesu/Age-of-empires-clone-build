@@ -13,6 +13,7 @@ import { iconFor } from './menu.js';
 import { STATE } from '../sim/entities.js';
 import { SQUAD_RANKS, MAX_SQUADS, MAX_SQUAD_SIZE } from '../sim/squads.js';
 import { perkById } from '../sim/champion.js';
+import { CANNOT_BUILD } from '../sim/game.js';
 const TEAM_NEUTRAL = 0;
 /* The minimap has always drawn the player in blue and the enemy in red, on a
    parchment ground; that is part of the map's look, so the extra crowns take
@@ -486,6 +487,27 @@ export class UI {
           }
         });
       }
+      /* ---- one tap to rebuild a climb into the next tier up ----
+         The alternative is: remember the ramp, delete the ladder, re-open
+         the build menu, find the switchback, aim at a two-metre throat
+         halfway up a mountain -- and have no way up at all while you do it.
+         The upgrade places on the spot the old one stands on and the old
+         one is not demolished until the new one is finished. */
+      if (def.climb && def.upgradesTo && def.upgradesTo.length) {
+        for (const next of def.upgradesTo) {
+          const nd = BUILDING_DEFS[next];
+          if (!nd) continue;
+          const req = BUILDING_AGE[next] || 0;
+          if (req > age) continue;              // not yet unlocked: no dead card
+          const cost = g.buildingCost(next, 1);
+          out.push({
+            id: `upgrade:${next}`, icon: nd.icon, label: 'Upgrade',
+            cost: `${nd.name.split(' ')[0]} · ${costText(cost)}`,
+            enabled: g.canAfford(1, cost), reason: 'Not enough resources', primary: true,
+            action: () => this.upgradeClimb(b, next)
+          });
+        }
+      }
       if (!def.ageAdvance) {
         out.push({ icon: 'flag', label: 'Rally', action: () => { this.input.armed = { kind: 'rally', building: b }; this.toast('Tap the ground to set a rally point'); } });
       }
@@ -752,6 +774,32 @@ export class UI {
     this.refreshCommands();
   }
 
+  /**
+   * Rebuild a cliff climb as the next tier, in place.
+   *
+   * The villagers who were nearest do the work -- if none are, the order
+   * still stands and whoever is told to build it later will walk up; what
+   * must not happen is the player paying and getting nothing standing.
+   */
+  upgradeClimb(b, type) {
+    const g = this.game;
+    const spot = g.canPlaceAt(type, 1, b.x, b.z, { ignoreUnits: true, climb: b.climb });
+    if (!spot.ok) {
+      this.toast(CANNOT_BUILD[spot.reason] || 'Cannot upgrade this climb', 'warn');
+      this.audio?.play?.('warn');
+      return;
+    }
+    const built = g.placeBuilding(type, 1, b.x, b.z, { climb: b.climb });
+    if (!built) { this.audio?.play?.('warn'); return; }
+    const crew = g.units.filter((u) => u.team === 1 && u.type === 'villager' && !u.dead
+      && Math.hypot(u.x - b.x, u.z - b.z) < 70).slice(0, 4);
+    if (crew.length) g.orderBuild(crew, built);
+    this.audio?.play?.('build');
+    this.toast(`${built.def.name} begun — the old way up stays open until it is finished`, 'gold');
+    g.setSelection([built]);
+    this.refreshCommands(true);
+  }
+
   openBuildMenu(villagers) {
     const g = this.game;
     const age = g.teams.get(1).age;
@@ -777,7 +825,7 @@ export class UI {
         primary: type === 'house',
         action: () => {
           g.placing = {
-            type, x: this.camera.target[0], z: this.camera.target[2],
+            type, def, x: this.camera.target[0], z: this.camera.target[2],
             y: g.heightAt(this.camera.target[0], this.camera.target[2]),
             footprint: def.size || 3, valid: false, ghost: null,
             /* walls (and mod traps) are drawn, not tapped: a drag lays the run */

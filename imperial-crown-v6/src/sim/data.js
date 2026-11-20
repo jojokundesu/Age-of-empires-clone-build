@@ -146,6 +146,7 @@ export const UNIT_DEFS = {
     desc: 'Heavy shock cavalry. Crushes archers and siege, fears spears.'
   }),
   scout_cavalry: U({
+    mount: true,
     name: 'Scout Cavalry', icon: 'horse', hp: 90, attack: 7, armor: 1, pierceArmor: 1,
     speed: 5.1, time: 14, cost: { food: 80 }, classes: ['cavalry'], sight: 15,
     bonuses: { monk: 6, siege: 3 },
@@ -181,6 +182,7 @@ export const UNIT_DEFS = {
     desc: 'Frankish unique. Hurls axes over the shield wall from short range.'
   }),
   cataphract: U({
+    mount: true,
     name: 'Cataphract', icon: 'helmet', hp: 200, attack: 15, armor: 5, pierceArmor: 4,
     speed: 4.3, time: 26, cost: { food: 70, gold: 80 }, classes: ['cavalry', 'unique'],
     bonuses: { infantry: 12 }, sight: 12,
@@ -205,6 +207,7 @@ export const UNIT_DEFS = {
     desc: 'Japanese unique. Duelist who cuts down other unique units.'
   }),
   mangudai: U({
+    mount: true,
     name: 'Mangudai', icon: 'horse', hp: 95, attack: 9, armor: 1, pierceArmor: 1, range: 6.6,
     speed: 4.9, time: 22, cost: { wood: 55, gold: 65 }, classes: ['cavalry', 'archer', 'unique'],
     projectile: 'arrow', bonuses: { siege: 14 }, sight: 14,
@@ -427,6 +430,37 @@ export const BUILDING_DEFS = {
   outpost_shrine: B({
     name: 'Shrine', icon: 'flame', hp: 1400, armor: 4, pierceArmor: 8, size: 2.6, sight: 13,
     cost: {}, time: 0, neutral: true, desc: 'An ancient shrine. Capture it for vision and favour.'
+  }),
+
+  /* ---- the ways up ------------------------------------------------
+     Three structures, one socket. Each one claims a climb's throat and
+     stamps its own domain code over the whole ramp, which is what decides
+     who may make the ascent and how long it takes them. They are the only
+     buildings in the game that are placed on a *socket* rather than on a
+     patch of ground: `climb: true` is what tells placement, the build menu
+     and the ghost to snap to `world.climbs[]`.
+
+     They are deliberately fragile in ascending order of permanence. A
+     ladder is sixty wood and burns; a stair is two hundred stone and has to
+     be besieged. Cutting a mountain's supply line should be a raid in Age
+     II and an operation in Age IV. */
+  cliff_ladder: B({
+    name: 'Scaling Ladder', icon: 'tower', hp: 260, armor: 0, pierceArmor: 1, size: 2.4, sight: 6,
+    cost: { wood: 60 }, time: 14, climb: true, climbDomain: 4, age: 0,
+    upgradesTo: ['cliff_switchback', 'cliff_lift'],
+    desc: 'Lashed timber ladder up a cliff. Foot soldiers and villagers only — and it burns.'
+  }),
+  cliff_switchback: B({
+    name: 'Timber Switchback', icon: 'tower', hp: 650, armor: 2, pierceArmor: 5, size: 3.0, sight: 7,
+    cost: { wood: 140, stone: 40 }, time: 26, climb: true, climbDomain: 5, age: 2,
+    upgradesTo: ['cliff_lift'],
+    desc: 'A trestle road of switchbacks. Cavalry can climb; siege still cannot.'
+  }),
+  cliff_lift: B({
+    name: 'Cut-Stone Stairs & Pulley Lift', icon: 'castle', hp: 1600, armor: 8, pierceArmor: 12,
+    size: 3.6, sight: 10, cost: { stone: 200, wood: 120 }, time: 46, climb: true, climbDomain: 6, age: 3,
+    dropoff: ['gold', 'stone', 'wood'],
+    desc: 'Paved stairs and a freight crane. Everything climbs, and the hoist takes ore at the summit.'
   })
 };
 
@@ -685,4 +719,40 @@ export function victoryFor(mode) {
   if (mode === 'regicide') return 'regicide';
   if (mode === 'wonder') return 'wonder';
   return 'conquest';
+}
+
+/* ==================================================================
+   TRAVERSAL WEIGHT CLASSES
+   ------------------------------------------------------------------
+   Which units can use which climb. A ladder takes men; a horse needs a
+   switchback; a trebuchet needs cut stone. That is a property of the unit's
+   bulk, so it is derived from the unit's own definition rather than listed:
+   a list is a thing that goes stale the first time somebody adds a civ.
+
+   `mount` is the one fact that is not inferable from UNIT_DEFS alone -- the
+   rig decides who is actually seated, and the rig is deliberately not what
+   the genre would guess. The knight in this game is a dismounted man at arms
+   (src/gfx/rig/classes.js is explicit about it, and the suite has a check
+   that "a foot unit is never seated"), while the cataphract is the mounted
+   armoured unit. So `classes: ['cavalry']` is NOT the test -- the knight, the
+   Lord Commander and the claimant all carry it on foot. `mount` mirrors the
+   rig, and tests/mountain.mjs asserts the two never drift apart.
+   ================================================================== */
+export const TRAVERSAL_FOOT = 0;
+export const TRAVERSAL_MOUNTED = 1;
+export const TRAVERSAL_HEAVY = 2;
+
+/**
+ * 0 foot / 1 mounted / 2 heavy, from a unit type or a def.
+ * Naval units have no traversal class on land and answer 0; nothing asks.
+ */
+export function traversalOf(type, def) {
+  const d = def || UNIT_DEFS[type];
+  if (!d) return TRAVERSAL_FOOT;
+  /* Siege trains, elephants and loaded carts: nothing short of a paved stair
+     and a hoist gets these up a cliff. */
+  if (d.siege || type === 'war_elephant' || type === 'trade_cart') return TRAVERSAL_HEAVY;
+  /* Anything with a horse under it. */
+  if (d.mount) return TRAVERSAL_MOUNTED;
+  return TRAVERSAL_FOOT;
 }

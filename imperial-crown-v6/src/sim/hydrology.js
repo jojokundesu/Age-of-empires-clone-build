@@ -51,9 +51,45 @@ export const DOMAIN = {
   BLOCKED: 0,
   LAND_ONLY: 1,
   WATER_ONLY: 2,
-  AMPHIBIOUS_SHALLO_FORD: 3
+  AMPHIBIOUS_SHALLO_FORD: 3,
+  /* ---- climb domains -------------------------------------------------
+     A climb is not "walkable ground with a rule bolted on": it is its own
+     traversal class, in the same byte the rest of the grid already uses, so
+     every consumer -- A*, the reachability components, isPassable, the AI --
+     gets the answer from the one array it already reads. Three codes rather
+     than one because the thing that changes across the ages is *who* can
+     make the ascent, and that is a property of the ground, not of the order.
+
+     The ordering is deliberate: a higher code admits strictly more unit
+     classes than a lower one, so "can this class pass?" is one comparison
+     (see `climbAdmits`) and an upgrade is a single byte going up. */
+  FOOT_CLIMB: 4,            // villagers, infantry, archers, monks, mage
+  MOUNTED_CLIMB: 5,         // ...and cavalry
+  HEAVY_CLIMB: 6            // ...and siege, elephants, carts
 };
-export const DOMAIN_LABEL = ['BLOCKED', 'LAND_ONLY', 'WATER_ONLY', 'AMPHIBIOUS_SHALLO_FORD'];
+export const DOMAIN_LABEL = ['BLOCKED', 'LAND_ONLY', 'WATER_ONLY', 'AMPHIBIOUS_SHALLO_FORD',
+  'FOOT_CLIMB', 'MOUNTED_CLIMB', 'HEAVY_CLIMB'];
+
+/** Lowest domain code that means "this is a climb". */
+export const CLIMB_MIN = DOMAIN.FOOT_CLIMB;
+
+/**
+ * Traversal weight classes, ordered by how much ground they are allowed.
+ *
+ * A number rather than a string because it is read inside the A* inner loop,
+ * once per neighbour per node: `TRAVERSAL.foot` is 0, and a climb cell admits
+ * a class when `cell - CLIMB_MIN >= class`.
+ */
+export const TRAVERSAL = { foot: 0, mounted: 1, heavy: 2 };
+export const TRAVERSAL_LABEL = ['foot', 'mounted', 'heavy'];
+
+/** Does a climb cell (4/5/6) admit this traversal class (0/1/2)? */
+export function climbAdmits(domain, traversal) {
+  return domain - CLIMB_MIN >= (traversal | 0);
+}
+
+/** Is this domain code one of the three climb classes? */
+export function isClimbDomain(d) { return d >= CLIMB_MIN; }
 
 /* Water table and the depths that matter, in metres. */
 export const WATER_LEVEL = 0.0;

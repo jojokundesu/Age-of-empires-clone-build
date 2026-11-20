@@ -4,7 +4,46 @@
    production, combat, vision and victory. Written to be stepping
    friendly: one call to update(dt) advances everything by dt.
    ============================================================ */
-import { DOMAIN } from './hydrology.js';
+import { DOMAIN, CLIMB_MIN, climbAdmits } from './hydrology.js';
+
+/**
+ * Combine one terrain cell with whatever is built on it.
+ *
+ * The terrain layer is no longer a bit. On a map with climbs it also carries
+ * the three climb codes (4/5/6), and the old `(t || v) ? 1 : 0` flattened
+ * them to a plain 1 -- which seals every ladder in the game the first time
+ * anybody builds a house. A body on the cell always wins; otherwise the
+ * terrain's own code passes through untouched.
+ */
+/**
+ * What may not be raised on a rocky summit.
+ *
+ * Everything civilian or productive. The allowed list is its complement and
+ * is deliberately short -- watch tower, palisade, stone wall, gate -- which
+ * is to say: you may fortify the crown, you may not move in. Keeping the
+ * forbidden set explicit rather than deriving it from `dropoff` or `trains`
+ * is on purpose: a future building that happens to have neither should still
+ * have to make a decision about the mountain.
+ */
+/** What the player is actually told when placement refuses. */
+export const CANNOT_BUILD = {
+  summit: 'Rocky summit — build watchtowers, walls, or a cliff lift instead',
+  noclimb: 'Place this on a mountain ramp',
+  occupied: 'That ramp already has a way up',
+  age: 'Not available in this age'
+};
+
+const SUMMIT_FORBIDDEN = new Set([
+  'town_center', 'house', 'farm', 'mill', 'mining_camp', 'lumber_camp',
+  'market', 'barracks', 'stable', 'archery_range', 'siege_workshop',
+  'monastery', 'university', 'wonder', 'castle', 'blacksmith', 'dock'
+]);
+
+function navMerge(terrain, built) {
+  if (terrain === 1) return 1;
+  if (built) return 1;
+  return terrain;
+}
 import { Veterancy } from './veterancy.js';
 import { Calendar } from './calendar.js';
 import { Climate } from './climate.js';
@@ -14,10 +53,11 @@ import { Champions } from './champion.js';
 import { Guards } from './guards.js';
 import {
   UNIT_DEFS, BUILDING_DEFS, TECH_DEFS, AGES, CIVS, DIFFICULTY, GAME_MODES,
-  RES, POP_CAP, isUniqueUnit, VICTORIES, victoryFor, PARTY_NAME
+  RES, POP_CAP, isUniqueUnit, VICTORIES, victoryFor, PARTY_NAME, traversalOf
 } from './data.js';
 import { Unit, Building, ResourceNode, STATE } from './entities.js';
 import { PathFinder } from './pathfind.js';
+import { sealClimbThroats } from './worldgen.js';
 import { SpatialHash } from './spatial.js';
 import { ProjectilePool } from './projectiles.js';
 import { WORLD } from './worldgen.js';
@@ -457,7 +497,7 @@ export class Game {
       const r = list[i];
       const node = new ResourceNode(this, r.type, r.x, r.z, r.amount, {
         resKind: r.resKind, radius: r.radius, scale: r.scale, variant: r.variant,
-        herd: r.herd, team: TEAM_NEUTRAL
+        herd: r.herd, team: TEAM_NEUTRAL, summit: r.summit
       });
       // World generation is deterministic; this stable source index survives
       // herd movement and resource-array compaction across save/load.
@@ -589,6 +629,22 @@ export class Game {
     for (const rec of this._teamPf.values()) rec.ready = false;
   }
 
+  /**
+   * 0 foot / 1 mounted / 2 heavy, cached on the unit.
+   *
+   * Read on every passability test of every step, so it is resolved once per
+   * unit rather than per query; the type of a body never changes.
+   */
+  traversalOf(unit) {
+    if (!unit) return 0;
+    let t = unit._trav;
+    if (t === undefined) {
+      t = traversalOf(unit.type, unit.def);
+      unit._trav = t;
+    }
+    return t;
+  }
+
   isPassable(x, z, unit) {
     if (!this.isInside(x, z)) return false;
     const h = this.world.height.sample(x, z);
@@ -597,6 +653,12 @@ export class Game {
       return domain === null ? h < -0.3 : domain === DOMAIN.WATER_ONLY || domain === DOMAIN.AMPHIBIOUS_SHALLO_FORD;
     }
     if (domain !== null ? domain === DOMAIN.WATER_ONLY || domain === DOMAIN.BLOCKED : h < -0.25) return false;
+    /* A climb admits some classes and not others, and this is the test that
+       actually stops a body -- A* routes around a ladder it may not use, but
+       a cavalryman shoved sideways by a crowd, or ordered to a point two
+       metres onto the ramp, arrives by a route A* never saw. The grid says
+       who may stand here; the answer is the same one the pathfinder used. */
+    if (domain >= CLIMB_MIN && !climbAdmits(domain, unit ? this.traversalOf(unit) : 0)) return false;
     if (this._steep) {
       /* the baked answer, from the same sample the nav grid used */
       const nc = this.navCell || 2;
@@ -1072,6 +1134,25 @@ export class Game {
     return best;
   }
 
+  /**
+   * Where a load is actually handed over.
+   *
+   * For every building in the game this is the building. The pulley lift is
+   * the exception: it stands on the throat, two thirds of the way down the
+   * cliff, and its hoist platform is at the brow -- so a miner on the crown
+   * walks to the top of the stairs and tips his basket into the crate,
+   * rather than carrying it down the stairs to the foot of the thing whose
+   * entire purpose is that he does not have to.
+   */
+  dropPointOf(b) {
+    if (b.def.climb && b.climb) {
+      const c = b.climb;
+      const d = Math.max(0, (c.throat.d || 0) - 4);
+      return [c.x + Math.cos(c.angle) * d, c.z + Math.sin(c.angle) * d];
+    }
+    return [b.x, b.z];
+  }
+
   findDropoff(team, kind, x, z, maxDist = 999, unit = null) {
     let best = null, bestD = maxDist * maxDist;
     for (let i = 0; i < this.buildings.length; i++) {
@@ -1080,7 +1161,8 @@ export class Game {
       if (!b.def.dropoff) continue;
       if (unit?.def?.naval && b.type !== 'dock') continue;
       if (kind !== 'any' && b.def.dropoff.indexOf(kind) < 0) continue;
-      const d = dist2(x, z, b.x, b.z);
+      const [px, pz] = this.dropPointOf(b);
+      const d = dist2(x, z, px, pz);
       if (d < bestD) { bestD = d; best = b; }
     }
     return best;
@@ -1332,6 +1414,13 @@ export class Game {
     /* a walkable building never blocks the nav grid: a farm used to stamp four
        cells of solid obstacle into the middle of a field */
     if (b.def.walkable) return;
+    /* ...and neither does a climb structure, for a sharper reason: it stands
+       *on* the throat it opens. Stamping its own footprint solid would seal
+       the ladder the moment it was finished, which is the most confusing
+       possible outcome -- the player watches the thing complete and the
+       mountain stays shut. The throat's own domain code is the obstacle, and
+       `sealClimbThroats` owns it. */
+    if (b.def.climb) return;
     const N = this.world.nav.cells;
     const cell = this.world.nav.cell;
     const half = this.mapw.half;
@@ -1416,8 +1505,8 @@ export class Game {
           this.invalidateTeamNav();
           const cv = inCore ? Math.max(0, nc[i] + delta) : nc[i];
           nc[i] = cv;
-          nf2[i] = (t2[i] || (nb2[i] && !cv)) ? 1 : 0;
-          nfe[i] = (t2[i] || nb2[i] || gv) ? 1 : 0;
+          nf2[i] = navMerge(t2[i], nb2[i] && !cv);
+          nfe[i] = navMerge(t2[i], nb2[i] || gv);
         }
       }
       this.navDirty = true;
@@ -1438,8 +1527,8 @@ export class Game {
         if (isWall) nw[i] = blocked ? Math.min(255, nw[i] + 1) : Math.max(0, nw[i] - 1);
         /* Patch the combined grids in place. Recombining all 65 536 cells on
            every house was a 1.2 ms spike for a change that touches ~36. */
-        nf[i] = (t[i] || (v && !nc[i])) ? 1 : 0;
-        nfe[i] = (t[i] || v || ng[i]) ? 1 : 0;
+        nf[i] = navMerge(t[i], v && !nc[i]);
+        nfe[i] = navMerge(t[i], v || ng[i]);
       }
     }
     this.navDirty = true;
@@ -1663,7 +1752,40 @@ export class Game {
     if (unit.squad) base *= this.squads.speedMul(unit);
     if (this.calendar) base *= this.calendar.speedMul();
     if (this.climate) base *= this.climate.speedMul();
+    base *= this.climbSpeedMul(unit);
     return base;
+  }
+
+  /**
+   * What the ascent costs.
+   *
+   * A climb that is merely walkable is a corridor with a toll gate on it: the
+   * player pays once for the ladder and then the mountain behaves like a
+   * field. The drag is what makes the three tiers mean anything -- a man on a
+   * rope ladder takes the better part of a minute to go up fifty metres of
+   * run, which is long enough for a defender on the crown to see him coming
+   * and meet him at the top, and the Age IV stair is *faster* than open
+   * ground because it is a paved road with a hoist beside it.
+   *
+   * Uphill and downhill are different numbers for the obvious reason, and
+   * the sign comes from the leg being walked rather than from the unit's
+   * position -- a man standing still on a ramp is not climbing anything.
+   */
+  climbSpeedMul(unit) {
+    if (!this.world.climbs || !this.world.climbs.length) return 1;
+    const nav = this.world.nav;
+    if (!nav || !nav.domain) return 1;
+    const d = nav.domainAt(unit.x, unit.z);
+    if (d < CLIMB_MIN) return 1;
+    /* Which way along the ramp? Fall back to "uphill" when there is no leg
+       to read: standing on a ladder is the slow case, not the fast one. */
+    let dy = 1;
+    const wp = unit.path && unit.path[unit.pathIdx];
+    if (wp) dy = this.heightAt(wp[0], wp[1]) - this.heightAt(unit.x, unit.z);
+    const up = dy > 0;
+    if (d === DOMAIN.FOOT_CLIMB) return up ? 0.42 : 0.65;
+    if (d === DOMAIN.MOUNTED_CLIMB) return up ? 0.72 : 0.95;
+    return up ? 1.05 : 1.10;
   }
 
   /**
@@ -2177,6 +2299,10 @@ export class Game {
 
   onBuildingKilled(building, attacker) {
     this.markBuildingFootprint(building, false);
+    /* Burn the ladder and the mountain closes behind it. This is the whole
+       point of the structure being destructible: whoever is up there is up
+       there, and whatever they were carrying down is not coming down. */
+    if (building.def.climb) this.setClimbTier(building, true);
     /* Breaking a place is worth more than breaking a man, and a champion
        standing in the ruins earns it. */
     if (attacker && attacker.champion && this.champions) {
@@ -2198,6 +2324,17 @@ export class Game {
 
   onBuildingComplete(building) {
     this.popDirty = true;
+    if (building.def.climb) {
+      /* An upgrade only tears the old structure down once its replacement is
+         standing, so there is no frame in which the mountain is sealed by
+         work the player paid to improve it. */
+      if (building._replaces && !building._replaces.dead) {
+        building._replaces.climb = null;
+        building._replaces.kill(null);
+        building._replaces = null;
+      }
+      this.setClimbTier(building);
+    }
     if (this.modHost) this.modHost.onBuildingComplete(building);
     if (building.team === TEAM_PLAYER) {
       this.notify(`${building.name} complete`, 'good');
@@ -3110,9 +3247,60 @@ export class Game {
     return count;
   }
 
+  /**
+   * Split an order by what each unit is actually able to climb.
+   *
+   * A mixed squad told to take a summit is the normal case, not an edge
+   * case: the player drags a box over spearmen and cataphracts and taps the
+   * crown. Refusing the whole order is wrong, obeying it with half the
+   * squad grinding against a cliff is worse. The men go up; the horses walk
+   * to the foot of the ascent and wait there, which is where their rider
+   * would in fact stop.
+   *
+   * Returns the units that can still be given the original order.
+   */
+  _splitByClimb(movable, x, z) {
+    const climbs = this.world.climbs;
+    if (!climbs || !climbs.length) return movable;
+    const able = [];
+    let parked = 0, worst = 0;
+    for (const u of movable) {
+      const t = this.traversalOf(u);
+      if (t === 0 || u.def.naval) { able.push(u); continue; }
+      const pf = this.pfFor(u);
+      if (!pf.goalGatedFor || !pf.goalGatedFor(u.x, u.z, x, z, t)) { able.push(u); continue; }
+      /* Shut out. Send him to the stand at the bottom of the climb that
+         leads where he was pointed, not to the cliff face. */
+      const c = this.climbNear(x, z, 1e9);
+      const a = c && c.footAnchor;
+      if (a) {
+        u.state = STATE.MOVE;
+        u.target = null; u.gatherTarget = null; u.buildTarget = null; u.repairTarget = null;
+        u.formationSlot = null;
+        u.moveTo(a.x + (this.rng() - 0.5) * 6, a.z + (this.rng() - 0.5) * 6, true);
+      }
+      parked++;
+      if (t > worst) worst = t;
+    }
+    if (parked && movable.some((u) => u.team === TEAM_PLAYER)) {
+      /* One line, once -- not one per horse. A squad of twelve cataphracts
+         must not produce twelve toasts. */
+      const now = this.time;
+      if (!this._climbToastAt || now - this._climbToastAt > 6) {
+        this._climbToastAt = now;
+        this.notify(worst >= 2
+          ? 'Siege requires Cut-Stone Stairs in Age IV'
+          : 'Cavalry cannot climb ladders — upgrade to Timber Switchbacks in Age III', 'bad');
+      }
+    }
+    return able;
+  }
+
   orderMove(units, x, z, formation = true) {
     units = this.freeUnits(units);
-    const movable = units.filter((u) => !u.dead && !u.garrisoned && u.kind === 'unit');
+    let movable = units.filter((u) => !u.dead && !u.garrisoned && u.kind === 'unit');
+    if (!movable.length) return;
+    movable = this._splitByClimb(movable, x, z);
     if (!movable.length) return;
     if (!formation || movable.length === 1) {
       for (const u of movable) {
@@ -3201,13 +3389,18 @@ export class Game {
 
   orderBuild(units, building) {
     units = this.freeUnits(units);
+    /* A cliff structure stands in a sealed throat: walking at it is walking
+       at rock. Each man goes to the build stand on his own side instead. */
+    const climb = building && building.def.climb ? building.climb : null;
     for (const u of units) {
       if (u.dead || u.type !== 'villager') continue;
       u.buildTarget = building;
       u.state = STATE.BUILD;
       u.gatherTarget = null;
       u.target = null;
-      u.moveTo(building.x, building.z, true);
+      const stand = climb ? this.climbStandFor(u, climb) : null;
+      if (stand) u.moveTo(stand.x, stand.z, true);
+      else u.moveTo(building.x, building.z, true);
     }
   }
 
@@ -3301,17 +3494,35 @@ export class Game {
     /* `free` is the scripting escape hatch -- campaign set-pieces, the
        scenario tests and the AI's own hand-placed opening -- so only paid
        placements are checked. What the player buys is always checked. */
+    /* A climb structure is bought for a socket, so the socket is resolved
+       before anything is spent -- and the structure is then placed on the
+       throat rather than wherever the thumb landed. */
+    let socket = opts.climb || (def.climb ? this.climbNear(x, z, 26) : null);
     if (!opts.force && !opts.free) {
-      const spot = this.canPlaceAt(type, team, x, z, { ignoreUnits: true });
+      const spot = this.canPlaceAt(type, team, x, z, { ignoreUnits: true, climb: socket });
       if (!spot.ok) {
-        if (team === TEAM_PLAYER) this.notify(`Cannot build here: ${spot.reason}`, 'bad');
+        if (team === TEAM_PLAYER) this.notify(CANNOT_BUILD[spot.reason] || `Cannot build here: ${spot.reason}`, 'bad');
         return null;
       }
+      if (spot.climb) socket = spot.climb;
+    }
+    let replaced = null;
+    if (def.climb && socket) {
+      x = socket.throat.x; z = socket.throat.z;
+      replaced = this.climbStructure(socket);
     }
     this._clearFootprint(type, x, z);
     if (!opts.free) this.spend(team, cost);
     const b = new Building(this, type, team, x, z, opts.instant);
-    b.facing = opts.facing ?? (Math.atan2(-x, -z));
+    /* Face up the mountain, so the ladder leans on the cliff it climbs. */
+    b.facing = def.climb && socket ? socket.angle + Math.PI : (opts.facing ?? (Math.atan2(-x, -z)));
+    if (socket && def.climb) b.climb = socket;
+    /* An upgrade replaces its predecessor only once the new structure is
+       standing, so the mountain never closes in between. A half-built
+       switchback leaves the ladder exactly where it was. Set before the
+       building is announced, because an instant placement completes inside
+       addBuilding's own frame. */
+    if (replaced) b._replaces = replaced;
     this.addBuilding(b);
     if (opts.instant) this.onBuildingComplete(b);
     this.onEvent('place', { building: b });
@@ -3319,10 +3530,151 @@ export class Game {
   }
 
   /** Is a building ghost position legal? */
+  /* ==========================================================
+     CLIMB SOCKETS
+     ----------------------------------------------------------
+     Everything that knows a climb structure is not an ordinary building
+     lives here, so the rest of the game can keep treating it as one.
+     ========================================================== */
+
+  /** The climb socket nearest to a point, within `maxDist` metres. */
+  climbNear(x, z, maxDist = 26) {
+    const climbs = this.world.climbs;
+    if (!climbs || !climbs.length) return null;
+    let best = null, bd = maxDist * maxDist;
+    for (let i = 0; i < climbs.length; i++) {
+      const c = climbs[i];
+      /* Measured to the throat, not to the crown: the throat is where the
+         structure stands and where the player's thumb will be. */
+      const t = c.throat || c;
+      const d = dist2(x, z, t.x, t.z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+
+  /** The structure standing on a socket, if any. */
+  climbStructure(climb) {
+    if (!climb) return null;
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (b.dead || !b.def.climb) continue;
+      if (b.climb === climb) return b;
+    }
+    return null;
+  }
+
+  /**
+   * Which end of a climb this unit should walk to.
+   *
+   * The anti-deadlock rule of the whole section. A climb has two verified
+   * stands, one below the throat and one above it, and a villager is sent
+   * to whichever of them is on his own side of the mountain -- so a valley
+   * crew builds the first ladder up, and a party stranded on the crown
+   * when it burns builds the next one down. Choosing by distance instead
+   * would send the stranded party to a stand on the wrong side of a cliff.
+   */
+  climbStandFor(unit, c) {
+    if (!c) return null;
+    const stands = [c.footAnchor, c.summitAnchor].filter(Boolean);
+    if (!stands.length) return null;
+    const pf = this.pfFor(unit);
+    const trav = this.traversalOf(unit);
+    if (pf && pf.sameComponent) {
+      for (const a of stands) if (pf.sameComponent(unit.x, unit.z, a.x, a.z, trav)) return a;
+    }
+    let best = stands[0], bestD = Infinity;
+    for (const a of stands) {
+      const d = (a.x - unit.x) ** 2 + (a.z - unit.z) ** 2;
+      if (d < bestD) { bestD = d; best = a; }
+    }
+    return best;
+  }
+
+  /**
+   * Re-stamp a socket from the structure standing on it.
+   *
+   * One path in and out: build, upgrade and destruction all end here, so
+   * there is never a second opinion about what a climb cell contains.
+   */
+  setClimbTier(building, removing = false) {
+    const c = building.climb || this.climbNear(building.x, building.z);
+    if (!c) return;
+    if (!removing) { c.tier = building.def.climbDomain | 0; building.climb = c; }
+    else if (c.tier && (!building.climb || building.climb === c)) {
+      /* Only if nothing else is standing there. An upgrade kills the old
+         structure *after* the new one is up, and re-sealing on the corpse
+         would shut a stair that exists. */
+      const other = this.buildings.find((b) => !b.dead && b !== building && b.def.climb && b.climb === c);
+      c.tier = other ? (other.def.climbDomain | 0) : 0;
+    }
+    sealClimbThroats(this.world);
+    /* The terrain layer changed under the combined grids, so they have to be
+       rebuilt rather than patched: a climb is the one terrain edit that
+       happens mid-match. */
+    this.rebuildNavTerrain();
+    if (this.world.climbs) this.onEvent('climb', { climb: c, tier: c.tier });
+  }
+
+  /**
+   * Recombine the whole nav grid after the terrain layer itself changed.
+   *
+   * Building footprints patch their own cells, which is why placing a house
+   * is cheap. A climb opening or closing changes the ground, so the three
+   * combined layers are rebuilt from scratch -- a few hundred microseconds,
+   * and it happens when a ladder is finished or burnt, not per frame.
+   */
+  rebuildNavTerrain() {
+    const t = this.navTerrain, nb = this.navBuild, nf = this.navFinal;
+    const nfe = this.navFinalEnemy, ng = this.navGate, nc = this.navCarve;
+    for (let i = 0; i < t.length; i++) {
+      nf[i] = navMerge(t[i], nb[i] && !nc[i]);
+      nfe[i] = navMerge(t[i], nb[i] || ng[i]);
+    }
+    this.navDirty = true;
+    this.navForce = true;
+    this.invalidateTeamNav();
+    this.refreshNav();
+  }
+
+  /** Is this rocky summit ground, where only field fortifications stand? */
+  isSummitGround(x, z) {
+    return !!(this.world.isSummit && this.world.isSummit(x, z));
+  }
+
   canPlaceAt(type, team, x, z, opts = {}) {
     const def = BUILDING_DEFS[type];
     const half = (def.size || 3) * 0.5;
     if (!this.isInside(x, z)) return { ok: false, reason: 'edge' };
+    /* ---- a climb structure is placed on a socket, not on ground ----
+       The throat is BLOCKED by construction, so every ordinary test below
+       (slope, passability, "is this cell free") would refuse it. It answers
+       to the socket instead: is there one here, is it free, and is the age
+       right. */
+    if (def.climb) {
+      const c = opts.climb || this.climbNear(x, z, 26);
+      if (!c) return { ok: false, reason: 'noclimb' };
+      const st = this.teams.get(team);
+      if (st && (st.age | 0) < (def.age | 0)) return { ok: false, reason: 'age' };
+      const standing = this.climbStructure(c);
+      if (standing) {
+        /* Upgrading in place is allowed; building the same thing twice is
+           not, and neither is downgrading a stair into a ladder. */
+        const up = (standing.def.upgradesTo || []).includes(type);
+        if (!up) return { ok: false, reason: 'occupied' };
+        if (standing.team !== team) return { ok: false, reason: 'occupied' };
+      }
+      return { ok: true, reason: '', climb: c };
+    }
+    /* ---- the alpine summit rule ----
+       A rocky crown is not a town site. Letting a player raise a mill and a
+       mining camp on the summit turns the whole mountain into a second base
+       with a toll road, and then hauling the ore down -- which is the thing
+       the ladder and the lift exist to make interesting -- stops happening
+       at all. Field fortifications only: hold the ground, do not settle it. */
+    if (!def.climb && SUMMIT_FORBIDDEN.has(type) && this.isSummitGround(x, z)) {
+      return { ok: false, reason: 'summit' };
+    }
     if (x < -this.mapw.half + half || x > this.mapw.half - half || z < -this.mapw.half + half || z > this.mapw.half - half) return { ok: false, reason: 'edge' };
     // must be on reasonably flat land (or water for docks)
     const h = this.heightAt(x, z);

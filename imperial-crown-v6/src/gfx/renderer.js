@@ -37,7 +37,7 @@ import { UnitRenderer, rigKeyFor } from './unitRenderer.js';
 import { UNIT_VS, UNIT_FS } from './rig/unitShaders.js';
 import { buildTextures, uploadBaked, MAT, SPRITE } from './textures.js';
 import { bakeTerrain } from './bake.js';
-import { buildBuilding, buildUnit, buildProp, buildGateDoor, BUILDING_TYPES, UNIT_TYPES } from './models.js';
+import { buildBuilding, buildUnit, buildProp, buildGateDoor, buildLiftCrate, BUILDING_TYPES, UNIT_TYPES } from './models.js';
 import { extractPlanes, sphereInFrustum } from './camera.js';
 import { BUILDING_DEFS, teamColorFor, PARTY_COLOR, TEAM_COLORS, NEUTRAL_COLOR } from '../sim/data.js';
 import { STATE } from '../sim/entities.js';
@@ -89,6 +89,7 @@ const teamLinear = (team, game) =>
 
 /** Models that should not sway in the wind (masonry, ships, siege). */
 const NO_SWAY = new Set(['stone_wall', 'palissade_wall', 'stone_gate', 'castle', 'wonder',
+  'cliff_switchback', 'cliff_lift',
   'dock', 'outpost_shrine', 'fishing_boat', 'transport_ship', 'war_galley', 'fire_ship',
   'demo_ship', 'cannon_galleon', 'ram', 'mangonel', 'trebuchet', 'bombard_cannon', 'farm']);
 
@@ -280,6 +281,10 @@ export class Renderer {
     /* gate leaves are animated, so they get their own tiny batch */
     this.gateDoorBatch = new InstanceBatch(gl, buildGateDoor(), 40);
     this.gateDoorBatch.cull = true;
+    /* The pulley lift's ore crate. Its own batch for the same reason the
+       gate leaf has one: it has to move independently of the structure. */
+    this.liftCrateBatch = new InstanceBatch(gl, buildLiftCrate(), 24);
+    this.liftCrateBatch.cull = true;
 
     onProgress('Assembling armies…', 0.8);
     await frame();
@@ -314,7 +319,7 @@ export class Renderer {
     this.resFadeBatches = new Map();
     const decorNames = ['bush', 'rock', 'stump', 'reed', 'tuft', 'flower', 'pebble', 'log', 'ruin',
       'crate', 'barrel', 'haystack', 'firewood', 'cart', 'well', 'fence', 'drying_rack',
-      'stone_bridge'];
+      'stone_bridge', 'trail_post'];
     for (const name of decorNames) {
       const res = buildProp(name);
       if (!res) continue;
@@ -504,7 +509,7 @@ export class Renderer {
       this.resBatches, this.resFadeBatches]) {
       if (map) for (const b of map.values()) put(b);
     }
-    for (const o of [this.fireBatch, this.gateDoorBatch, this.arrowBatch, this.boulderBatch,
+    for (const o of [this.fireBatch, this.gateDoorBatch, this.liftCrateBatch, this.arrowBatch, this.boulderBatch,
       this.iceBatch, this.particleAlpha, this.particleAdd, this.billboards, this.decals,
       this.shadowTarget, this.postTarget]) put(o);
     if (this.textures) {
@@ -1287,6 +1292,7 @@ export class Renderer {
     // ---------- buildings ----------
     for (const b of this.buildingBatches.values()) b.begin();
     this.gateDoorBatch.begin();
+    this.liftCrateBatch.begin();
     const bCull = this.quality.buildingCull;
     const bCull2 = bCull * bCull;
     for (let i = 0; i < game.buildings.length; i++) {
@@ -1308,8 +1314,28 @@ export class Renderer {
       const d2 = dx * dx + dz * dz;
       if (d2 < batch._near) batch._near = d2;
       const m = m4trs(this._mB, b.x, b.y - 0.04, b.z, b.facing || 0, scale, scale, scale);
+      /* The lift's pulley turns whenever the lift is finished and alive --
+         a freight hoist on a mining summit is never idle, and a wheel that
+         only moved while a villager happened to be depositing would read as
+         broken. The crate's phase is driven off the same clock below. */
+      let spin = 0, hoist = -1;
+      if (b.def && b.def.climb && b.def.dropoff && !b.dead && prog > 0.999) {
+        const ph = this.time * 0.42 + (b.x + b.z) * 0.07;
+        spin = ph * 2.1;
+        hoist = 0.5 - Math.cos(ph) * 0.5;     // 0 at the foot, 1 at the jib
+      }
       batch.push(m, tc[0], tc[1], tc[2], prog, dmg, 1, (b.team || 0) * 0.13,
-        0, 0, 0, 0, 0, 0, wear, NO_SWAY.has(b.type) ? 0 : 0.35);
+        0, 0, 0, 0, spin, 0, wear, NO_SWAY.has(b.type) ? 0 : 0.35);
+      if (hoist >= 0) {
+        /* Down the rope: the jib head is 11.7 m up and 1.86 m out in front
+           of the structure, the pick-up is at the foot of the same line. */
+        const fy = b.facing || 0, cf = Math.cos(fy), sf = Math.sin(fy);
+        const ox = sf * 1.86, oz = cf * 1.86;
+        const cy = b.y - 0.04 + 1.0 + hoist * 9.6;   // stops just under the sheave
+        const cm = m4trs(this._mDoor, b.x + ox, cy, b.z + oz, fy, scale, scale, scale);
+        this.liftCrateBatch.push(cm, tc[0], tc[1], tc[2], 1, dmg, 1, (b.team || 0) * 0.13,
+          0, 0, 0, 0, 0, 0, wear, 0);
+      }
       if (b.def && b.def.gate) {
         /* the leaf drops 2.1 m when open; 0.02 keeps it hidden, not z-fighting */
         const open = clamp(b.gateOpen || 0, 0, 1);
@@ -1325,11 +1351,12 @@ export class Renderer {
       st.tris += b.triCount * b.count;
       st.instances += b.count;
     }
-    if (this.gateDoorBatch.count) {
-      this.gateDoorBatch.flush();
-      active.push(this.gateDoorBatch);
-      st.tris += this.gateDoorBatch.triCount * this.gateDoorBatch.count;
-      st.instances += this.gateDoorBatch.count;
+    for (const extra of [this.gateDoorBatch, this.liftCrateBatch]) {
+      if (!extra.count) continue;
+      extra.flush();
+      active.push(extra);
+      st.tris += extra.triCount * extra.count;
+      st.instances += extra.count;
     }
 
     // ---------- units ----------
@@ -2219,7 +2246,7 @@ export class Renderer {
     const freeMap = (m) => { if (m) for (const b of m.values()) free(b); };
     freeMap(this.buildingBatches); freeMap(this.unitBatches); freeMap(this.propBatches);
     freeMap(this.resBatches); freeMap(this.resFadeBatches);
-    free(this.fireBatch); free(this.gateDoorBatch); free(this.arrowBatch);
+    free(this.fireBatch); free(this.gateDoorBatch); free(this.liftCrateBatch); free(this.arrowBatch);
     free(this.boulderBatch); free(this.iceBatch); free(this.particleAlpha);
     free(this.particleAdd); free(this.billboards); free(this.decals);
     for (const c of this.chunks || []) free(c.mesh);
@@ -2233,7 +2260,7 @@ export class Renderer {
     if (!tracked && this.fogTexture) gl.deleteTexture(this.fogTexture);
     for (const p of [this.pSky, this.pTerrain, this.pModel, this.pShadow, this.pWater,
       this.pParticle, this.pBillboard, this.pDecal, this.pPost, this.pFlash]) free(p);
-    this.fireBatch = null; this.gateDoorBatch = null;
+    this.fireBatch = null; this.gateDoorBatch = null; this.liftCrateBatch = null;
     this.chunks = []; this.waterMesh = null; this.propCells = null;
     this.heightTex = null; this.bedTex = null; this.terrainAlbedo = null; this.flowTex = null;
     this._persistentTracked = false;
