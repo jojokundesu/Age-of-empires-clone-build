@@ -126,6 +126,33 @@ check('the AI raises an army at all', () => {
   assert(m.peakArmy >= 8, `the army never got past ${m.peakArmy} men in 8 min`);
 });
 
+check('the camp is ground, not a coordinate in a lake', () => {
+  /* The camp is computed by walking back from the enemy hall along the line of
+     march. On Large that line runs into water: the point was 5.9 m under a
+     lake, every order to it was refused, and the column spent the rest of the
+     match "at the camp" ordering seventeen men into a lakebed. A camp is only
+     a camp if an army can stand on it. */
+  for (const size of ['normal', 'large']) {
+    const m = liveMatch(size, 15);
+    const camp = m.bot.line && m.bot.line.camp;
+    if (!camp) continue;                 // never marched in this window
+    assert(m.game.isPassable(camp.x, camp.z, { radius: 0.5, def: {} }),
+      `${size}: the camp at ${camp.x.toFixed(0)},${camp.z.toFixed(0)} is not standable ground`);
+    const h = m.world.height.sample(camp.x, camp.z);
+    assert(h > -0.25, `${size}: the camp is ${(-h).toFixed(1)} m under water`);
+  }
+});
+
+check('a column that cannot reach its camp still goes to the war', () => {
+  /* The camp phase used to have no clock. The "stalled" test fires only within
+     420 m of the enemy hall, so an army camped half a kilometre out on a 1 km
+     road stood in a field for the rest of the match. Measured on Large: the
+     march began at 13.1 min and the storm never came. */
+  const m = liveMatch('large', 20);
+  assert(m.storms >= 1, 'the column never left the camp in 20 minutes');
+  assert(m.marches >= 1, 'the column never marched at all');
+});
+
 check('a long road is not a broken one: the column forms before it walks', () => {
   const m = liveMatch('large', LONG ? 30 : 20);
   assert(m.marches >= 1, 'the AI never marched');

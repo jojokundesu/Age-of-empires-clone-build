@@ -385,6 +385,10 @@ export function generateWorld(seed = 20261, opts = {}) {
 
   // ---- resources, props and decoration
   const resources = [];
+  /* Where the animals on the high ground will stand. Kept separate from
+     `resources` because an animal is a body, not a node -- the game spawns a
+     unit from each of these. */
+  const wildlife = [];
   const propList = [];
   const decor = [];
   const roads = [];
@@ -932,6 +936,32 @@ export function generateWorld(seed = 20261, opts = {}) {
       resources.push({ kind: 'food', type: 'berry_bush', resKind: 'food',
         x: s.x, z: s.z, amount: 420, radius: 1.0, scale: 1.0 + rng() * 0.2, y: s.y, summit: true });
     }
+    /* ---- and the toll
+       The animals are posted around the *head of the ramp*, not the middle of
+       the summit: that is the ground a working party has to cross to reach any
+       of the prize, so an escort has to hold the top of the path rather than
+       happen to be standing near a mine. */
+    /* Between the ramp head and the crown, in among the mines. Not down the
+       ramp: posted there, the animals are eighteen metres from a working party
+       on the summit and simply never notice one, so the "danger" turns out to
+       be scenery the first time the player walks past it. */
+    const head = {
+      x: climb.x + Math.cos(climb.angle + Math.PI) * Math.min(climb.length * 0.28, 7),
+      z: climb.z + Math.sin(climb.angle + Math.PI) * Math.min(climb.length * 0.28, 7)
+    };
+    /* Five animals a crown, not nine. Measured against an escort: nine killed
+       a four-man guard and the whole working party without ever looking like a
+       fight, which is not danger, it is a toll booth that only takes armies.
+       Five is a fight a real expedition wins and remembers. */
+    const packs = [['wolf', 2, 6], ['bear', 1, 5], ['boar', 2, 4]];
+    for (const [kind, count, spread] of packs) {
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * TAU + rng() * 0.9, r = 2.0 + rng() * spread;
+        const x = head.x + Math.cos(a) * r, z = head.z + Math.sin(a) * r;
+        if (!onCrown(x, z)) continue;
+        wildlife.push({ type: kind, x, z, y: ground(x, z), crown: { x: climb.x, z: climb.z } });
+      }
+    }
   }
 
   // Walkability: block cells covered by large props
@@ -966,6 +996,8 @@ export function generateWorld(seed = 20261, opts = {}) {
     corridors: hydro.corridors || [],
     /* graded ramps into the high ground: real terrain, not a permission */
     climbs,
+    /* the toll on the mountain: bears, wolves and boars posted at the ramp head */
+    wildlife,
     playerBase, enemyBase,
     bases: SEATS,
     nav: null,

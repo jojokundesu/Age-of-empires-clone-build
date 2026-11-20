@@ -70,7 +70,16 @@ export class Entity {
     this.x = x;
     this.z = z;
     this.y = game.heightAt(x, z);
-    this.facing = (this.game ? this.game.rng() : Math.random()) * Math.PI * 2;
+    /* An animal's facing is its own business. Drawing it from the shared
+       stream made the *whole simulation* depend on whether the map had animals
+       on it -- a bear on a summit nobody walked to still shifted every later
+       roll, and matches that had been identical for months came out different.
+       Determinism is preserved, just not shared: a seeded hash of the spawn
+       position gives the same facing every time without spending a draw. */
+    const wildDef = game && UNIT_DEFS[type];
+    this.facing = (wildDef && wildDef.wild)
+      ? ((Math.imul((Math.round(x * 16) ^ Math.round(z * 16)) | 0, 2654435761) >>> 8) % 628) / 100
+      : (this.game ? this.game.rng() : Math.random()) * Math.PI * 2;
     this.dead = false;
     this.deadT = 0;
     this.hp = 1;
@@ -234,6 +243,16 @@ export class Unit extends Entity {
     this.lastGatherKind = null;
     this.repairT = 0;
     this.synced = false;
+    /* Wild animals: dangerous, unowned, and tethered to the ground they were
+       put on. `homePoint` is the leash anchor -- an animal that has chased a
+       woodcutter three hundred metres down the mountain is no longer a toll on
+       the mountain, it is a wandering problem, so it walks back. */
+    this.wild = !!def.wild;
+    if (def.wild) {
+      this.homePoint = { x, z };
+      this.stance = 'defensive';
+      this.noAggro = false;
+    }
     if (def.naval) this.y = 0.1;
   }
 
@@ -751,6 +770,10 @@ export class Unit extends Entity {
        timer -- never taking a unit the player has deliberately parked, and
        never before a manual order has had a moment to land. */
     if ((this.type === 'villager' || this.type === 'fishing_boat') && !this.noAggro && this.team !== 0) this._selfTask(dt);
+    /* A wild animal has no orders, no village and no reason to hold a line: it
+       notices what walks into its ground and it goes back to its ground when
+       there is nothing there. That is the whole of its behaviour. */
+    if (this.wild) { this.wildIdle(dt, stats); return; }
     // auto-acquire targets based on stance
     if (this.noAggro) return;
     if (this.def.classes.includes('monk')) return;
@@ -1116,6 +1139,51 @@ export class Unit extends Entity {
   }
 
   /** See updateIdle: put an idle villager back to work without being asked. */
+  /**
+   * A wild animal between fights.
+   *
+   * Three states and no more: fight what is in reach, chase it a little way
+   * off the mountain, and walk home when it has gone. The leash is the point
+   * -- it keeps the danger *on* the high ground, so the player can defeat it by
+   * fighting where they choose (pull it into the open, or bring an escort and
+   * fight it on the ramp) rather than by outrunning it across the map.
+   */
+  wildIdle(dt, stats) {
+    const g = this.game;
+    const home = this.homePoint;
+    const leash = this.def.homeLeash || 18;
+    if (!g) return;
+    /* Look for something worth eating. The scan is staggered like a soldier's
+       so a ridge of animals does not all think on the same tick. A cheaper
+       gate was tried -- a flat list of every non-animal body, scanned before
+       the spatial hash was touched -- and measured *slower* than the hash it
+       was avoiding (465 ms against 401), so it is gone. The hash is already
+       the right data structure; the mistake was assuming otherwise. */
+    if (this.attackCooldown <= 0 && (((g.frame || 0) + this.id) & 3) === 0) {
+      const sight = stats.sight || 11;
+      const prey = g.findEnemyNear(this, sight);
+      if (prey) {
+        /* A chase ends at the edge of the animal's ground. */
+        if (!home || Math.hypot(prey.x - home.x, prey.z - home.z) < leash + 8) {
+          this.target = prey;
+          this.state = STATE.ATTACK;
+          return;
+        }
+      }
+    }
+    if (this.state === STATE.ATTACK || this.state === STATE.ATTACK_MOVE) return;
+    /* Nothing to fight: drift back to the ground it was posted on. */
+    if (home) {
+      const d = Math.hypot(this.x - home.x, this.z - home.z);
+      if (d > leash * 0.5) {
+        this.state = STATE.MOVE;
+        this.moveTo(home.x, home.z, true);
+        return;
+      }
+    }
+    if (this.state !== STATE.IDLE && this.state !== STATE.MOVE) this.state = STATE.IDLE;
+  }
+
   _selfTask(dt) {
     if (this.carry.amount > 0.01 && this.carry.kind) {
       if ((this._returnRetryAt || 0) <= this.game.time) this.returnResources();

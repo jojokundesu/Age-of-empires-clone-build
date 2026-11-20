@@ -180,7 +180,12 @@ const CLASSES = ['villager', 'spearman', 'archer', 'man_at_arms', 'knight', 'mon
 
 const placed = await page.evaluate((keys) => {
   const a = window.__imperial, g = a.game;
-  const live = g.units.filter((u) => !u.dead);
+  /* Crown units only. The row is anchored on the first live body, and the map
+     now also holds wild animals -- which sit on mountain summits thirty metres
+     up, so anchoring on one put the whole survey on a slope in different light
+     and the colours came out wrong for a reason that had nothing to do with
+     cloth. The subject is the player's army on the player's ground. */
+  const live = g.units.filter((u) => !u.dead && !u.wild);
   if (!live.length) return 0;
   const ox = live[0].x, oz = live[0].z + 6;
   let n = 0;

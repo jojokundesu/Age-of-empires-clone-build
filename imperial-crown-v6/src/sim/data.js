@@ -61,6 +61,54 @@ export const CLASSES = ['infantry', 'cavalry', 'archer', 'siege', 'building', 's
 
 const U = (o) => ({ pop: 1, armor: 0, pierceArmor: 0, range: 0.9, sight: 11, time: 16, classes: [], bonuses: {}, ...o });
 
+/* ------------------------------------------------------------------
+   The animals on the high ground.
+
+   These are not a faction and not scenery. They are the toll on the mountain:
+   a crown is the richest ground on the map, and reaching it should cost an
+   escort rather than a single villager with a pick. So each summit carries a
+   handful of things with teeth, placed where the ramp arrives.
+
+   Two properties make them play as danger rather than as enemies. They are on
+   TEAM_WILD, so `isHostile` says true for any crown and false for each other --
+   a bear does not take sides, and a wolf does not eat a boar. And they never
+   leave their ground: `homeLeash` is measured from where they were placed, so
+   a player who pulls them off the mountain and kills them in the open has done
+   the sensible thing, and one who fights them on the summit has not.
+
+   They are deliberately cheap in geometry and few in number: six or seven per
+   crown reads as a guarded place, sixty would read as a swarm.
+   ------------------------------------------------------------------ */
+const WILD = (o) => U({
+  wild: true, classes: ['animal'], pop: 0,
+  speed: o.speed, hp: o.hp, attack: o.attack, armor: o.armor || 0,
+  pierceArmor: o.pierceArmor || 0, attackSpeed: o.attackSpeed || 1.2,
+  sight: o.sight || 11, time: 1, cost: {}, noBuilding: true,
+  ...o
+});
+
+/* ...and they are units, so the whole simulation -- combat, damage bonuses,
+   collision, the renderer's instancing, the minimap -- treats them as bodies
+   without a single special case. Merged into UNIT_DEFS below rather than kept
+   apart, because every one of those systems reads UNIT_DEFS. */
+export const WILD_DEFS = {
+  wolf: WILD({
+    name: 'Wolf', icon: 'wolf', hp: 55, attack: 7, armor: 0, pierceArmor: 0,
+    speed: 4.4, attackSpeed: 1.15, sight: 12, homeLeash: 22, pack: 4,
+    desc: 'Hunts in a pack and runs down a villager who strays from the escort.'
+  }),
+  bear: WILD({
+    name: 'Bear', icon: 'bear', hp: 150, attack: 12, armor: 2, pierceArmor: 1,
+    speed: 3.3, attackSpeed: 1.8, sight: 10, homeLeash: 14, pack: 2,
+    desc: 'Slow, armoured and very strong. A bear on a ramp is a real fight.'
+  }),
+  boar: WILD({
+    name: 'Boar', icon: 'boar', hp: 100, attack: 8, armor: 1, pierceArmor: 0,
+    speed: 3.8, attackSpeed: 1.4, sight: 9, homeLeash: 16, pack: 3,
+    desc: 'Territorial. Charges anything that comes down the mountain path.'
+  })
+};
+
 export const UNIT_DEFS = {
   villager: U({
     name: 'Villager', icon: 'villager', hp: 45, attack: 4, armor: 0, pierceArmor: 0,
@@ -253,7 +301,8 @@ export const UNIT_DEFS = {
     speed: 3.3, time: 20, cost: { wood: 100, gold: 50 }, classes: ['villager'],
     trade: true, sight: 9,
     desc: 'Generates gold by travelling between markets.'
-  })
+  }),
+  ...WILD_DEFS
 };
 
 /** `techs` are ids from TECHS that must be researched to unlock. */

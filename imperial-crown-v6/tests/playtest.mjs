@@ -386,8 +386,24 @@ await check('the army card selects soldiers and a tap marches them', async () =>
     return { x: u.x, z: u.z };
   });
   await frame(3);
-  const p = await screenOf(at.x, at.z + 9, 0.3);
-  assert(p, 'the destination is off screen');
+  /* The destination must be a patch of *open ground*, not just a point nine
+     metres away. Nine metres is barely two metres of screen at the default
+     camera, so the tap was landing on whichever villager happened to be
+     standing there and selecting him instead of ordering a march -- and the
+     check failed for a reason that had nothing to do with marching. Walk the
+     sample ring until one of them is ground with no body and no node on it. */
+  let p = null, dest = null;
+  for (const [dx, dz] of [[0, 9], [9, 0], [-9, 0], [0, -9], [11, 11], [-11, 11], [11, -11], [-11, -11], [0, 16], [16, 0], [0, -16], [-16, 0]]) {
+    const cand = await screenOf(at.x + dx, at.z + dz, 0.3);
+    if (!cand) continue;
+    const clear = await page.evaluate((sx, sy) => {
+      const a = window.__imperial;
+      const h = a.input.pick(sx, sy);
+      return !h;
+    }, cand.x, cand.y);
+    if (clear) { p = cand; dest = { x: at.x + dx, z: at.z + dz }; break; }
+  }
+  assert(p, 'no open ground near the army to march to');
   const before = await page.evaluate(() => window.__imperial.game.selection.map((u) => ({ id: u.id, x: u.x, z: u.z })));
   await page.mouse.click(p.x, p.y);
   await speed(4);

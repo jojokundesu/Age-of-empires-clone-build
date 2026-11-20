@@ -438,6 +438,68 @@ This is wired into the nav grid as a *domain*, not a hack: a climbable slope is 
 traversal class, so pathing, formations and the AI all understand it without special
 cases.
 
+### What was built
+
+**The terrain, not a permission.** Only 7 % of the high ground could be reached from the
+player's own town: the cliffs were solid, correctly, and there was no way up them. The
+gold on the summits was decoration with a price tag. The fix grades a ramp into the
+height field from a summit down to gentle low ground and then **recompiles the domain
+from the new heights**, so the ramp becomes ordinary walkable ground and the cliff either
+side of it stays solid. Nothing downstream has to know a climb exists. The cheap version
+— punching passable cells into the domain — would have passed a reachability test while
+letting men walk up a vertical face, and `tests/mountain.mjs` fails it explicitly: every
+steep land cell on the map must still be BLOCKED.
+
+Three things measurement caught that reading would not have:
+
+- a foot on merely *low* ground lands on talus, and three blocked cells seal the bottom of
+  the ramp; the foot must be gentle ground in its own right (`slope < 0.55`)
+- a ramp only as wide as the ramp leaves a band of original cliff at the crown junction —
+  one blocked cell between a summit and its own ramp (9 m of shoulder, two-pass blend)
+- a summit on the border has no room for a ramp, and a summit ringed by sea has nowhere to
+  put the foot
+
+So every cut is **proved** walkable before it is kept, by flooding the corridor under the
+same rule the domain compiler applies, and summits are worked down the ranked list until
+four real climbs exist. A mountain the player can see and cannot climb is the defect this
+section removes.
+
+**The prize.** Each crown carries gold at 2100 a mine (the contested centre of the map
+pays 1200), plus stone, timber and forage, laid out *around* the summit rather than on it
+so there is somewhere to put the camp that works the mountain. ~80 nodes on Normal.
+
+**The toll.** Wolves, bears and boars on `TEAM_WILD` — not a crown, never scored, never
+counted for victory, and not hostile to each other. They are posted among the mines on the
+crown and leashed to their ground. Measured on a real summit with a real working party:
+no escort → the crew is wiped; four spearmen → the crew lives and half the guard is lost;
+eight → the summons. That is the curve the section wanted — an escort is a decision, not a
+ritual.
+
+**Results.** small 0 climbs (classic exempt by geometry, not a special case), normal 4/4
+reachable, large 4/4, huge 4/4. Classic is bit-identical: 0 climbs, 907 resources,
+heights unchanged.
+
+### Fixed on the way
+
+Two pre-existing AI defects that this section's larger sample exposed:
+
+- **The camp could be under water.** It is computed by walking back from the enemy hall
+  along the line of march; on Large that line runs into a lake, and the point was 5.9 m
+  under it. Every order there was refused, so the column spent the rest of the match "at
+  the camp" ordering seventeen men into a lakebed. The camp now finds the nearest dry,
+  standable ground.
+- **The camp phase had no clock.** The "stalled" test fires only within 420 m of the enemy
+  hall, so on a 1 km road a column camped half a kilometre out stood in a field for the
+  rest of the match: the march began at 13.1 min and the storm never came. The camp is now
+  bounded at three minutes, and Large storms at 16.1 min.
+
+### Not built
+
+**The age-gated infrastructure** (ladder → switchback → cut-stone stairs → pulley lift, all
+destructible) is still open. The ramp is terrain and cannot be broken, which is the honest
+base state; making it a *building* that gates ascent by age and can be raided is a
+separate piece of work — it needs the building to own the nav cell, not the terrain.
+
 ### Why last
 
 It touches terrain generation, nav, wildlife, pathing, the AI and the economy at once.

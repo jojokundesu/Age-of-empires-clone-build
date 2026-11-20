@@ -1519,7 +1519,14 @@ export class AIController {
        either way and the enemy has had eight minutes to fortify. So the bar
        comes *down* with distance, and the road does the rest. */
     need += Math.min(6, Math.round(this.marchDistance() / 400));
-    need -= Math.min(3, Math.floor(this.marchDistance() / 600));
+    /* ...and the discount for a long road is *paid for* by the column
+       collecting the men trained behind it. Measured on Large: the road is
+       1.07 km, the crown marched at 13.1 min, reached the camp at 20.5, and a
+       column that has walked that far should have started walking sooner. The
+       discount used to be a third of the surcharge (a net +3 at this
+       distance); a full offset makes it a net zero and takes about two
+       minutes off the time to contact. */
+    need -= Math.min(6, Math.round(this.marchDistance() / 400));
     /* do not walk into a host several times your size on a rumour: if we can
        see the garrison and it outweighs us, wait. The bar is deliberately
        loose -- a crown that waits for a perfect army never marches. */
@@ -1878,7 +1885,14 @@ export class AIController {
        going to be improved by another lap of the camp. */
     const stalled = g.time - line.at > 150 &&
       Math.hypot(centreNow.x - this.enemyBase.x, centreNow.z - this.enemyBase.z) < 420;
-    if (stalled) { this.stormTown(column, army); return true; }
+    /* ...and a camp phase needs a clock of its own. The test above only fires
+       once the column is within 420 m of the enemy hall, which on a 1 km road
+       means the army can be camped half a kilometre out for the rest of the
+       match -- three minutes standing in a field, measured on Large. Being at
+       the camp IS being at the end of the road; if the men are there and the
+       rest are not coming, the war starts from where the men are. */
+    const campedOut = line.phase === 'camp' && g.time - line.at > 180;
+    if (stalled || campedOut) { this.stormTown(column, army); return true; }
     if (gathered && !line.arrivedAt) line.arrivedAt = g.time;
     /* walk to the colours if straggling, but not forever: a man caught on a
        fence is not worth the whole campaign */
@@ -1958,9 +1972,48 @@ export class AIController {
        metres from the enemy's hall and every man in the column was being
        ordered to stand inside a farmyard. An army occupies ground; the men
        scatter across it and the map decides who can stand where. */
-    const point = { x: e.x - ux * off, z: e.z - uz * off };
+    let point = { x: e.x - ux * off, z: e.z - uz * off };
+    /* The camp must be ground an army can *stand* on. It is computed by
+       walking back from the enemy hall along the line of march, and on a big
+       map that line can run straight into a river, a lake or the sea: the
+       column then spends the rest of the match in the "at the camp" phase
+       ordering seventeen men to a point that refuses every step, which reads
+       as an army that will not attack and is really an army ordered into
+       water. Found on Large, where the camp landed 5.9 m under a lake. */
+    if (!this.groundIsClear(point.x, point.z, 34, 0.6) || !this.game.isPassable(point.x, point.z, { radius: 0.5, def: {} })) {
+      const dry = this.dryPointNear(point, ux, uz);
+      if (dry) point = dry;
+    }
     this._campCache = { goal: this.enemyBase, point, until: this.game.time + 40 };
     return point;
+  }
+
+  /**
+   * The nearest water-free place to gather, searching back along the line of
+   * march and then sideways.
+   *
+   * Backwards first, because the column comes from that direction and a camp
+   * behind it costs nothing; sideways second, for a ford or a lake that fills
+   * the whole line. Water is the thing that actually breaks the camp -- a man
+   * can always be nudged off a rock, but a man sent to the middle of a lake
+   * never moves at all.
+   */
+  dryPointNear(point, ux, uz) {
+    const g = this.game;
+    const dry = (x, z) => g.isPassable(x, z, { radius: 0.5, def: {} })
+      && this.groundIsClear(x, z, 30, 0.55);
+    for (let back = 20; back <= 320; back += 20) {
+      if (dry(point.x - ux * back, point.z - uz * back)) {
+        return { x: point.x - ux * back, z: point.z - uz * back };
+      }
+      for (const side of [0.18, -0.18, 0.36, -0.36]) {
+        const px = Math.cos(side), pz = Math.sin(side);
+        const cx = point.x - ux * back * px + uz * back * pz;
+        const cz = point.z - uz * back * px - ux * back * pz;
+        if (dry(cx, cz)) return { x: cx, z: cz };
+      }
+    }
+    return null;
   }
 
   /** Is there room for a body of men here, clear of buildings? */

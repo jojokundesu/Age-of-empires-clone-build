@@ -23,6 +23,14 @@
 */
 import { generateWorld } from '../src/sim/worldgen.js';
 import { DOMAIN } from '../src/sim/hydrology.js';
+import { Game, TEAM_WILD, TEAM_PLAYER } from '../src/sim/game.js';
+
+const NULL_FX = {
+  spawn() {}, dust() {}, smoke() {}, fire() {}, blood() {}, sparks() {},
+  explosion() {}, heal() {}, splash() {}, leaves() {}, glowPulse() {}, embers() {}, pollen() {},
+  buildDust() {}, arrowTrail() {}, rain() {}
+};
+const NULL_SOUND = { play() {} };
 
 let pass = 0;
 const fails = [];
@@ -204,6 +212,80 @@ check('the summit ground can actually be worked', () => {
     assert(workable === summit.length, `${size}: ${workable}/${summit.length} summit nodes have a reachable standing spot`);
   }
   return 'every summit node has walkable ground beside it';
+});
+
+/* ------------------------------------------------------------- the toll */
+/* A crown a single villager can stroll onto and mine is not high ground, it is
+   a plateau. These tests put a real working party on a real summit and ask
+   whether the animals there do anything -- and whether an escort changes the
+   answer, because "bring an escort" is the decision the section is for. */
+function crownEncounter({ escort, seconds = 45, size = 'normal' }) {
+  const w = generateWorld(20261, { size });
+  const g = new Game({ world: w, civ: 'franks', mode: 'campaign', difficulty: 'standard', fx: NULL_FX, sound: NULL_SOUND, seed: 20261 });
+  g.start();
+  g.ai = [];
+  g.teams.get(TEAM_PLAYER).popCap = 200;
+  const c = w.climbs[0];
+  const crew = [];
+  for (let i = 0; i < 3; i++) {
+    const v = g.spawnUnit('villager', TEAM_PLAYER, c.x + (i - 1) * 2, c.z + 2, null, { force: true });
+    v.noAggro = true;
+    crew.push(v);
+  }
+  const guard = [];
+  for (let i = 0; i < escort; i++) {
+    const m = g.spawnUnit('spearman', TEAM_PLAYER,
+      c.x + ((i % 4) - 1.5) * 1.4, c.z - 2 - Math.floor(i / 4) * 1.4, null, { force: true });
+    m.stance = 'aggressive';
+    guard.push(m);
+  }
+  for (let i = 0; i < seconds * 30; i++) g.update(1 / 30);
+  const wild = g.units.filter((u) => u.team === TEAM_WILD);
+  return {
+    crewAlive: crew.filter((v) => !v.dead).length,
+    guardLost: guard.filter((m) => m.dead).length,
+    wildAlive: wild.filter((u) => !u.dead).length,
+    wildTotal: wild.length,
+    game: g, world: w
+  };
+}
+
+check('an unescorted working party does not survive the summit', () => {
+  const r = crownEncounter({ escort: 0 });
+  assert(r.wildTotal > 0, 'no animals on the crown at all');
+  assert(r.crewAlive === 0, `${r.crewAlive}/3 villagers survived an escort of nobody`);
+  return `${r.wildTotal} animals, crew wiped`;
+});
+
+check('an escort saves the party and pays for it', () => {
+  const r = crownEncounter({ escort: 4 });
+  assert(r.crewAlive === 3, `only ${r.crewAlive}/3 villagers survived with four spearmen`);
+  assert(r.guardLost >= 1, 'the escort was free — no spearman was killed');
+  return `crew 3/3 saved, ${r.guardLost}/4 spearmen lost`;
+});
+
+check("animals are nobody's faction", () => {
+  const r = crownEncounter({ escort: 0, seconds: 0 });
+  const g = r.game;
+  assert(!g.teams.has(TEAM_WILD), 'animals registered as a crown');
+  assert(!g.teamIds.includes(TEAM_WILD), 'animals counted for victory');
+  assert(g.isHostile(TEAM_WILD, TEAM_PLAYER), 'animals are not hostile to a crown');
+  assert(g.isHostile(TEAM_WILD, 2), 'animals are not hostile to the enemy crown');
+  assert(!g.isHostile(TEAM_WILD, TEAM_WILD), 'animals are hostile to each other');
+  const wild = g.units.filter((u) => u.team === TEAM_WILD);
+  assert(wild.every((u) => u.wild), 'wild units are missing the wild flag');
+  assert(wild.every((u) => u.def.pop === 0), 'animals consume population');
+  return `${wild.length} animals, no crown, no pop`;
+});
+
+check('animals stay on their mountain', () => {
+  const r = crownEncounter({ escort: 0, seconds: 0 });
+  const g = r.game;
+  const wild = g.units.filter((u) => u.team === TEAM_WILD);
+  for (let i = 0; i < 30 * 40; i++) g.update(1 / 30);
+  const strays = wild.filter((u) => !u.dead && Math.hypot(u.x - u.homePoint.x, u.z - u.homePoint.z) > 30);
+  assert(strays.length === 0, `${strays.length} animals wandered more than 30 m off their ground`);
+  return 'every animal within 30 m of its post after 40 s';
 });
 
 /* ---------------------------------------------------------- determinism */

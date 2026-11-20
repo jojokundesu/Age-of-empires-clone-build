@@ -24,6 +24,10 @@ import { WORLD } from './worldgen.js';
 import { clamp, lerp, dist2, mulberry32 } from '../core/math.js';
 
 export const TEAM_NEUTRAL = 0;
+/* The animals. Not a crown, not in `teams`, never scored and never counted for
+   victory -- a bear that held a hill against you has not conquered anything.
+   It exists so that the high ground costs something to take. */
+export const TEAM_WILD = -1;
 export const TEAM_PLAYER = 1;
 export const TEAM_ENEMY = 2;
 
@@ -469,6 +473,17 @@ export class Game {
       node.facing = (i * 2.399) % 6.283;
       this.resources.push(node);
       this.resourceSpatial.insert(node);
+    }
+    /* ---- the animals on the high ground
+       They go in after the resources, so the tallest summits already have
+       their mines and the animals are posted among them rather than under
+       them. Spawned raw: they are not trained, not owned, and not paid for. */
+    for (const a of (this.world.wildlife || [])) {
+      const u = this.spawnUnitRaw(a.type, TEAM_WILD, a.x, a.z);
+      if (!u) continue;
+      u.homePoint = { x: a.x, z: a.z };
+      u.crown = a.crown || null;
+      this._wildCount = (this._wildCount || 0) + 1;
     }
     // neutral shrines become capturable buildings
     for (const p of this.world.poi || []) {
@@ -1522,6 +1537,10 @@ export class Game {
     if (a === b) return false;
     if (a === TEAM_NEUTRAL || a === undefined || b === undefined) return false;
     if (b === TEAM_NEUTRAL) return false;
+    /* An animal is hostile to every crown and to no other animal. Bears do not
+       take sides; a wolf pack on the ridge is a problem for whoever is on the
+       ridge, which is the entire point of putting one there. */
+    if (a === TEAM_WILD || b === TEAM_WILD) return true;
     return true;                                      // two crowns
   }
 
