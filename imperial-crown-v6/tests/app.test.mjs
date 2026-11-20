@@ -208,12 +208,37 @@ check('tap selects a villager', () => {
 });
 check('tap ground orders a move', () => {
   const before = { x: villager.x, z: villager.z };
-  const tx = before.x + 14, tz = before.z + 6;
+  /* Find open ground rather than assuming it. This used to tap a fixed
+     +14,+6 from wherever the villager stood, which was a building-free patch on
+     the old 512 m map and is somebody's house now that the seat search puts the
+     town somewhere else: the tap selected the house, the villager never got an
+     order, and the test blamed the movement code. Ask the world for a spot that
+     a tap can actually land on -- walkable, clear of buildings, and far enough
+     from the villager that the pointer is not hitting him again. */
+  const clearGround = (() => {
+    for (let a = 0; a < 24; a++) {
+      for (const d of [14, 18, 22]) {
+        const tx = before.x + Math.cos((a / 24) * Math.PI * 2) * d;
+        const tz = before.z + Math.sin((a / 24) * Math.PI * 2) * d;
+        if (app.game.buildings.some((b) => Math.hypot(b.x - tx, b.z - tz) < (b.radius || 2) + 2.5)) continue;
+        const route = app.game.pathFinder.find(before.x, before.z, tx, tz, 2, { offTick: true });
+        if (!route || route.length < 2) continue;
+        const end = route[route.length - 1];
+        if (Math.hypot(end[0] - tx, end[1] - tz) > 6) continue;   // the route was cut short
+        return { tx, tz };
+      }
+    }
+    return null;
+  })();
+  assert(clearGround, 'found no open ground to tap within 22 m of the villager');
+  const { tx, tz } = clearGround;
   const out = [0, 0, 0];
   app.camera.project(tx, app.game.heightAt(tx, tz), tz, out);
   const px = (out[0] * 0.5 + 0.5) * 900, py = (-out[1] * 0.5 + 0.5) * 420;
   pointer('pointerdown', px, py);
   pointer('pointerup', px, py);
+  assert(app.game.selection.length === 1 && app.game.selection[0] === villager,
+    'tapping open ground did not keep the villager selected');
   for (let i = 0; i < 180; i++) step();
   const moved = Math.hypot(villager.x - before.x, villager.z - before.z);
   assert(moved > 3, 'villager moved only ' + moved.toFixed(1) + ' m');

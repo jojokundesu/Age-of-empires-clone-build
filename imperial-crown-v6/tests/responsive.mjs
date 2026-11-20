@@ -170,7 +170,12 @@ try {
   await page.waitForFunction('!window.__imperial._recoveringGraphics && window.__imperial.renderer.ready', { timeout: 120000 });
   assert(await page.evaluate(() => {
     const a = window.__imperial;
-    return a.game === a._testGame && a.renderer.pModel.program !== a._testProgram && a.renderer.chunks.length === 16 && !a.paused && document.getElementById('bootScreen').classList.contains('hidden');
+    /* The terrain is drawn in 32-cell chunks, so the count follows the map:
+       4x4 on a 128-segment grid, 8x8 on the 256-segment default. Deriving it
+       keeps this a check that the recovery rebuilt the right world instead of a
+       check that the world is still 512 m across. */
+    const wantChunks = Math.ceil(a.game.world.height.res / 32) ** 2;
+    return a.game === a._testGame && a.renderer.pModel.program !== a._testProgram && a.renderer.chunks.length === wantChunks && !a.paused && document.getElementById('bootScreen').classList.contains('hidden');
   }), 'graphics restoration did not restore the same battle');
   console.log('  ok   browser WebGL context loss and battle restoration');
   assert.deepEqual(errors, [], 'page errors');
