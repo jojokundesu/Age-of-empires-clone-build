@@ -7,41 +7,102 @@
 import { clamp, lerp, smoothstep, fbm2, ridged2, noise2, mulberry32, rngFor, dist2, TAU } from '../core/math.js';
 import { buildHydrology, refreshHydrology, DOMAIN, WATER_LEVEL } from './hydrology.js';
 
-/* The three map sizes, and the one place their numbers live.
-   `WORLD` below stays the 512 m classic preset, because a great many call
+/* The map sizes, and the one place their numbers live.
+   `WORLD` below stays the 512 m small preset, because a great many call
    sites read it as a constant and every one of them is describing the map it
    was written for. A generated world carries its own numbers in `world.w`, and
    that is what the simulation and the renderer read. Anything that needs to be
-   size-agnostic takes the world, not the module. */
+   size-agnostic takes the world, not the module.
+
+   THE LADDER
+   ----------
+   512 m is a village: an army crosses it in twenty seconds, so the only
+   strategic question a match can ask is "do I have more men". It is the small
+   map now, not the whole game, and 1024 m is the normal one.
+
+       small    512 m    terrain 4 m   nav 2.00 m
+       normal  1024 m    terrain 4 m   nav 2.00 m    <- the default
+       large   2048 m    terrain 4 m   nav 2.67 m
+       huge    3072 m    terrain 4 m   nav 3.00 m
+
+   Terrain cells stay 4 m at every size, so the ground keeps the same detail
+   and the same look; what changes is how much ground. The nav grid is the
+   expensive one (five Uint8 layers of navCells^2 -- land, steep, domain,
+   naval, gates), so it coarsens instead of growing without limit: 2 m cells
+   where a man's path is worth 2 m, and 3 m at the top, which is 5.2 MB rather
+   than the 14 MB a 2 m grid would cost at 3072 m.
+
+   Generation is the real ceiling, not memory. Hydrology is a per-cell scan
+   against every river, so it grows with the square of the size: about 0.5 s
+   for normal, 0.9 s for large and 1.8 s for huge on a desktop, which is
+   roughly 1.5 / 2.8 / 5.3 s on the budget phone this has to run on. That is a
+   one-time cost behind the boot screen, and it is why 4 km is not on the list:
+   it doubled again. */
 export const MAP_SIZES = {
-  /* Classic is exactly what shipped before 6.5 and must not move a metre:
-     every existing test, seed and save describes it. */
-  classic: { id: 'classic', name: 'Classic', size: 512, segments: 128, navCells: 256, navCell: 2, fowCells: 128, bakeTex: 512 },
-  /* Large is the new default. 256 segments is 4 m cells -- the same ground
-     detail as Classic, twice the ground. The nav grid doubles to 512 cells so
-     the cell stays 2 m: a 2 m cell is what a man's path is worth, and coarsen-
-     ing it is felt immediately in movement. That costs 4x nav memory (1 MB per
-     layer at 512^2, and there are five), which is the honest price of the
-     size. */
-  large: { id: 'large', name: 'Large', size: 1024, segments: 256, navCells: 512, navCell: 2, fowCells: 256, bakeTex: 1024 },
-  /* Huge is the compromise: 384 segments is 4 m cells still, but the nav grid
-     stays at 512 cells, so the cell opens to 3 m. Beyond this the pathfinder's
-     memory and its per-search cost both stop being something a phone forgives. */
-  huge: { id: 'huge', name: 'Huge', size: 1536, segments: 384, navCells: 512, navCell: 3, fowCells: 384, bakeTex: 1024 }
+  /* Small is exactly what shipped before 6.5 and must not move a metre:
+     every existing test, seed and save describes it. Its old id was
+     'classic', which is still accepted and still resolves to this. */
+  small: { id: 'small', name: 'Small', legacy: ['classic'], size: 512, segments: 128, navCells: 256, navCell: 2, fowCells: 128, bakeTex: 512 },
+  /* Normal: the default, and the size the game is balanced around. 256
+     segments is 4 m cells -- the same ground detail as Small, four times the
+     ground -- and the nav grid doubles to 512 cells so the cell stays 2 m. */
+  normal: { id: 'normal', name: 'Normal', legacy: ['large'], size: 1024, segments: 256, navCells: 512, navCell: 2, fowCells: 256, bakeTex: 1024 },
+  /* Large: four times the ground of Small. Terrain stays 4 m, so 512
+     segments; the nav grid goes to 768 cells (2.67 m) to keep the layers
+     under 3 MB. */
+  large: { id: 'large', name: 'Large', size: 2048, segments: 512, navCells: 768, navCell: 2048 / 768, fowCells: 512, bakeTex: 1024 },
+  /* Huge: the ceiling the generator and the phone will take. 768 segments is
+     still 4 m; the nav grid stays at 512 cells per side worth of cost by
+     opening to 3 m. */
+  huge: { id: 'huge', name: 'Huge', size: 3072, segments: 768, navCells: 1024, navCell: 3, fowCells: 768, bakeTex: 1024 }
 };
-export const MAP_SIZE_LIST = ['classic', 'large', 'huge'];
-export const DEFAULT_MAP_SIZE = 'large';
+export const MAP_SIZE_LIST = ['small', 'normal', 'large', 'huge'];
+export const DEFAULT_MAP_SIZE = 'normal';
+/* What `generateWorld` and `startMatch` make when nobody names a size. It is
+   Small, not the menu's default: `generateWorld(20261)` is a hundred call
+   sites in the suites and every one of them means "the map this seed has
+   always made". Growing the default must not silently redraw them. */
+export const IMPLICIT_MAP_SIZE = 'small';
+
+/* Old ids are still resolved, because a save written at 6.5 named its size
+   and `'classic'` meant what `'small'` means now. Renaming the ladder must not
+   turn a saved match into a different map. */
+const SIZE_ALIAS = (() => {
+  const m = {};
+  for (const k of MAP_SIZE_LIST) {
+    m[k] = k;
+    for (const old of MAP_SIZES[k].legacy || []) m[old] = k;
+  }
+  return m;
+})();
 
 export function mapSize(idOrSize) {
+  /* A preset object is a legitimate argument (worldShape takes one, and
+     callers pass the result of one into the other). This used to fall through
+     to the default and only *looked* correct, because the default happened to
+     be the preset being asked for; it was caught the moment the ladder was
+     renamed. */
+  if (idOrSize && typeof idOrSize === 'object') {
+    const id = SIZE_ALIAS[idOrSize.id] || idOrSize.id;
+    if (id && MAP_SIZES[id]) return MAP_SIZES[id];
+    if (typeof idOrSize.size === 'number') return mapSize(idOrSize.size);
+  }
   if (typeof idOrSize === 'number') {
-    let best = MAP_SIZES.classic, gap = Infinity;
+    let best = MAP_SIZES.small, gap = Infinity;
     for (const k of MAP_SIZE_LIST) {
       const g = Math.abs(MAP_SIZES[k].size - idOrSize);
       if (g < gap) { gap = g; best = MAP_SIZES[k]; }
     }
     return best;
   }
-  return MAP_SIZES[idOrSize] || MAP_SIZES[DEFAULT_MAP_SIZE];
+  const id = SIZE_ALIAS[idOrSize];
+  return (id && MAP_SIZES[id]) || MAP_SIZES[DEFAULT_MAP_SIZE];
+}
+
+/** Resolve any accepted id (current or legacy) to its canonical one. */
+export function mapSizeId(id) {
+  const k = SIZE_ALIAS[id];
+  return k || DEFAULT_MAP_SIZE;
 }
 
 /** The shape of a world, derived once from its preset. */
@@ -151,7 +212,7 @@ export function generateWorld(seed = 20261, opts = {}) {
      default at the API level so that every existing caller -- 41 test files,
      every save, every seed -- keeps the map it was written against; the menu
      asks for Large explicitly. */
-  const shape = worldShape(mapSize(opts.size || opts.mapSize || 'classic'));
+  const shape = worldShape(mapSize(opts.size || opts.mapSize || IMPLICIT_MAP_SIZE));
   const res = shape.segments;
   const size = shape.size;
   const hf = new HeightField(res, size);

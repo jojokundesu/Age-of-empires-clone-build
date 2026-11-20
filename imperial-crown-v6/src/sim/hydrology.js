@@ -1014,8 +1014,15 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
        starting valley that the fog reveals is a ~95 m ragged disc, and a
        seat 40 m from the map edge has that disc sliced off by the border --
        the player opens the match looking at a flat, walled-in half-valley. */
-    score -= Math.max(0, Math.abs(x) - 150) * 2.6;
-    score -= Math.max(0, Math.abs(z) - 150) * 2.6;
+    /* The band is scaled with the map. It was written as "150 m from the
+       centre" on a 512 m map, where that is more than half-way out -- and run
+       unchanged on a 3072 m map it charges 2.6 points per metre for every metre
+       past 150, which is over two thousand points a kilometre out. That one
+       constant, not the separation logic, is why both capitals sat in the
+       middle fifth of a 3 km battlefield and two thirds of the map was empty. */
+    const wasteFrom = Math.min(half * 0.6, 150 * Math.max(1, size / 512));
+    score -= Math.max(0, Math.abs(x) - wasteFrom) * 2.6;
+    score -= Math.max(0, Math.abs(z) - wasteFrom) * 2.6;
     if (wantsRiver) {
       const r = riverSep(x, z);
       /* 62-104 m from the channel: close enough to dock a boat on it,
@@ -1039,7 +1046,7 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
       return score;
     }
     /* Highview / Arabia: just a good, flat, central-ish plot. */
-    score += 30 - Math.hypot(x, z) * 0.08;
+    score += 30 - Math.hypot(x, z) * 0.08 * (512 / Math.max(512, size));
     return score;
   };
 
@@ -1056,14 +1063,32 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
        army walks between them in ten seconds, and the map stops being a
        war. If the fine ground cannot honour it, the map needs a seat on the
        high terrace, not a neighbour next door. */
-    const minSep = [160, 132, 108, 96][Math.min(3, q)];
+    /* Everything below is in metres and was written for a 512 m map, where
+       "160 m apart" is a third of the world and the margin is a fifth. Run
+       unchanged on a 3072 m map it puts both capitals in the middle fifth and
+       leaves two thirds of the battlefield empty: the seats came back 14 % of
+       the map apart at Huge against 44 % at Small. Same class of bug as the
+       rest of the resize -- a constant that only ever looked like a constant
+       because there was one size.
+
+       `spread` is the map's own scale, and every distance that decides how far
+       apart two crowns stand is multiplied by it. Small is exactly 1, so the
+       512 m map is untouched. */
+    /* The separation has to grow with the ground, or both capitals end up in
+       the middle fifth of a 3 km map. The cap is the whole range of the ladder:
+       at the top the two towns come back half a map apart, which is what a
+       3 km war should be, and 6x is exactly that. */
+    const spread = Math.max(1, Math.min(6, size / 512));
+    const minSep = [160, 132, 108, 96][Math.min(3, q)] * spread;
+    const seatMargin = 105 * spread;
+    const turnPull = 150 * spread;
     for (let cz = 0; cz < CAND; cz++) {
       for (let cx = 0; cx < CAND; cx++) {
         const x = (cx + 0.5) / CAND * size - half;
         const z = (cz + 0.5) / CAND * size - half;
         /* Keep 105 m of margin: the whole surveyed valley, plus the room a
            town needs to expand, has to fit inside the map. */
-        if (Math.abs(x) > half - 105 || Math.abs(z) > half - 105) continue;
+        if (Math.abs(x) > half - seatMargin || Math.abs(z) > half - seatMargin) continue;
         if (!buildable(x, z)) continue;
         /* Separation: enough room for two towns and a fight between them. */
         if (seats.some((s) => Math.hypot(s.x - x, s.z - z) < minSep)) continue;
@@ -1081,7 +1106,7 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
            opposite each other rather than adjacent. The pull has to be
            strong enough to beat the flat-ground bonus of the best meadow,
            or every extra crown lands in the same corner. */
-        if (prev) score += Math.min(150, Math.hypot(x - prev.x, z - prev.z) * 0.85);
+        if (prev) score += Math.min(turnPull, Math.hypot(x - prev.x, z - prev.z) * 0.85);
         score += seatRng() * 6;                      // no two seeds alike
         if (score > bestScore) { bestScore = score; best = { x, z, h: sample(x, z) }; }
       }
@@ -1089,13 +1114,13 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
     /* If no ground cleared the spacing, retake the pick with a looser
        separation rather than shipping a map with a crown that has no seat. */
     for (let relax = 0; !best && relax < 3; relax++) {
-      const sep = Math.max(96, minSep * (0.92 - relax * 0.06));
+      const sep = Math.max(96 * spread, minSep * (0.92 - relax * 0.06));
       bestScore = -1e9;
       for (let cz = 0; cz < CAND; cz++) {
         for (let cx = 0; cx < CAND; cx++) {
           const x = (cx + 0.5) / CAND * size - half;
           const z = (cz + 0.5) / CAND * size - half;
-          if (Math.abs(x) > half - 105 || Math.abs(z) > half - 105) continue;
+          if (Math.abs(x) > half - seatMargin || Math.abs(z) > half - seatMargin) continue;
           if (!buildable(x, z)) continue;
           if (seats.some((s) => Math.hypot(s.x - x, s.z - z) < sep)) continue;
           /* Relaxing the *spacing* must never relax the ground rules: a town
@@ -1162,19 +1187,26 @@ export function buildHydrology(seed = 20261, mapTypeId = DEFAULT_MAP_TYPE, opts 
         const pt = pts[q];
         const px = pt.x !== undefined ? pt.x : pt[0];
         const pz = pt.z !== undefined ? pt.z : pt[1];
-        /* pull it a little inside the border so the whole shelf is on the map */
-        const lim = half - 6;
-        let cx = clamp(px, -lim, lim), cz = clamp(pz, -lim, lim);
+        /* A provisional clamp so the water can be measured at the crossing. */
+        const limRaw = half - 6;
+        let cx = clamp(px, -limRaw, limRaw), cz = clamp(pz, -limRaw, limRaw);
         /* Measure the water at the crossing, do not estimate it: the shelf is
            only a crossing if its dry tread spans the full width of the river
            here. Where the trunk is widest, that is a wide shelf. */
-        const pr = rivers[0] ? rivers[0] : null;
-        void pr;
         let crossW = pt.w || 16;
         for (let r = 0; r < rivers.length; r++) {
           rivers[r].nearest(cx, cz, probe);
           if (probe.d < probe.w * 1.5) crossW = Math.max(crossW, probe.w);
         }
+        /* Now pull it inside the border so the whole shelf is on the map, and
+           far enough in that a man can stand on it. A crossing six metres from
+           the edge is a crossing whose far rim is off the map, and at 3072 m
+           the nav cell alone is three metres: the pathfinder finds the cell but
+           not the point and stops at the border with the corridor just out of
+           reach. The inset is a shelf-width, not a constant, so it holds at
+           every size. */
+        const lim = half - Math.max(8, crossW * 0.9);
+        cx = clamp(cx, -lim, lim); cz = clamp(cz, -lim, lim);
         /* Centre the shelf on the middle of the channel, not on the point the
            river's spline happens to pass through: on a bend the spline is a
            chord and the water bulges to one side, so a shelf centred on the

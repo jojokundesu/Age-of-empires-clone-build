@@ -107,10 +107,24 @@ export class PathFinder {
        the per-tick budget scales with it, so a 512-cell map can still afford
        a couple of long routes a tick while short ones stay as cheap as they
        were. */
+    /* Two different questions, two different limits, and conflating them is
+       what made a cross-map order stop in a field on the big maps.
+
+       `maxNodes` is "how far can A* search before deciding it is lost". It has
+       to be able to cross the map: the east corner flank on a 3072 m map needs
+       103 000 nodes and 44 ms to reach, so a cap of 57 000 was refusing a route
+       that exists -- and the fallback then walked the man to the closest cell
+       it could see, 600 m away. The ceiling is now proportional to the ground
+       and always large enough for the longest sensible walk.
+
+       `nodeBudget` is the frame guard: how much searching this tick may spend
+       before the rest of the queue waits. That stays small on purpose, so a
+       crowd of orders degrades to "some wait a tick" rather than one 44 ms
+       spike inside a 33 ms frame. */
     const side = Math.sqrt(n) || 128;
-    this.maxNodes = Math.max(3000, Math.round(side * side * 0.055));
+    this.maxNodes = Math.max(3000, Math.round(side * side * 0.16));
     this.searchBudget = 24;
-    this.nodeBudget = Math.max(14000, this.maxNodes * 2);
+    this.nodeBudget = Math.max(14000, Math.round(side * side * 0.05));
     this.budget = 1e9;
     this.lastWasSkip = false;
     this.stats = { searches: 0, nodes: 0, hits: 0, skipped: 0, unreachable: 0 };
@@ -119,7 +133,7 @@ export class PathFinder {
   /** Called by Game.update() once per tick. */
   beginTick() {
     this.searchBudget = 24;
-    this.nodeBudget = Math.max(14000, this.maxNodes * 2);
+    this.nodeBudget = Math.max(14000, Math.round(this.cells * 0.05));
     this.budget = 1e9;
     this.stats.searches = 0;
     this.stats.nodes = 0;
@@ -428,8 +442,21 @@ export class PathFinder {
   /**
    * Find a path. Returns array of [x,z] waypoints (world), or null.
    * `lastWasSkip` says the tick budget (not the map) is why a null came back.
+   *
+   * `opts.offTick` marks a search that is not part of a frame: a one-off route
+   * for the menu, a test, a scouting probe. Those should not be capped by the
+   * frame guard, because there is no frame to protect -- and capping them was
+   * making a single "walk to the far corner" order fail on the big maps while
+   * succeeding when the same route was split across ticks. The guard still
+   * applies to everything the simulation asks for inside `update()`.
    */
-  find(sx, sz, gx, gz, radius = 2) {
+  find(sx, sz, gx, gz, radius = 2, opts = null) {
+    const offTick = !!(opts && opts.offTick);
+    if (offTick) {
+      /* A search with no frame to protect answers to `maxNodes` only. */
+      this.beginTick();
+      this.nodeBudget = this.maxNodes;
+    }
     if (this.budget <= 0 || this.searchBudget <= 0 || this.nodeBudget <= 0) {
       this.stats.skipped++;
       this.lastWasSkip = true;

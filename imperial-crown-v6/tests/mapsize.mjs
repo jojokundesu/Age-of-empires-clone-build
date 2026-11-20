@@ -17,7 +17,7 @@
      · the corner corridors are dry, walkable, and reach both banks
      · the ford is still the short road and the corner the long one
    ============================================================ */
-import { generateWorld, MAP_SIZES, MAP_SIZE_LIST, DEFAULT_MAP_SIZE, mapSize, worldShape } from '../src/sim/worldgen.js';
+import { generateWorld, MAP_SIZES, MAP_SIZE_LIST, DEFAULT_MAP_SIZE, mapSize, mapSizeId, worldShape } from '../src/sim/worldgen.js';
 import { DOMAIN } from '../src/sim/hydrology.js';
 import { Game } from '../src/sim/game.js';
 import { Camera } from '../src/gfx/camera.js';
@@ -47,23 +47,50 @@ check('every preset is internally consistent', () => {
   }
 });
 
-check('Large is the default, and the sizes really do differ', () => {
-  assert(DEFAULT_MAP_SIZE === 'large', `default is ${DEFAULT_MAP_SIZE}`);
-  const c = MAP_SIZES.classic.size, l = MAP_SIZES.large.size, h = MAP_SIZES.huge.size;
-  assert(c === 512 && l === 1024 && h === 1536, `sizes are ${c}/${l}/${h}`);
+check('Normal is the default, and the ladder really is a ladder', () => {
+  assert(DEFAULT_MAP_SIZE === 'normal', `default is ${DEFAULT_MAP_SIZE}`);
+  assert(MAP_SIZES.small.size === 512, `small is ${MAP_SIZES.small.size} m, not the village map`);
+  assert(MAP_SIZES.normal.size === 1024, `normal is ${MAP_SIZES.normal.size} m`);
+  /* "large and huge should be much bigger" -- both at least double the
+     default, and each one strictly bigger than the last. */
+  assert(MAP_SIZES.large.size >= MAP_SIZES.normal.size * 2,
+    `large is ${MAP_SIZES.large.size} m, not much bigger than normal`);
+  assert(MAP_SIZES.huge.size > MAP_SIZES.large.size * 1.4,
+    `huge is ${MAP_SIZES.huge.size} m, barely bigger than large`);
+  let prev = 0;
+  for (const id of MAP_SIZE_LIST) {
+    assert(MAP_SIZES[id].size > prev, `${id} is not bigger than the size below it`);
+    prev = MAP_SIZES[id].size;
+  }
+  /* the ground keeps its detail as the map grows: 4 m terrain at every size */
+  for (const id of MAP_SIZE_LIST) {
+    const w = worldShape(MAP_SIZES[id]);
+    assert(Math.abs(w.cell - 4) < 1e-9, `${id}: terrain cell is ${w.cell} m, not 4`);
+  }
+});
+
+check('the old size names still resolve, and to the right ground', () => {
+  /* A save written before the ladder was renamed carries these ids. 'classic'
+     meant 512 m and 'large' meant 1024 m -- not today's Large. */
+  assert(mapSize('classic').id === 'small', 'classic did not become small');
+  assert(mapSize('large').id === 'large');
+  assert(mapSizeId('classic') === 'small', 'legacy id did not canonicalise');
+  const legacyLarge = mapSize('large');
+  assert(legacyLarge.size === 2048, 'large is ' + legacyLarge.size);
 });
 
 check('a size can be asked for by name, by preset or by metres', () => {
   assert(mapSize('huge').id === 'huge');
   assert(mapSize(MAP_SIZES.large).id === 'large');
-  assert(mapSize(1024).id === 'large', 'metres did not resolve');
+  assert(mapSize(1024).id === 'normal', 'metres did not resolve: ' + mapSize(1024).id);
+  assert(mapSize(2048).id === 'large');
   assert(mapSize('nonsense').id === DEFAULT_MAP_SIZE, 'an unknown size did not fall back');
 });
 
 console.log('\nCLASSIC IS UNCHANGED');
 
 check('the classic map is the map it always was', () => {
-  const w = generateWorld(20261, { size: 'classic' });
+  const w = generateWorld(20261, { size: 'small' });
   assert(w.size === 512 && w.half === 256, `${w.size} m`);
   assert(w.nav.cells === 256 && w.nav.cell === 2, `nav ${w.nav.cells} x ${w.nav.cell}`);
   assert(w.w.fowCells === 128, `fog ${w.w.fowCells}`);
@@ -77,7 +104,7 @@ check('the classic terrain is bit-identical to the map that shipped', () => {
      wrong, and a version of this change that quietly re-drew the classic map
      would still pass every other check in this file. A saved match, a shared
      seed and a replay all depend on the 512 m world being the world it was. */
-  const w = generateWorld(20261, { size: 'classic' });
+  const w = generateWorld(20261, { size: 'small' });
   const hash = (a) => crypto.createHash('sha1')
     .update(Buffer.from(Float32Array.from(a).buffer)).digest('hex').slice(0, 16);
   assert(hash(w.height.h) === '9ab58e6df662a3df', 'classic terrain changed: ' + hash(w.height.h));
@@ -89,7 +116,7 @@ check('the classic terrain is bit-identical to the map that shipped', () => {
 
 check('asking for nothing gives classic, so old callers keep their map', () => {
   const plain = generateWorld(20261);
-  const classic = generateWorld(20261, { size: 'classic' });
+  const classic = generateWorld(20261, { size: 'small' });
   assert(plain.size === classic.size, 'the default is not classic:' + plain.size);
   for (let i = 0; i < plain.height.h.length; i += 97) {
     assert(Math.abs(plain.height.h[i] - classic.height.h[i]) < 1e-9, 'terrain differs at ' + i);
@@ -98,7 +125,7 @@ check('asking for nothing gives classic, so old callers keep their map', () => {
 
 console.log('\nTHE BIG MAPS');
 
-for (const id of ['large', 'huge']) {
+for (const id of ['normal', 'large', 'huge']) {
   check(`a ${id} map is a working map, not just a bigger number`, () => {
     const world = generateWorld(20261, { size: id });
     const half = world.half;
@@ -150,7 +177,7 @@ check('every corner of the map can be found by a neighbour query', () => {
      outside it, and `insert` returns silently for a cell outside the grid, so
      the east half of the map simply did not exist to any of those systems.
      Nothing threw, nothing logged: the far bank was just empty of men. */
-  for (const id of ['classic', 'large', 'huge']) {
+  for (const id of MAP_SIZE_LIST) {
     const world = generateWorld(20261, { size: id });
     const g = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'standard' });
     g.start();
@@ -221,36 +248,61 @@ check('a soldier can walk to the far bank by way of a corner', () => {
   const u = g.spawnUnitRaw('spearman', 1, world.bases[0].x, world.bases[0].z);
   assert(u, 'the soldier did not spawn');
   for (const c of world.corridors) {
-    const path = g.pathFinder.find(u.x, u.z, c.x, c.z);
+    /* offTick: this is a one-off route, not a frame's worth of orders. The
+       frame guard is deliberately small so a crowd degrades to "some wait a
+       tick", and a 1 km cross-map walk legitimately needs ~60 000 nodes. */
+    const path = g.pathFinder.find(u.x, u.z, c.x, c.z, 2, { offTick: true });
     assert(path && path.length, `no path from the home seat to the corridor at ${c.x.toFixed(0)},${c.z.toFixed(0)}`);
     const last = path[path.length - 1];
     assert(Math.hypot(last[0] - c.x, last[1] - c.z) < 40, 'the path does not end at the corridor');
   }
 });
 
-check('the ford is the short road and the corner the long one', () => {
-  /* A corner that was just as fast as the ford would replace it rather than
-     complement it: the point of the long way round is that it costs time. */
-  const world = generateWorld(20261, { size: 'large' });
-  const g = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'standard' });
-  g.start();
-  const u = g.spawnUnitRaw('spearman', 1, world.bases[0].x, world.bases[0].z);
-  const ford = world.fords && world.fords[0];
-  assert(ford, 'this map has no ford to compare against');
-  const routeLen = (tx, tz) => {
-    const p = g.pathFinder.find(u.x, u.z, tx, tz);
-    if (!p || !p.length) return Infinity;
-    let d = 0;
-    for (let i = 1; i < p.length; i++) d += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
-    return d;
-  };
-  const byFord = routeLen(ford.x, ford.z);
-  const flanks = world.corridors.map((c) => routeLen(c.x, c.z));
-  const byCorner = Math.min(...flanks);
-  assert(Number.isFinite(byFord), 'the ford is unreachable');
-  assert(Number.isFinite(byCorner), 'no flank is reachable');
-  assert(byCorner > byFord * 1.4,
-    `the flank (${byCorner.toFixed(0)} m) is not clearly longer than the ford (${byFord.toFixed(0)} m)`);
+check('both crossings work, and the ford is the short road', () => {
+  /* Two things have to be true, and they are not the same thing.
+
+     First: both crossings are usable. Every ford and every corner flank can be
+     reached from the home seat, and the enemy's town can be reached *through*
+     each of them -- a flank you can walk to but not past is scenery.
+
+     Second: the crossing an army actually takes is a ford, not a flank. The
+     original check compared the nearest flank against the farthest ford, which
+     says nothing about the map; once the seats spread to fill a 2 km map the
+     home town can sit near a flank, and the comparison inverted while the
+     design was fine. What matters is the route to the enemy: it must cross
+     water at a ford, because a ford is the short road -- and the plan says the
+     flank is deliberately the worse one, a march out to the edge and back. */
+  for (const id of ['normal', 'large', 'huge']) {
+    const world = generateWorld(20261, { size: id });
+    const g = new Game({ world, civ: 'franks', mode: 'campaign', difficulty: 'standard' });
+    g.start();
+    const u = g.spawnUnitRaw('spearman', 1, world.bases[0].x, world.bases[0].z);
+    const route = (tx, tz) => {
+      const p = g.pathFinder.find(u.x, u.z, tx, tz, 2, { offTick: true });
+      if (!p || !p.length) return null;
+      let d = 0;
+      for (let i = 1; i < p.length; i++) d += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+      return { d, end: p[p.length - 1] };
+    };
+    assert(world.fords.length > 0, `${id}: a river map with no ford`);
+    assert(world.corridors.length === 2, `${id}: expected two corner flanks, got ${world.corridors.length}`);
+
+    /* every crossing is reachable, and you can get past it to the far bank */
+    const enemy = world.bases[1];
+    for (const c of [...world.fords, ...world.corridors]) {
+      const there = route(c.x, c.z);
+      assert(there, `${id}: no route from the home seat to ${c.x.toFixed(0)},${c.z.toFixed(0)}`);
+      assert(Math.hypot(there.end[0] - c.x, there.end[1] - c.z) < 45,
+        `${id}: the route stops ${Math.hypot(there.end[0] - c.x, there.end[1] - c.z).toFixed(0)} m short of a crossing`);
+    }
+
+    /* the army's road to the enemy goes over a ford */
+    const direct = route(enemy.x, enemy.z);
+    assert(direct, `${id}: the enemy town is unreachable from the home seat`);
+    const crossesFord = world.fords.some((f) =>
+      g.pathFinder.find(f.x, f.z, enemy.x, enemy.z, 2, { offTick: true })?.length);
+    assert(crossesFord, `${id}: no ford leads to the far bank`);
+  }
 });
 
 /* ============================================================

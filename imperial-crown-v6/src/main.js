@@ -33,7 +33,10 @@ const STEP = 1 / 30;
    its garrison and transport references pointing at the wrong units -- the
    passenger ends up inside a building and the order belongs to his neighbour.
    Loading refuses anything older than 4; a 6 is not a 7. */
-const SAVE_VERSION = 7;
+const SAVE_VERSION = 8;
+/* The size ladder was renamed in 8. These are the ids a pre-8 save carries,
+   written when 512/1024/1536 m were the whole list. */
+const LEGACY_SIZE_ID = { classic: 'small', large: 'normal', huge: 'large' };
 
 // Only explored/not-explored needs to be saved. Visibility is recalculated
 // from the restored army, so an old sight radius cannot reveal enemies.
@@ -466,8 +469,17 @@ class App {
        determinism, replays and every assertion written against that ground.
        The menu always passes an explicit `mapSize`, so a real player still
        starts on Large. */
-    const sizeId = opts.load ? (opts.load.sizeId || 'classic')
-      : (opts.mapSize || this.settings.mapSize || 'classic');
+    /* A save's size id was written under the ladder it was played on. Version
+       7 and older used 'classic'/'large'/'huge' for 512/1024/1536 m, and
+       'large' now means 2048 m -- so those three are translated here rather
+       than passed through, or an old campaign would reload onto a map twice
+       the size it was fought on and every building in it would be somewhere
+       else. Version 8 onwards records the current ids and needs no map. */
+    const saveSizeId = opts.load && opts.load.sizeId
+      ? (opts.load.version >= 8 ? opts.load.sizeId : LEGACY_SIZE_ID[opts.load.sizeId] || opts.load.sizeId)
+      : null;
+    const sizeId = opts.load ? (saveSizeId || 'small')
+      : (opts.mapSize || this.settings.mapSize || 'normal');
     const world = generateWorld(seed, { sites: kingdoms > 2 ? kingdoms : 2, mapType, size: sizeId });
     /* world.mapType is the *resolved* archetype ('confluence', not 'classic'):
        a save records what was actually generated, so reloading it cannot

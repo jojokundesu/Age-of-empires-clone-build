@@ -22,7 +22,7 @@ export class Menu {
   /* The save format is the one handshake between a running match and the
      menu. Bump it whenever a saved field changes meaning; the menu refuses
      anything else rather than half-loading a war it does not understand. */
-  static SAVE_VERSION = 7;   // keep in step with main.js
+  static SAVE_VERSION = 8;   // keep in step with main.js
   constructor(opts) {
     this.onStart = opts.onStart || (() => {});
     this.onSettingsChanged = opts.onSettingsChanged || (() => {});
