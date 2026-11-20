@@ -47,6 +47,11 @@ const SUITES = [
   ['calendar', 'tests/calendar.mjs'],
   ['party', 'tests/party.test.mjs'],
   ['economy', 'tests/economy.mjs'],
+  /* The size ladder and everything that only goes wrong when the map is big:
+     the seats spreading out to fill it, the corner flanks being reachable, the
+     pathfinder's reach, and the camera fitting a 3 km world on screen. None of
+     these are visible on Small, so they belong in the suite the release runs. */
+  ['mapsize', 'tests/mapsize.mjs'],
   ['wallsite', 'tests/wallsite.mjs', true],
   ['modsite', 'tests/modsite.mjs', true],
   ['kingdoms', 'tests/kingdoms.mjs'],
