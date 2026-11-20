@@ -333,6 +333,15 @@ export class Unit extends Entity {
 
   setPath(destX, destZ, force = false) {
     if (!this.game.pathFinder) return;
+    /* Plan against the ground as it is now.
+       The nav grid is recombined in batches, and a wall run or a gate stamped
+       in this tick has not reached the pathfinder yet. Every question below --
+       is this goal free, is the straight line clear -- is answered from that
+       grid, so a man ordered in the same frame a wall went up was told the
+       straight line through it was open and walked through the stone. Flush
+       the batch first; it is a byte copy, and it happens at most once per
+       tick. */
+    if (this.game.navDirty && this.game.refreshNav) { this.game.refreshNav(); this.game.navTimer = 0.2; }
     /* enemies search a grid where gates are shut; allies walk through them */
     const pf = this.game.pfFor ? this.game.pfFor(this) : this.game.pathFinder;
     /* Aim at somewhere the unit can actually reach. Orders land inside wall

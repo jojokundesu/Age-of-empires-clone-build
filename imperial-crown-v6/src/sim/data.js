@@ -342,6 +342,11 @@ export const BUILDING_DEFS = {
     cost: { wood: 4 }, time: 5, walkable: false, wall: true,
     desc: 'Cheap wooden wall. Stops raiders, not siege.'
   }),
+  wall_post: B({
+    name: 'Wall Post', icon: 'wall', hp: 1800, armor: 10, pierceArmor: 14, size: 2.0, sight: 3,
+    cost: { stone: 12 }, time: 8, walkable: false, wall: true, post: true,
+    desc: 'The pillar at the end of a wall run. Harder to break than the wall it caps.'
+  }),
   stone_gate: B({
     name: 'Gate', icon: 'gate', hp: 1600, armor: 8, pierceArmor: 12, size: 2.8, sight: 8,
     cost: { stone: 30 }, time: 20, walkable: false, gate: true,

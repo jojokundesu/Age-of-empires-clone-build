@@ -351,6 +351,43 @@ bring siege to walls, and choose between pushing the ford and taking the corner 
 
 No new units. No new buildings except what Sections 4 and 5 add.
 
+### Status — done (`1e9ee3e`)
+
+The premise turned out to be wrong in an interesting way. The AI *did* path
+across the fords; what it could not do was arrive. March time scales with the
+map (1.3 min on Small, 8.6 on Huge) while army strength and scouting did not, so
+a column that left at eight minutes walked into a town one skirmish at a time.
+The fix is concentration over distance, not a preference for fords:
+
+- **Muster, march, camp, storm.** The army forms outside its own town, walks a
+  waypointed road through a real crossing, camps before the enemy town, and goes
+  in with everybody at once. A column that has clearly arrived storms even if it
+  could not get every man to the camp.
+- **Routing** survives as one mechanism: `pickApproach` chooses a ford or a
+  corner flank, and the camp is only ever placed where the column can path.
+- **Lookouts** ride out from the main loop rather than only from a march, so the
+  council is never answering an army it has not seen.
+- **Counter-composition, raider preservation, the reacting garrison and the
+  recall of every detachment when the column leaves** are all live and tested.
+- **Walling, expansion and siege** wait for Sections 4 and 5, which add the
+  things they need; the march already understands walls it cannot break.
+
+Three engine bugs had to be fixed underneath it, each of which had been quietly
+eating the army: `setPath` chained *every* long move through a fixed 60 m hop
+aimed straight at the destination (so it left the road at the water and then
+failed, resetting the order); a soldier who lost his attack target went idle
+holding a destination and stood there for the rest of the match; and an infantry
+chase gave up after 24 m, so any hunt aimed further than that dropped its order
+every frame.
+
+Also fixed in passing: army production was capped at `maxArmy` at exactly the
+moment the war bar became `maxArmy` plus a march surcharge, which made the bar
+literally unreachable on Large -- the crown stopped at sixteen men and waited for
+eighteen for the rest of the game.
+
+`tests/riverwar.mjs` (12 checks, wired into `run.mjs`) covers all of it on both
+map sizes. Classic terrain is still bit-identical.
+
 ---
 
 ## Section 4 — Walls and gates

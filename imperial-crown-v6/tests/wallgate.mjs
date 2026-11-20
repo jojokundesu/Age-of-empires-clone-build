@@ -295,6 +295,132 @@ check('an enemy left inside a walled pocket gives up instead of grinding', () =>
   return 'the order is dropped, the unit stands';
 });
 
+/* ------------------------------------------------- a wall is not a painting
+   Everything above tests the *gesture*: the line plans, it costs what it says,
+   the gate opens for its owner. None of it tests the thing a player actually
+   cares about, which is whether the wall stops a man.
+
+   It did not. Three separate mechanisms all said "not my department":
+
+     - isPassable() skipped walls outright, on the old theory that walls are a
+       navigation obstacle rather than a physical one. But stepMovement asks
+       isPassable and only isPassable before every step, so nothing stopped a
+       soldier walking through stone.
+     - even once isPassable looked, walls were kept out of the per-cell body
+       list that answers it, with the comment "only walls, which are handled by
+       navigation".
+     - and a 2 m segment only tiled a nav cell on the small maps. On Large the
+       cell is 2.67 m, so a run stamped every third cell and left the ones
+       between open -- a wall with a hole every two metres.
+
+   Plus the ends: a straight run is a line and a line can be walked round, so
+   every run now gets a post at each end. */
+
+check('a run stamps the grid solidly, with no holes between segments', () => {
+  const game = newGame();
+  const s = findFlatRun(game, 30);
+  assert(s, 'no flat ground');
+  const st = game.teams.get(1);
+  st.res.stone = 99999;
+  const cells = game.planWallLine('stone_wall', s.x - 12, s.z, s.x + 12, s.z);
+  const { placed } = game.placeWallLine('stone_wall', 1, cells, { instant: true });
+  assert(placed.length >= 10, `only ${placed.length} segments placed`);
+  game.update(STEP);
+  const nav = game.world.nav;
+  const N = nav.cells;
+  const cxOf = (x) => Math.floor((x + game.mapw.half) / nav.cell);
+  const czOf = (z) => Math.floor((z + game.mapw.half) / nav.cell);
+  const zc = czOf(s.z);
+  let holes = [];
+  for (let cx = cxOf(placed[0].x); cx <= cxOf(placed[placed.length - 1].x); cx++) {
+    if (!game.pathFinder.isBlocked(cx, zc)) holes.push(cx);
+  }
+  assert(!holes.length, `${holes.length} open cells inside the run (${holes.slice(0, 5).join(',')})`);
+  return `${placed.length} segments, no gaps on a ${nav.cell.toFixed(1)} m grid`;
+});
+
+check('a wall is solid to a man, not just to the pathfinder', () => {
+  const game = newGame();
+  const s = findFlatRun(game, 30);
+  assert(s, 'no flat ground');
+  game.teams.get(1).res.stone = 99999;
+  const cells = game.planWallLine('stone_wall', s.x - 12, s.z, s.x + 12, s.z);
+  const { placed } = game.placeWallLine('stone_wall', 1, cells, { instant: true });
+  game.update(STEP);
+  const wall = placed[Math.floor(placed.length / 2)];
+  const u = game.spawnUnitRaw('spearman', 1, wall.x, wall.z - 8);
+  assert(!game.isPassable(wall.x, wall.z, u), 'isPassable says a wall is walkable');
+  return 'the stone is solid to a body as well as to A*';
+});
+
+check('a walled pocket holds: an enemy is stopped, and stops', () => {
+  const game = newGame();
+  game.teams.get(1).res.stone = 999999;
+  let site = null;
+  for (let cz = -180; cz <= 180 && !site; cz += 10) {
+    for (let cx = -180; cx <= 180 && !site; cx += 10) {
+      const R = 12, cells = [];
+      let good = true;
+      for (const [x0, z0, x1, z1] of [[cx - R, cz - R, cx + R, cz - R], [cx - R, cz + R, cx + R, cz + R],
+        [cx - R, cz - R, cx - R, cz + R], [cx + R, cz - R, cx + R, cz + R]]) {
+        for (const c of game.planWallLine('stone_wall', x0, z0, x1, z1)) {
+          if (!c.ok) { good = false; break; }
+          if (!cells.some((q) => q.x === c.x && q.z === c.z)) cells.push(c);
+        }
+        if (!good) break;
+      }
+      if (good && cells.length >= 30) site = { cx, cz, cells, R };
+    }
+  }
+  assert(site, 'no clear ground for a ring');
+  const { placed } = game.placeWallLine('stone_wall', 1, site.cells, { instant: true });
+  assert(placed.length === site.cells.length, `ring incomplete: ${placed.length} of ${site.cells.length}`);
+  game.update(STEP);
+  const u = game.spawnUnitRaw('spearman', 2, site.cx, site.cz - site.R - 10);
+  assert(u, 'could not spawn the enemy');
+  u.moveTo(site.cx, site.cz, true);
+  let closest = 999;
+  for (let i = 0; i < 30 * 40; i++) { game.update(STEP); closest = Math.min(closest, Math.hypot(u.x - site.cx, u.z - site.cz)); }
+  assert(closest > site.R - 2, `the enemy got ${closest.toFixed(0)} m from the middle of a ${site.R} m ring`);
+  return `${placed.length} segments, enemy held ${closest.toFixed(0)} m out`;
+});
+
+check('a run is capped at both ends by a post', () => {
+  const game = newGame();
+  const s = findFlatRun(game, 20);
+  assert(s, 'no flat ground');
+  game.teams.get(1).res.stone = 99999;
+  const cells = game.planWallLine('stone_wall', s.x - 8, s.z, s.x + 8, s.z);
+  assert(cells.posts && cells.posts.length === 2, `expected two posts, got ${cells.posts ? cells.posts.length : 0}`);
+  const { placed } = game.placeWallLine('stone_wall', 1, cells, { instant: true });
+  const posts = placed.filter((b) => b.type === 'wall_post');
+  assert(posts.length === 2, `only ${posts.length} posts placed`);
+  const xs = placed.map((b) => b.x);
+  for (const post of posts) {
+    const outer = post.x <= Math.min(...xs) || post.x >= Math.max(...xs);
+    assert(outer, `a post at ${post.x} is inside the run, not capping it`);
+  }
+  assert(posts[0].def.hp > BUILDING_DEFS.stone_wall.hp, 'a post is no stronger than the wall it caps');
+  return `posts at ${posts.map((p) => p.x.toFixed(0)).join(' and ')}, ${BUILDING_DEFS.stone_wall.hp} -> ${posts[0].def.hp} hp`;
+});
+
+check('arrows chip a wall and engines break it', () => {
+  const game = newGame();
+  const s = findFlatRun(game, 8);
+  assert(s, 'no flat ground');
+  const hits = {};
+  for (const [type, kind] of [['archer', 'pierce'], ['swordsman', 'melee'], ['ram', 'siege']]) {
+    const w = game.placeBuilding('stone_wall', 1, s.x, s.z, { instant: true, free: true });
+    const before = w.hp;
+    for (let i = 0; i < 8; i++) w.takeDamage(20, null, kind);
+    hits[type] = before - w.hp;
+    w.dead = true;
+  }
+  assert(hits.swordsman > hits.archer, `melee (${hits.swordsman}) should beat arrows (${hits.archer}) on stone`);
+  assert(hits.ram > hits.swordsman, `siege (${hits.ram}) should beat melee (${hits.swordsman}) on stone`);
+  return `8 hits of 20: archers ${hits.archer}, swords ${hits.swordsman}, ram ${hits.ram}`;
+});
+
 console.log('');
 if (fails.length) {
   console.log(`WALL/GATE FAILURES (${fails.length}):`);

@@ -601,8 +601,14 @@ export class Game {
     if (radiusPad <= cell && cx >= 0 && cz >= 0 && cx < n && cz < n) {
       const index = cz * n + cx;
       if (!this.navHaz[index]) return true;
+      /* Bodies in this cell, walls included.
+         This used to say "only walls, which are handled by navigation" --
+         true of A*, false of a man's next step, which is what actually puts
+         him through a wall. Walls are in the list now (see the wall branch
+         below); the nav grid still does the routing, and this does the last
+         metre. */
       near = this.navBodies[index];
-      if (!near) return true; // only walls, which are handled by navigation
+      if (!near) return true;
     } else {
       // Oversized mod units need the full geometry: a fixed-radius spatial
       // query can miss the edge or corner of a large structure.
@@ -612,7 +618,26 @@ export class Game {
       const b = near[i];
       /* farms -- and mod traps, which declare themselves walkable for the same
          reason -- are floors, not obstacles */
-      if (b.dead || b.wall || (b.def && b.def.walkable)) continue;
+      if (b.dead || (b.def && b.def.walkable)) continue;
+      /* ...but a wall is a wall.
+         Walls used to be skipped here on purpose: they were a *nav* obstacle
+         only, so that a 2 m grid could never trap a body against one. The
+         cost was that nothing physical stopped a man -- `stepMovement` asks
+         this function, and only this function, before every step, so a soldier
+         handed a route whose last leg crossed a wall walked straight through
+         it. Watching it happen: a sealed twenty-three-segment run with posts
+         at both ends, and the spearman crossing at x = -321.51, where the nav
+         cell was blocked and isPassable said yes. That is the difference
+         between a wall and a painted line.
+         The trap the old comment feared is real, and it is handled by the
+         *footprint test* below being tight (the wall's own half-width) and by
+         rescueStrays(), which lifts a man who ends up inside one -- rather than
+         by letting him walk through it. */
+      if (b.def.wall) {
+        const wh = (b.def.size || 2) * 0.5 + (unit ? unit.radius * 0.35 : 0.1);
+        if (Math.abs(x - b.x) <= wh && Math.abs(z - b.z) <= wh) return false;
+        continue;
+      }
       /* a gate opens for its owner's troops, and for nobody else */
       if (b.def.gate && unit && b.team === unit.team) continue;
       const half = (b.def.size || 3) * 0.5 - 0.05 + (unit ? unit.radius * 0.4 : 0.2);
@@ -1300,9 +1325,20 @@ export class Game {
        so two wall segments standing 2 m apart (the lattice pitch) shared their
        cells and a 2 m wall claimed a 4 m band -- which is why gates kept
        blocking their own troops and why diagonal walls ate six metres of
-       ground. A wall is 2 m on a 2 m grid: it should own exactly one cell. */
+       ground. On Small and Normal, where a nav cell is exactly 2 m, a 2 m wall
+       owns exactly one cell.
+
+       That arithmetic only holds at 2 m. On Large the cell is 2.67 m and on
+       Huge it is 3 m, so a 2 m segment covers three quarters of a cell and a
+       run of them stamps 136, 138, 139, ... and leaves 137 open -- a wall with
+       a hole in it every two metres, which let a soldier walk through a sealed
+       ring. A wall is not a point; a segment has to be *wider than a cell* in
+       both axes so that the cells it owns overlap and the run is continuous.
+       Padding up to just over half a cell costs at most one extra cell on the
+       big maps and nothing at all on the small ones. */
+    const wallHalfCell = b.def.wall ? cell * 0.5 + 0.05 : 0;
     const pad = b.def.wall ? 0.05 : 0.15;
-    const s = (b.def.size || 3) * 0.5 + pad;
+    const s = Math.max((b.def.size || 3) * 0.5 + pad, wallHalfCell);
     const x0 = Math.max(0, Math.floor((b.x - s + half) / cell));
     const x1 = Math.min(N - 1, Math.floor((b.x + s + half) / cell));
     const z0 = Math.max(0, Math.floor((b.z - s + half) / cell));
@@ -1322,7 +1358,9 @@ export class Game {
           const i = cz * N + cx;
           if (blocked) haz[i]++;
           else if (haz[i]) haz[i]--;
-          if (!b.wall) {
+          {
+            /* walls included: isPassable() needs them to stop a body, not
+               just to steer a search */
             let bodies = this.navBodies[i];
             if (blocked) {
               if (!bodies) this.navBodies[i] = bodies = [];
@@ -1368,6 +1406,7 @@ export class Game {
         }
       }
       this.navDirty = true;
+      this.navForce = true;
       return;
     }
     const t = this.navTerrain, nb = this.navBuild, nf = this.navFinal;
@@ -1389,6 +1428,10 @@ export class Game {
       }
     }
     this.navDirty = true;
+    /* A wall is not a house: it is a stroke drawn across the ground a few
+       metres from men who are already walking there. It has to be solid
+       before anybody plans, not two hundred milliseconds later. */
+    if (b.def.wall || b.def.gate) this.navForce = true;
   }
 
   /** Recombine the nav layers and hand the result to the path finder. */
@@ -2327,7 +2370,18 @@ export class Game {
     if (!this.running || this.paused || this.gameOver) return;
     dt = Math.min(dt, 0.1) * this.speed;
     this.navTimer -= dt;
-    if (this.navDirty && this.navTimer <= 0) { this.refreshNav(); this.navTimer = 0.2; }
+    /* Walls and gates are stamped in a burst -- a dragged run is twenty
+       segments in one tick -- so the recombine is batched rather than done per
+       segment. It must not be *delayed* past the next planning frame, though.
+       At 0.2 s a soldier ordered in the same tick as the wall was handed a
+       path from the pre-wall grid, `walkableLine` said the straight line was
+       clear because the grid still was, and he strolled through twenty metres
+       of stone. Two frames is enough to coalesce a drag and short enough that
+       nothing plans against a grid that no longer describes the ground. */
+    if (this.navDirty) {
+      if (this.navTimer <= 0) { this.refreshNav(); this.navTimer = 0.2; }
+      else if (this.navForce) { this.refreshNav(); this.navForce = false; this.navTimer = 0.2; }
+    }
     if (this.navInv === undefined) {
       /* nav cells are the movement code's unit of "the same ground" */
       this.navCell = (this.world.nav && this.world.nav.cell) || 2;
@@ -2346,10 +2400,16 @@ export class Game {
     // rebuild the unit hash once per tick
     this.spatial.clear();
     this.spatial.insertAll(this.units);
-    if (this.buildingSpatialDirty || this.frame % 20 === 0) {
+    /* A wall goes up in the middle of a battle, so the index that answers
+       "is there a building here" has to be refilled before anybody takes
+       another step -- twenty frames of a stale index is twenty frames in which
+       a dragged run of stone is not solid to isPassable() and men stroll
+       through it. Ordinary building churn keeps the periodic refill. */
+    if (this.navForce || this.buildingSpatialDirty || this.frame % 20 === 0) {
       this.buildingSpatial.clear();
       for (const b of this.buildings) if (!b.dead) this.buildingSpatial.insert(b);
       this.buildingSpatialDirty = false;
+      this.navForce = false;
     }
 
     // Standing protection orders only do work when someone is actually guarding.
@@ -3424,6 +3484,44 @@ export class Game {
       else if (prev) { dx = cells[n].x - prev.x; dz = cells[n].z - prev.z; }
       if (dx || dz) cells[n].facing = Math.atan2(-dz, dx);
     }
+    /* ---- corner posts ----
+       A run of wall is a line, and a line has two ends you can walk around.
+       That is not a bug in the lattice or in the pathfinder -- it is what a
+       straight wall *is* -- but it made every wall decorative: a soldier
+       ordered through the middle of a twenty-metre stretch walked calmly to
+       the end of it, round the last post and in. The plan calls these "corner
+       pillars, with the armour that implies", and they are the difference
+       between a wall and a fence.
+
+       Each end gets a stone gate-less post: the wall definition with more
+       health, so the run does not end on its weakest link and a ram has to
+       break something to get round. The post is *part of the run* as far as
+       the player is concerned -- it is drawn as a thicker block -- so it costs
+       stone like a segment and it is skipped silently if the ground or the
+       purse refuses, leaving the plain end the game has always had. */
+    if (cells.length >= 2 && def.wall && !def.gate) {
+      const post = BUILDING_DEFS.wall_post;
+      const posts = [];
+      if (post) {
+        for (const end of [cells[0], cells[cells.length - 1]]) {
+          const prev = end === cells[0] ? cells[1] : cells[cells.length - 2];
+          const dx = Math.sign(end.x - prev.x), dz = Math.sign(end.z - prev.z);
+          const px = end.x + dx * size, pz = end.z + dz * size;
+          const spot = this.canPlaceAt('wall_post', team, px, pz);
+          if (!spot.ok) continue;
+          posts.push({ x: px, z: pz, type: 'wall_post', ok: true, reason: null,
+            cost: this.buildingCost('wall_post', team), facing: Math.atan2(-dz, dx) });
+        }
+        /* Keep the posts beside the run, not inside it.
+           They are a different building, they cost different stone, and they
+           sit on the lattice row *past* the end -- folding them into `cells`
+           made a five-by-three L read as six-by-four and made the cost check
+           fail on a run that had not overdraw. Placement walks `posts` first
+           and then the segments, so a run still stops cleanly if the ground
+           refuses. */
+        cells.posts = posts;
+      }
+    }
     return cells;
   }
 
@@ -3437,15 +3535,29 @@ export class Game {
     let stopped = 'end';
     for (const c of cells) {
       if (!c.ok) { stopped = c.reason || 'blocked'; break; }
-      const spot = this.canPlaceAt(type, team, c.x, c.z);
+      /* a cell may name its own structure: the posts that cap a run are part
+         of the run, but they are not the same building as its middle */
+      const kind = c.type || type;
+      const spot = this.canPlaceAt(kind, team, c.x, c.z);
       if (!spot.ok) { stopped = spot.reason || 'blocked'; break; }
-      if (!opts.free && !this.canAfford(team, this.buildingCost(type, team))) { stopped = 'resources'; break; }
-      const b = this.placeBuilding(type, team, c.x, c.z, {
+      if (!opts.free && !this.canAfford(team, this.buildingCost(kind, team))) { stopped = 'resources'; break; }
+      const b = this.placeBuilding(kind, team, c.x, c.z, {
         instant: opts.instant, free: opts.free,
         facing: opts.facing !== undefined ? opts.facing : c.facing
       });
       if (!b) { stopped = 'resources'; break; }
       out.push(b);
+    }
+    /* ...and cap the run. A post is drawn from the same purse and obeys the
+       same rules: if the stone is not there, the run keeps the plain end it
+       has always had rather than overdrawing. */
+    if (!opts.free && !opts.noPosts && cells.posts && cells.posts.length) {
+      for (const p of cells.posts) {
+        if (!this.canPlaceAt('wall_post', team, p.x, p.z).ok) continue;
+        if (!this.canAfford(team, this.buildingCost('wall_post', team))) break;
+        const b = this.placeBuilding('wall_post', team, p.x, p.z, { instant: opts.instant, facing: p.facing });
+        if (b) out.push(b);
+      }
     }
     return { placed: out, stopped };
   }
