@@ -54,11 +54,31 @@ const VIEWS = [
   ['portrait', { width: 412, height: 892, deviceScaleFactor: 2, isMobile: true, hasTouch: true, isPortrait: true }]
 ];
 
+/* Boot is the flaky part of this check on a software renderer. Swiftshader on a
+   shared runner sometimes loses the WebGL context while it is baking the world
+   -- a different failure from a layout one, and it made an APK build red twice
+   for a screenshot. Give the boot its own retries by reloading the page, and
+   only give up when it has genuinely failed several times; a real layout
+   regression is still caught below, because that part runs once. */
 await page.setViewport(VIEWS[0][1]);
-await page.goto(base, { waitUntil: 'load', timeout: 90000 });
-await page.waitForFunction('window.__imperial && window.__imperial.renderer.ready', { timeout: 180000 });
-/* let boot finish on its own: an early tap would race the boot overlay */
-await page.waitForFunction("document.getElementById('bootScreen').classList.contains('hidden')", { timeout: 120000 });
+let booted = false;
+for (let attempt = 1; attempt <= 3 && !booted; attempt++) {
+  try {
+    if (attempt === 1) {
+      await page.goto(base, { waitUntil: 'load', timeout: 90000 });
+    } else {
+      console.log(`  boot attempt ${attempt}: reloading after a failed start`);
+      await page.goto(base, { waitUntil: 'load', timeout: 90000 });
+    }
+    await page.waitForFunction('window.__imperial && window.__imperial.renderer.ready', { timeout: 180000 });
+    /* let boot finish on its own: an early tap would race the boot overlay */
+    await page.waitForFunction("document.getElementById('bootScreen').classList.contains('hidden')", { timeout: 120000 });
+    booted = true;
+  } catch (error) {
+    console.log(`  boot attempt ${attempt} failed: ${String(error.message).split('\n')[0]}`);
+  }
+}
+if (!booted) throw new Error('the game did not finish booting in three attempts');
 await page.evaluate(() => {
   document.querySelector('[data-mode="sandbox"]').click();
   document.getElementById('btnStart').click();
