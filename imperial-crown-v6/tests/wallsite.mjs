@@ -140,6 +140,7 @@ const site = await page.evaluate(() => {
   const g = a.game;
   const tc = g.buildings.find((b) => b.team === 1 && b.type === 'town_center');
   const out = [0, 0, 0];
+  const cands = [];
   /* Work in the space the player actually works in.
      A drag is two screen points, and the app resolves each of them by casting
      a ray at the terrain -- so the wall a player gets is the wall through the
@@ -183,8 +184,51 @@ const site = await page.evaluate(() => {
         if (!open) break;
       }
       if (!open) continue;
-      return { x, z, ang, cells: cells.length };
+      cands.push({ x, z, ang, cells: cells.length });
+      if (cands.length >= 24) break;
     }
+    if (cands.length >= 24) break;
+  }
+
+  /* ---- second pass: judge each candidate from the camera the checks will
+     actually look through ----------------------------------------------
+     Everything above was measured through whatever camera the match opened
+     with. The checks move the camera to the site first, and a ray cast from
+     somewhere else lands somewhere else: a site can have a flawless 16 m
+     drag from across the valley and, once the camera is over it, put the
+     single-tap point at the bottom edge of the frame where the ray grazes
+     the ground and lands fifty metres away in a lake. That is how this
+     suite failed intermittently -- on the terrain, not on the walls. So
+     stand the camera where the test will stand it and re-ask, for all
+     three points the test will actually press. */
+  const aim = (c) => {
+    a.camera.setTarget(c.x, c.z, true);
+    a.camera.desiredDist = a.camera.dist = 34;
+    a.camera.desiredPitch = a.camera.pitch = 0.72;
+    a.camera.yaw = a.camera.desiredYaw = c.ang + Math.PI * 0.5;
+    a.camera.update(1 / 60, { instant: true });
+  };
+  const rect = a.canvas.getBoundingClientRect();
+  const onScreen = (s, pad) => s && s.x > rect.left + pad && s.x < rect.right - pad
+    && s.y > rect.top + pad && s.y < rect.bottom - pad;
+  for (const c of cands) {
+    aim(c);
+    const perp = c.ang + Math.PI / 2;
+    const e0 = { x: c.x + Math.cos(perp) * -8, z: c.z + Math.sin(perp) * -8 };
+    const e1 = { x: c.x + Math.cos(perp) * 8, z: c.z + Math.sin(perp) * 8 };
+    const tap = { x: c.x + Math.cos(perp) * 14, z: c.z + Math.sin(perp) * 14 };
+    const s0 = toScreen(e0.x, e0.z), s1 = toScreen(e1.x, e1.z), st = toScreen(tap.x, tap.z);
+    /* 90 px of margin at the bottom keeps every point clear of the command
+       card, which eats taps, and off the grazing edge of the frustum. */
+    if (!onScreen(s0, 70) || !onScreen(s1, 70) || !onScreen(st, 70)) continue;
+    if (st.y > rect.bottom - 150) continue;
+    const r0 = pick(e0.x, e0.z), r1 = pick(e1.x, e1.z), rt = pick(tap.x, tap.z);
+    if (!r0 || !r1 || !rt) continue;
+    if (Math.hypot(rt.x - tap.x, rt.z - tap.z) > 2.5) continue;
+    const line = g.planWallLine('stone_wall', r0.x, r0.z, r1.x, r1.z, 1);
+    if (line.length < 8 || !line.every((q) => q.ok)) continue;
+    if (!g.canPlaceAt('stone_wall', 1, rt.x, rt.z, { ignoreUnits: true }).ok) continue;
+    return { x: c.x, z: c.z, ang: c.ang, cells: line.length };
   }
   return null;
 });
