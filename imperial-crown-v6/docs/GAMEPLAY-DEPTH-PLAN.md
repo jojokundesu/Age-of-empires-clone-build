@@ -1,7 +1,7 @@
 # Gameplay Depth Plan — Imperial Crown
 
-**Status:** Section 1 complete. Sections 2–5 specified, not started. Section 6 parked.
-**Version:** 6.4.0 → 6.5.0 (Section 1)
+**Status:** Sections 1–5 complete. Section 6 parked.
+**Version:** 6.4.0 → 6.9.0 (Sections 1–5)
 **Rule for every section:** narrow, deep, thorough. One section at a time, green tests
 before the next begins, no section half-finished and left in the build.
 
@@ -117,7 +117,7 @@ per tick worst 19.54 ms.
 
 ---
 
-## Section 2 — A map worth crossing (512 m → 1024 m default)
+## Section 2 — A map worth crossing (512 m → 1024 m default) ✅ COMPLETE
 
 ### The argument
 
@@ -321,7 +321,7 @@ same geometry.
 
 ---
 
-## Section 3 — The AI crosses the river
+## Section 3 — The AI crosses the river ✅ COMPLETE
 
 ### The argument
 
@@ -385,12 +385,12 @@ moment the war bar became `maxArmy` plus a march surcharge, which made the bar
 literally unreachable on Large -- the crown stopped at sixteen men and waited for
 eighteen for the rest of the game.
 
-`tests/riverwar.mjs` (12 checks, wired into `run.mjs`) covers all of it on both
+`tests/riverwar.mjs` (14 checks, wired into `run.mjs`) covers all of it on both
 map sizes. Classic terrain is still bit-identical.
 
 ---
 
-## Section 4 — Walls and gates
+## Section 4 — Walls and gates ✅ COMPLETE
 
 ### The argument
 
@@ -415,7 +415,7 @@ be drawn. The fix is a proper placement gesture and walls that actually stop men
 
 ---
 
-## Section 5 — Climbable resource-rich mountains
+## Section 5 — Climbable resource-rich mountains ✅ COMPLETE
 
 ### The argument
 
