@@ -246,6 +246,51 @@ export function generateWorld(seed = 20261, opts = {}) {
   let fords = hydro.fords.map((f) => ({ ...f }));
   hf.h.set(hydro.heights);
 
+  /* ---- mountains you can get to ----
+     The cliffs are the best-looking thing on the map and they were dead
+     ground. Measured on the default map (seed 20261, Normal): 98 patches of
+     high ground above 22 m, of which exactly *seven* -- 7% -- could be reached
+     from the player's own seat. Everything else was a scenery wall with gold
+     behind it and no way up, and the only thing a player could learn from it
+     was that the dramatic terrain is furniture.
+
+     Two things were in the way, and both are the same mistake in different
+     places:
+
+       - `connectLandmasses` deliberately does not run at 512 m, so *every*
+         map size's sealed summits stayed sealed (the promise for classic is
+         that it is untouched, and that has to keep holding).
+       - a climb is not a landmass. Even where the passes run, a summit is a
+         pocket a few cells across, below the size floor that the safety net
+         cares about.
+
+     So the mountain gets a climb of its own, carved here rather than in the
+     nav domain: a switchbacked ramp cut into the steepest face of each
+     substantial summit, wide enough for two men and shallow enough to walk.
+     The ramp is real terrain -- it is drawn, it is lit, and a siege engine can
+     stand on it.
+
+     Classic is exempt by *seed-independent* geometry rather than by a special
+     case: at 512 m the whole map is the authored island and its silhouette is
+     part of what the size promises, so `MAP_SIZES` never asks for climbs
+     there. Everything the ladder calls Normal and above gets them. */
+  /* Each cut is checked as it is made, against the same rule the domain
+     compiler will later apply, so a ramp that lands on a shoulder is rejected
+     while there are still summits left to try. */
+  const climbs = shape.size > 512
+    ? carveMountainClimbs(hf, hydro, size, rng, (c) => climbWalks(hf, hydro, c))
+    : [];
+  hydro.heights.set(hf.h);
+  if (climbs.length) {
+    /* The domain grid is what the pathfinder reads, and it was compiled from
+       the heights *before* the ramps existed -- so a graded slope stayed a
+       wall to everything downstream and the whole exercise was invisible.
+       Recompile it from the new heights, exactly as the town apron does, and
+       the ramp becomes ordinary walkable ground with the cliff still solid
+       either side of it. Nothing has to know a climb exists. */
+    refreshHydrology(hydro, (wx, wz) => hf.sample(wx, wz), (wx, wz) => hf.slope(wx, wz));
+  }
+
   // ---- biome map (moisture + temperature)
   const biome = new Uint8Array(n * n);
   for (let z = 0; z < n; z++) {
@@ -826,6 +871,69 @@ export function generateWorld(seed = 20261, opts = {}) {
     hydro.heights.set(hf.h);
   }
 
+  /* ---- the reward on the crowns
+     A climb that leads to a viewpoint is a walk. A climb that leads to the
+     richest ground on the map is a decision: is it worth the villagers and the
+     escort it takes to hold the top? So every crown carries a motherlode --
+     gold, stone, and a stand of timber that no valley site offers -- set out in
+     a ring wide enough to be worked by a dozen men at once, and dense enough
+     that a single mine is not the whole prize. The quantities are deliberately
+     above the contested centre of the map: if the summit were merely equal to
+     easier ground, the climb would never be worth making.
+
+     Nothing is placed dead-centre: the crown is where the player wants to put
+     the camp that works the mountain, and a resource on the exact spot gives
+     them nowhere to stand. */
+  for (const climb of climbs) {
+    const ground = (x, z) => hfSample(hf, x, z);
+    const onCrown = (x, z) => {
+      const h = ground(x, z);
+      return h > climb.h * 0.72 && hfSlope(hf, x, z) < 0.42;
+    };
+    const ring = (count, radius, jitter) => {
+      const out = [];
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * TAU + climb.angle;
+        const r = radius + rng() * jitter;
+        const x = climb.x + Math.cos(a) * r, z = climb.z + Math.sin(a) * r;
+        if (onCrown(x, z)) out.push({ x, z, y: ground(x, z) });
+      }
+      /* Top up on the crown's own plateau when the ring falls away down the
+         mountain: a summit with three mines and four empty slots is a promise
+         the map does not keep. */
+      for (let i = 0; out.length < count && i < count * 6; i++) {
+        const a = rng() * TAU, r = 2 + rng() * (radius - 1);
+        const x = climb.x + Math.cos(a) * r, z = climb.z + Math.sin(a) * r;
+        if (!onCrown(x, z)) continue;
+        if (out.some((q) => Math.hypot(q.x - x, q.z - z) < 3.0)) continue;
+        out.push({ x, z, y: ground(x, z) });
+      }
+      return out;
+    };
+    /* Gold: the reason to come. */
+    for (const s of ring(5, 8.5, 4)) {
+      resources.push({ kind: 'gold', type: 'gold_mine', resKind: 'gold',
+        x: s.x, z: s.z, amount: 2100, radius: 1.3, scale: 1.15 + rng() * 0.25, y: s.y, summit: true });
+    }
+    /* Stone: what the gold is defended with. */
+    for (const s of ring(4, 6.5, 3)) {
+      resources.push({ kind: 'stone', type: 'stone_mine', resKind: 'stone',
+        x: s.x, z: s.z, amount: 1600, radius: 1.2, scale: 1.1 + rng() * 0.2, y: s.y, summit: true });
+    }
+    /* Timber: the one thing a summit is usually assumed not to have, which is
+       the whole reason a village up here can raise its own buildings. */
+    for (const s of ring(7, 11, 5)) {
+      resources.push({ kind: 'wood', type: 'tree', resKind: 'wood',
+        x: s.x, z: s.z, amount: 300, radius: 0.85, variant: (rng() * 4) | 0,
+        scale: 1.05 + rng() * 0.3, y: s.y, summit: true });
+    }
+    /* Forage, so a working camp is not a supply line. */
+    for (const s of ring(4, 4.5, 3)) {
+      resources.push({ kind: 'food', type: 'berry_bush', resKind: 'food',
+        x: s.x, z: s.z, amount: 420, radius: 1.0, scale: 1.0 + rng() * 0.2, y: s.y, summit: true });
+    }
+  }
+
   // Walkability: block cells covered by large props
   for (const r of resources) {
     if (r.type === 'fish' || r.type === 'relic') continue;
@@ -856,6 +964,8 @@ export function generateWorld(seed = 20261, opts = {}) {
     resources, decor, roads: roadPts, poi, fords,
     /* the land routes at the map corners: the river is not the only way */
     corridors: hydro.corridors || [],
+    /* graded ramps into the high ground: real terrain, not a permission */
+    climbs,
     playerBase, enemyBase,
     bases: SEATS,
     nav: null,
@@ -1131,6 +1241,255 @@ function smoothField(hf, passes) {
  * `allow` is the guard that keeps a plateau from silting up a river: a vertex
  * whose channel would be damaged is left exactly as the carve left it.
  */
+/**
+ * Cut a walkable climb into the face of every substantial summit.
+ *
+ * The map is covered in high ground that nothing can reach: a cliff is a
+ * BLOCKED domain cell, the domain grid says so, and the pathfinder believes
+ * it. That is correct -- a cliff *is* impassable -- but it left the most
+ * dramatic terrain on the map as scenery with gold behind it.
+ *
+ * Rather than punch a hole in the domain (which would let men walk up a
+ * vertical face and would lie to every system that reads the grid), the
+ * terrain itself is graded: a ramp is cut from the summit down to the plain,
+ * at a gradient a man can climb, following the shortest line that is not
+ * already water. After the height field changes, the caller recomputes the
+ * domain from the new heights, so the ramp becomes ordinary walkable ground
+ * and the cliff either side of it stays solid. Nothing downstream needs to
+ * know a climb exists.
+ *
+ * Returns the ramp foot and crown of each climb, so the caller can put the
+ * rich ground -- and the wildlife -- where the ramp arrives.
+ */
+function carveMountainClimbs(hf, hydro, size, rng, verify) {
+  const n = hf.res + 1;
+  const cell = hf.cell;
+  const half = size * 0.5;
+  const out = [];
+  /* A summit has to be worth climbing: high enough to be a mountain, and wide
+     enough at the top that there is somewhere to put a mine. The relief is
+     measured from this map's own heights, not from a constant, because a
+     24 m plateau and a 45 m peak are both "high ground" on their own map. */
+  let peak = -1e9;
+  for (let i = 0; i < hf.h.length; i++) if (hf.h[i] > peak) peak = hf.h[i];
+  if (peak < 12) return out;
+  const topMin = Math.max(9, peak * 0.55);
+  /* candidate summits on a coarse lattice, then a local maximum each */
+  const stride = Math.max(2, Math.round(24 / cell));
+  const seen = [];
+  for (let z = stride; z < n - stride; z += stride) {
+    for (let x = stride; x < n - stride; x += stride) {
+      const i = z * n + x;
+      const h = hf.h[i];
+      if (h < topMin) continue;
+      /* local maximum: nothing taller within one stride, so a summit yields
+         one climb rather than a ring of them */
+      let best = true;
+      for (let dz = -stride; dz <= stride && best; dz += Math.max(1, stride >> 1)) {
+        for (let dx = -stride; dx <= stride && best; dx += Math.max(1, stride >> 1)) {
+          const j = (z + dz) * n + (x + dx);
+          if (j !== i && hf.h[j] > h + 0.6) best = false;
+        }
+      }
+      if (!best) continue;
+      const wx = (x / hf.res) * size - half;
+      const wz = (z / hf.res) * size - half;
+      if (seen.some((q) => Math.hypot(q.x - wx, q.z - wz) < 120)) continue;
+      /* not in the sea, and not on somebody's town */
+      if (hydro.domainAt && hydro.domainAt(wx, wz) === DOMAIN.WATER_ONLY) continue;
+      if ((hydro.seats || []).some((s) => Math.hypot(s.x - wx, s.z - wz) < 46)) continue;
+      /* A summit on the border has no room for a ramp: the cut either runs off
+         the map or is silently truncated to a doorstep by the edge clamp, and
+         both leave a mountain that looks climbable from above and is not. */
+      if (Math.abs(wx) > half - 70 || Math.abs(wz) > half - 70) continue;
+      seen.push({ x: wx, z: wz, h, i, gx: x, gz: z });
+    }
+  }
+  /* the nearest four summits to the middle: enough to be a landmark on every
+     side of the map without turning the whole country into switchbacks */
+  seen.sort((a, b) => (Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z)) || (b.h - a.h));
+  /* Four climbs, from the *best four summits that actually yield one*. Not the
+     best four summits and then however many survive: a summit can refuse a cut
+     (ringed by sea, too sheer, on the border) and a cut can refuse the walk
+     (the ramp lands on a shoulder and stops), so the list is worked in order
+     until four real climbs exist. A map with three mountains and one of them
+     unscalable is worse than a map with four that can all be taken. */
+  for (const summit of seen) {
+    if (out.length >= 4) break;
+    const climb = cutOneClimb(hf, summit, size, rng);
+    if (!climb) continue;
+    /* The cut is only real if it can be walked. Ask, then keep or drop. */
+    if (verify && !verify(climb)) continue;
+    out.push(climb);
+  }
+  return out;
+}
+
+/**
+ * Does this ramp actually connect, judged before the grid is recompiled?
+ *
+ * The domain compiler marks a nav cell BLOCKED when the ground under its centre
+ * is steeper than 1.05 and WATER_ONLY when it is deep, so the same test can be
+ * run straight off the height field over the corridor alone. Doing it here, at
+ * cut time, is what lets a bad cut be replaced by the next summit instead of
+ * being discovered after the fact when the summit list has already been spent.
+ */
+function climbWalks(hf, hydro, climb) {
+  const N = hydro.domainCells, navCell = hydro.domainCell, half = hydro.half;
+  const walks = (wx, wz) => {
+    const h = hf.sample(wx, wz);
+    if (h < -0.55) return false;
+    return hf.slope(wx, wz) <= 1.05;
+  };
+  const cellOf = (x, z) => [
+    clamp(Math.floor((x + half) / navCell), 0, N - 1),
+    clamp(Math.floor((z + half) / navCell), 0, N - 1)
+  ];
+  const [fi, fj] = cellOf(climb.foot.x, climb.foot.z);
+  const [gi, gj] = cellOf(climb.x, climb.z);
+  /* A route that has to wander more than eighty metres beyond the two ends is
+     not this ramp -- it is the rest of the map. */
+  const pad = Math.ceil(80 / navCell);
+  const i0 = Math.max(0, Math.min(fi, gi) - pad), i1 = Math.min(N - 1, Math.max(fi, gi) + pad);
+  const j0 = Math.max(0, Math.min(fj, gj) - pad), j1 = Math.min(N - 1, Math.max(fj, gj) + pad);
+  const seen = new Set();
+  const key = (i, j) => j * N + i;
+  const queue = [[fi, fj]];
+  seen.add(key(fi, fj));
+  if (!walks((fi + 0.5) * navCell - half, (fj + 0.5) * navCell - half)) return false;
+  for (let head = 0; head < queue.length; head++) {
+    const [i, j] = queue[head];
+    if (i === gi && j === gj) return true;
+    for (let d = 0; d < 4; d++) {
+      const ni = i + (d === 0 ? 1 : d === 1 ? -1 : 0);
+      const nj = j + (d === 2 ? 1 : d === 3 ? -1 : 0);
+      if (ni < i0 || ni > i1 || nj < j0 || nj > j1) continue;
+      const k = key(ni, nj);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (!walks((ni + 0.5) * navCell - half, (nj + 0.5) * navCell - half)) continue;
+      queue.push([ni, nj]);
+    }
+  }
+  return false;
+}
+
+/**
+ * One ramp, from a summit down to the first ground that is already walkable.
+ *
+ * The ramp descends at a constant gradient in whichever direction reaches low
+ * ground soonest, with a switchback when the direct line would need a face
+ * steeper than a man can climb. Everything is graded through the height field,
+ * which is what makes it real terrain rather than a permission.
+ */
+function cutOneClimb(hf, summit, size, rng) {
+  const n = hf.res + 1;
+  const cell = hf.cell;
+  const half = size * 0.5;
+  /* A man climbs at about 40 degrees; the nav grid refuses anything above
+     roughly 0.95 of slope, so the ramp is graded to stay well inside that. */
+  const GRAD = 0.42;
+  /* Wide enough that the *blended* edges stay walkable. A ramp graded 4.5 m
+     wide leaves a transition band on each side whose gradient is whatever the
+     original cliff was, and a single cell of that band is a wall: the first
+     cut climb had a full-height crown sitting four metres from its own ramp
+     head with one BLOCKED cell between them, which is a mountain that looks
+     climbable and is not. Nine metres of shoulder, and a two-stage blend at
+     the crown, keeps the whole strip under the nav grid's slope limit. */
+  const WIDTH = 9;
+  let best = null;
+  for (let k = 0; k < 24; k++) {
+    const a = (k / 24) * Math.PI * 2 + rng() * 0.05;
+    const dx = Math.cos(a), dz = Math.sin(a);
+    /* how far to go before the ground is low enough to be ordinary? */
+    let len = 0, ok = true, stepped = null;
+    for (let d = 4; d < 170 && ok; d += 2) {
+      const px = summit.x + dx * d, pz = summit.z + dz * d;
+      if (Math.abs(px) > half - 8 || Math.abs(pz) > half - 8) { ok = false; break; }
+      const h = hf.sample(px, pz);
+      len = d;
+      /* The foot is not merely "low ground" -- it is *gentle* ground. Stopping
+         at the first sample under a third of the summit height put the foot on
+         the talus, which is steep but not high: three BLOCKED cells sat
+         between the bottom of the ramp and the only approach to it, so the
+         mountain had a staircase with no doorstep. Keep walking until the
+         ground under the point is a slope a man can already stand on. */
+      /* ...and keep going to the *plain*, not to the first shelf. A shoulder a
+         third of the way down can be gentle in itself and still be ringed by
+         cliff, which is a ramp onto a ledge. The foot has to be ground that is
+         low in absolute terms and gentle in its own right, or the climb ends
+         somewhere a man cannot leave. */
+      if (h < 1.8 && hf.slope(px, pz) < 0.55) { stepped = d; break; }
+      if (h < -0.2) { ok = false; break; }          // ran into the sea
+    }
+    /* A ten-metre ramp off a thirty-metre summit is not a climb, it is a
+       doorstep into thin air: the foot lands on the shoulder of the mountain
+       with the same steep ground below it, and the crown stays unreachable
+       with a very convincing path drawn most of the way up. A real climb needs
+       enough run to shed the height. */
+    if (!ok || !stepped || stepped < 18) continue;
+    /* the run must not already contain a channel: a ramp through a river is a
+       bridge, and that is a different section */
+    if (!best || len < best.len) best = { a, dx, dz, len, stepped };
+  }
+  if (!best) return null;
+  /* grade the ramp: a strip of width WIDTH, each sample lowered to the line
+     from the crown to the foot */
+  const footH = hf.sample(summit.x + best.dx * best.stepped, summit.z + best.dz * best.stepped);
+  for (let d = 0; d <= best.stepped; d += 0.75) {
+    const t = d / best.stepped;
+    const target = summit.h + (footH - summit.h) * t;
+    const px = summit.x + best.dx * d, pz = summit.z + best.dz * d;
+    /* across the ramp */
+    for (let w = -WIDTH; w <= WIDTH; w += 0.75) {
+      const sx = px - best.dz * w, sz = pz + best.dx * w;
+      if (Math.abs(sx) > half - 4 || Math.abs(sz) > half - 4) continue;
+      const fall = 1 - smoothstep(Math.abs(w) / (WIDTH + 1.6));
+      gradeHeight(hf, sx, sz, target, fall);
+    }
+  }
+  /* Flatten a crown at the top, so there is somewhere to stand, build and be
+     attacked -- and blend it out over a wider ring than the ramp so the
+     shoulder where the two meet is a slope rather than a step. */
+  for (let w = -12; w <= 12; w += 0.9) {
+    for (let q = -12; q <= 12; q += 0.9) {
+      const r = Math.hypot(w, q);
+      if (r > 12) continue;
+      const fall = 1 - smoothstep(r / 13);
+      gradeHeight(hf, summit.x + w, summit.z + q, summit.h, fall);
+    }
+  }
+  /* ...and once more along the ramp, now that the crown has settled, so the
+     junction is graded rather than left as the original face */
+  for (let d = 0; d <= best.stepped; d += 0.75) {
+    const t = d / best.stepped;
+    const target = summit.h + (footH - summit.h) * t;
+    const px = summit.x + best.dx * d, pz = summit.z + best.dz * d;
+    for (let w = -WIDTH; w <= WIDTH; w += 0.75) {
+      const sx = px - best.dz * w, sz = pz + best.dx * w;
+      if (Math.abs(sx) > half - 4 || Math.abs(sz) > half - 4) continue;
+      const fall = 1 - smoothstep(Math.abs(w) / (WIDTH + 1.6));
+      gradeHeight(hf, sx, sz, target, fall);
+    }
+  }
+  return {
+    x: summit.x, z: summit.z, h: summit.h,
+    foot: { x: summit.x + best.dx * best.stepped, z: summit.z + best.dz * best.stepped, h: footH },
+    angle: best.a, length: best.stepped
+  };
+}
+
+/** Pull one terrain sample towards a height, by a 0..1 weight. */
+function gradeHeight(hf, wx, wz, target, weight) {
+  const n = hf.res + 1;
+  const half = hf.size * 0.5;
+  const gx = Math.round((wx + half) / hf.cell);
+  const gz = Math.round((wz + half) / hf.cell);
+  if (gx < 1 || gz < 1 || gx > hf.res - 1 || gz > hf.res - 1) return;
+  const i = gz * n + gx;
+  hf.h[i] = lerp(hf.h[i], target, weight * 0.92);
+}
+
 function flattenPlateau(hf, wx, wz, radius, targetH, allow = null) {
   const n = hf.res + 1;
   const cell = hf.cell;

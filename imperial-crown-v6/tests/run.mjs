@@ -56,6 +56,10 @@ const SUITES = [
      storming, on both map sizes, plus the behaviours that only show up when
      the enemy is a long walk away. 70 s. */
   ['riverwar', 'tests/riverwar.mjs'],
+  /* The high ground: that a man can get up it, that the way up is cut into the
+     terrain rather than punched into the navigation grid, and that the summit
+     is worth the walk. */
+  ['mountain', 'tests/mountain.mjs'],
   ['wallsite', 'tests/wallsite.mjs', true],
   ['modsite', 'tests/modsite.mjs', true],
   ['kingdoms', 'tests/kingdoms.mjs'],
