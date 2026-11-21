@@ -493,12 +493,29 @@ Two pre-existing AI defects that this section's larger sample exposed:
   rest of the match: the march began at 13.1 min and the storm never came. The camp is now
   bounded at three minutes, and Large storms at 16.1 min.
 
-### Not built
+### Built after this section was first written
 
-**The age-gated infrastructure** (ladder → switchback → cut-stone stairs → pulley lift, all
-destructible) is still open. The ramp is terrain and cannot be broken, which is the honest
-base state; making it a *building* that gates ascent by age and can be raided is a
-separate piece of work — it needs the building to own the nav cell, not the terrain.
+**The age-gated infrastructure** is done, and this paragraph used to say it was not.
+Three destructible climb structures now own their nav cells -- `cliff_ladder` (Age I,
+foot only), `cliff_switchback` (Age III, foot and mounted) and `cliff_lift` (Age IV,
+everything including siege and loaded carts) -- each upgrading into the next, each
+gating ascent by unit weight class rather than by a flat permission. Burning one closes
+the mountain behind it, which is the raid the section argued for.
+
+**Camp stores and supply carts** (`f95f627`). A drop-off building was a teleporter: a
+villager handed over an armful four metres from the trees and it arrived in the treasury
+on the far side of the map, so distance stopped costing anything the moment a camp went
+up. A lumber camp, mining camp and cliff lift now *hold* what they are given (400, 400
+and 480) and a free, destructible, population-free cart carries it home. A full camp
+reroutes its villagers to the town centre rather than stalling them. Cutting the cart is
+a raid with a point; the pile burns with the camp.
+
+Tuned by measurement against the old instant-deposit camp over 420 s: a camp beside the
+town centre is unchanged (100-102%), a camp 82 m out runs at 87-102% once goods in
+transit are counted. The first cut measured 36-49% and the cause was two defects rather
+than the design -- the cart could not reach a town centre's centre point and was retired
+by the stall watchdog, and waiting for a full load cost more than driving once the pile
+stopped growing. Both are recorded in `tests/supply.mjs` (15 checks).
 
 ### Why last
 
