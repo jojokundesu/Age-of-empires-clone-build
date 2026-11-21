@@ -120,7 +120,11 @@ check('the whole model library is well formed and inside budget', () => {
   }
   assert(!bad.length, bad.slice(0, 6).join(' | '));
   const c = census();
-  assert(c.total >= 18000 && c.total <= 26000, `triangle budget moved: ${c.total}`);
+  /* Ceiling raised from 26000 when the supply cart was added -- a new unit
+     type costs triangles once and forever, and a bound with no headroom
+     fails the next person for no reason. The lower bound is the real guard
+     here: it catches a model library that has quietly stopped building. */
+  assert(c.total >= 18000 && c.total <= 27000, `triangle budget moved: ${c.total}`);
   console.log(`         ${all.length} models, ${c.total} triangles`);
 });
 

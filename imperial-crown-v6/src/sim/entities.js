@@ -55,7 +55,7 @@ export const STATE = {
   IDLE: 'idle', MOVE: 'move', ATTACK: 'attack', ATTACK_MOVE: 'attackmove',
   GATHER: 'gather', RETURN: 'return', BUILD: 'build', REPAIR: 'repair',
   HEAL: 'heal', CONVERT: 'convert', GARRISON: 'garrison', PATROL: 'patrol',
-  DEAD: 'dead', TRADE: 'trade', UNPACK: 'unpack',
+  DEAD: 'dead', TRADE: 'trade', UNPACK: 'unpack', SUPPLY: 'supply',
   CONTROLLED: 'controlled'
 };
 
@@ -675,6 +675,7 @@ export class Unit extends Entity {
       case STATE.CONVERT: this.updateConvert(dt, stats); break;
       case STATE.PATROL: this.updatePatrol(dt, stats); break;
       case STATE.TRADE: this.updateTrade(dt, stats); break;
+      case STATE.SUPPLY: this.updateSupply(dt, stats); break;
       case STATE.GARRISON: this.updateGarrisonMove(dt, stats); break;
       case STATE.CONTROLLED: if (g.directControl?.unit === this) g.directControl.moveUnit(this, dt, stats); else this.state = STATE.IDLE; break;
       default: this.updateIdle(dt, stats); break;
@@ -1335,7 +1336,7 @@ export class Unit extends Entity {
       // no drop-off: deposit instantly at any TC if close (prevents softlock)
       const tc = g.findDropoff(this.team, 'any', this.x, this.z, 60, this);
       if (tc && Math.hypot(tc.x - this.x, tc.z - this.z) < 12) {
-        g.deposit(this, this.carry.kind, this.carry.amount);
+        g.deposit(this, this.carry.kind, this.carry.amount, tc);
         this.carry.amount = 0;
       }
       return;
@@ -1405,7 +1406,7 @@ export class Unit extends Entity {
     this.returnT = 0;
     this._returnAnchor = null;
     this.desiredFacing = Math.atan2(drop.x - this.x, drop.z - this.z);
-    g.deposit(this, this.carry.kind, this.carry.amount);
+    g.deposit(this, this.carry.kind, this.carry.amount, drop);
     this.turnIn();
     this.carry.amount = 0;
     this.dropOff = null;
@@ -1649,6 +1650,133 @@ export class Unit extends Entity {
     }
   }
 
+  /**
+   * The camp cart's round.
+   *
+   * Four states and no orders: wait at the camp until there is a worthwhile
+   * load, carry it to the nearest treasury, hand it over, come back. It is
+   * written as a loop around a place rather than a queue of tasks because
+   * the cart has to survive everything the world does to it -- the camp
+   * burning, the treasury falling, the road being blocked by a new wall --
+   * and in every one of those cases the correct behaviour is to re-ask the
+   * same two questions rather than to carry on with a stale plan.
+   */
+  updateSupply(dt, stats) {
+    const g = this.game;
+    const home = this.home;
+    if (!home || home.dead) {
+      /* The camp is gone. Bank what is aboard and stand down: a cart with
+         no camp has nothing to come back to. */
+      g.unloadSupplyCart(this);
+      this.home = null;
+      this.state = STATE.IDLE;
+      return;
+    }
+    /* One full pile is exactly one cartload. Tying the two together means
+       there is only one number to reason about per building -- "how much
+       can this camp hold" -- and the cart can always clear a full camp in
+       a single run. */
+    const CAP = home.def.stockpile || Unit.SUPPLY_CAP;
+    this.supplyPhase = this.supplyPhase || 'wait';
+
+    if (this.supplyPhase === 'wait') {
+      const [hx, hz] = g.supplyPoint(home);
+      const atHome = Math.hypot(this.x - hx, this.z - hz) < 4.5;
+      if (!atHome) {
+        this.repathTimer -= dt;
+        if (!this.path || this.repathTimer <= 0) { this.repathTimer = 2.2; this.moveTo(hx, hz, true); }
+        if (this.targetPos) this.stepMovement(dt, stats);
+        return;
+      }
+      this.moving = false;
+      this.path = null;
+      const pile = g.stockTotal(home);
+      /* When to pull out. Waiting for a full load is the efficient choice
+         only while the pile is still growing fast; past that, waiting costs
+         more than driving does. So the cart compares the two directly and
+         leaves on whichever comes first:
+           - full: nothing more will fit, go;
+           - capped: villagers are being turned away, go now;
+           - stale: it has been standing here with goods aboard for longer
+             than half a round trip, so the road is the cheaper place to be.
+         The third rule is what keeps a quiet camp honest. Without it a cart
+         with a large hold sat for ninety seconds waiting for a pile that
+         two villagers were never going to fill quickly, and the delivery
+         latency -- not the cart's capacity -- became the bottleneck. It
+         also empties the last few logs out of a worked-out forest. */
+      if (pile > 0 && !this.waitT) {
+        const bank = g.treasuryFor(this.team, this.x, this.z);
+        const far = bank ? Math.hypot(bank.x - hx, bank.z - hz) : 40;
+        this._tripEst = (2 * far) / Math.max(1, this.def.speed || 3.6);
+      }
+      this.waitT = pile > 0 ? (this.waitT || 0) + dt : 0;
+      const stale = pile > 0 && this.waitT > Math.min(25, (this._tripEst || 30) * 0.5);
+      if (pile >= CAP || (pile > 0 && g.stockRoom(home) < 1) || stale) {
+        g.loadSupplyCart(this, home, CAP);
+        this.supplyPhase = 'haul';
+        this.dropOff = null;
+        this.supplyT = 0;
+        this.waitT = 0;
+        this._clearNear();
+      }
+      return;
+    }
+
+    if (this.supplyPhase === 'haul') {
+      if (!(this.loadTotal > 0)) { this.supplyPhase = 'back'; return; }
+      let bank = this.dropOff;
+      if (!bank || bank.dead || bank.buildProgress < 0.99) {
+        bank = g.treasuryFor(this.team, this.x, this.z);
+        this.dropOff = bank;
+        this.path = null;
+      }
+      if (!bank) {
+        /* Nowhere to bank: the crown has lost every town centre. Hold the
+           load rather than dropping it in a field. */
+        this.moving = false;
+        return;
+      }
+      /* Arriving needs the same three escape hatches a villager has, and
+         for the same reason: a town centre is 5.8 m wide, so the closest
+         cell a cart can legally stand in may be four metres from the
+         building's centre and every one of those metres is "not arrived".
+         Without this the cart parked outside its own treasury, the stall
+         watchdog retired it, and the camp silted up at its cap -- which is
+         exactly what the first balance run measured. */
+      this.supplyT = (this.supplyT || 0) + dt;
+      const d = rectDist(this, bank);
+      if (d > 2.4 && !this._nearEnough(dt, bank, 2.4) && !(this.supplyT > 8 && d < 14)) {
+        this.repathTimer -= dt;
+        if (!this.path || this.repathTimer <= 0) { this.repathTimer = 2.4; this.approachBuilding(bank, 1.2); }
+        if (this.targetPos) this.stepMovement(dt, stats);
+        return;
+      }
+      this.moving = false;
+      this.path = null;
+      this.stallT = 0;
+      this.supplyT = 0;
+      this._clearNear();
+      this.desiredFacing = Math.atan2(bank.x - this.x, bank.z - this.z);
+      g.unloadSupplyCart(this);
+      this.dropOff = null;
+      this.supplyPhase = 'back';
+      return;
+    }
+
+    // 'back'
+    const [hx, hz] = g.supplyPoint(home);
+    const d = Math.hypot(this.x - hx, this.z - hz);
+    if (d > 3.5) {
+      this.repathTimer -= dt;
+      if (!this.path || this.repathTimer <= 0) { this.repathTimer = 2.4; this.moveTo(hx, hz, true); }
+      if (this.targetPos) this.stepMovement(dt, stats);
+      return;
+    }
+    this.moving = false;
+    this.path = null;
+    this.supplyPhase = 'wait';
+  }
+
   updateGarrisonMove(dt, stats) {
     const b = this.garrisonTarget;
     if (!b || b.dead) { this.garrisonTarget = null; this.state = STATE.IDLE; return; }
@@ -1885,6 +2013,11 @@ export class Unit extends Entity {
 /* ============================================================
    BUILDING
    ============================================================ */
+/* Fallback hold for a supply cart whose building declares no stockpile.
+   In practice every cart has one -- carts are only issued to buildings with
+   a pile -- so this is a floor, not a tuning knob. */
+Unit.SUPPLY_CAP = 400;
+
 export class Building extends Entity {
   constructor(game, type, team, x, z, instant = false) {
     super(game, type, team, x, z);

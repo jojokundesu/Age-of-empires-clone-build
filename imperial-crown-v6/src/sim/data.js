@@ -299,6 +299,21 @@ export const UNIT_DEFS = {
     auraRange: 10, auraBonus: 0.2, sight: 14, bonuses: { archer: 8, infantry: 4, building: 10 },
     desc: 'A lord who says the throne is his. Rides with his own household knights.'
   }),
+  /**
+   * The camp cart. Not trainable, not counted, not commanded.
+   *
+   * One is issued free with every camp and drives itself between that camp
+   * and the nearest treasury for as long as both stand. It is a unit rather
+   * than an accounting rule precisely so that it can be *killed*: a raider
+   * who burns the cart does not destroy the camp, he strands it, and the
+   * villagers there start the long walk home until a replacement arrives.
+   */
+  supply_cart: U({
+    name: 'Supply Cart', icon: 'cart', hp: 140, attack: 0, armor: 0, pierceArmor: 2,
+    speed: 3.6, time: 0, pop: 0, cost: {}, classes: ['cart'], sight: 7,
+    supply: true, untrainable: true,
+    desc: 'Hauls a camp\'s stock home. Issued free with the camp, and replaced if it is lost.'
+  }),
   trade_cart: U({
     name: 'Trade Cart', icon: 'cart', hp: 90, attack: 0, armor: 1, pierceArmor: 2,
     speed: 3.3, time: 20, cost: { wood: 100, gold: 50 }, classes: ['villager'],
@@ -337,12 +352,14 @@ export const BUILDING_DEFS = {
   lumber_camp: B({
     name: 'Lumber Camp', icon: 'tree', hp: 600, armor: 1, pierceArmor: 4, size: 3.2, sight: 6,
     cost: { wood: 80 }, time: 15, dropoff: ['wood'], research: ['double_bit_axe', 'bow_saw'],
-    desc: 'Wood drop-off point. Build it right next to the forest.'
+    stockpile: 400,
+    desc: 'Wood drop-off. Its cart carries the timber home; cut the cart and the camp backs up.'
   }),
   mining_camp: B({
     name: 'Mining Camp', icon: 'pick', hp: 600, armor: 1, pierceArmor: 4, size: 3.2, sight: 6,
     cost: { wood: 80 }, time: 15, dropoff: ['gold', 'stone'], research: ['gold_mining', 'stone_mining'],
-    desc: 'Gold and stone drop-off point. Place it beside the mine.'
+    stockpile: 400,
+    desc: 'Gold and stone drop-off. Its cart carries the ore home; cut the cart and the camp backs up.'
   }),
   barracks: B({
     name: 'Barracks', icon: 'sword', hp: 1200, armor: 3, pierceArmor: 7, size: 4.2, sight: 9,
@@ -459,7 +476,7 @@ export const BUILDING_DEFS = {
   cliff_lift: B({
     name: 'Cut-Stone Stairs & Pulley Lift', icon: 'castle', hp: 1600, armor: 8, pierceArmor: 12,
     size: 3.6, sight: 10, cost: { stone: 200, wood: 120 }, time: 46, climb: true, climbDomain: 6, age: 3,
-    dropoff: ['gold', 'stone', 'wood'],
+    dropoff: ['gold', 'stone', 'wood'], stockpile: 480,
     desc: 'Paved stairs and a freight crane. Everything climbs, and the hoist takes ore at the summit.'
   })
 };
@@ -751,7 +768,7 @@ export function traversalOf(type, def) {
   if (!d) return TRAVERSAL_FOOT;
   /* Siege trains, elephants and loaded carts: nothing short of a paved stair
      and a hoist gets these up a cliff. */
-  if (d.siege || type === 'war_elephant' || type === 'trade_cart') return TRAVERSAL_HEAVY;
+  if (d.siege || type === 'war_elephant' || type === 'trade_cart' || d.supply) return TRAVERSAL_HEAVY;
   /* Anything with a horse under it. */
   if (d.mount) return TRAVERSAL_MOUNTED;
   return TRAVERSAL_FOOT;

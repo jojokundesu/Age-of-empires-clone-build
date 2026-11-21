@@ -1532,6 +1532,16 @@ export class UI {
         /* a field is a larder: say how much is left in it, because "the farm
            does nothing" is indistinguishable from a farm with nothing on it */
         if (e.def && e.def.resKind) sub += ` · ${Math.floor(Math.max(0, e.amount || 0))} ${e.def.resKind} left`;
+        /* A camp holds its goods until the cart comes. Both halves matter:
+           how full the pile is explains why villagers have started walking
+           past the camp, and a missing cart explains why the pile is not
+           going down. Without this the player sees only the symptom. */
+        if (e.def && e.def.stockpile !== undefined && e.buildProgress >= 1) {
+          const held = Math.floor(g.stockTotal(e) || 0);
+          sub += ` · stores ${held}/${e.def.stockpile}`;
+          if (!e.cart || e.cart.dead) sub += ' · no cart';
+          else if (held >= e.def.stockpile) sub += ' · full';
+        }
       } else if (e.kind === 'resource') {
         sub = `${e.resKind} · ${Math.floor(e.amount)} left`;
       } else {

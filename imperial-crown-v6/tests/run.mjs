@@ -60,6 +60,7 @@ const SUITES = [
      terrain rather than punched into the navigation grid, and that the summit
      is worth the walk. */
   ['mountain', 'tests/mountain.mjs'],
+  ['supply', 'tests/supply.mjs'],
   ['wallsite', 'tests/wallsite.mjs', true],
   ['modsite', 'tests/modsite.mjs', true],
   ['kingdoms', 'tests/kingdoms.mjs'],

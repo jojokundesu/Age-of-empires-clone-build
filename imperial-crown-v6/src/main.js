@@ -992,8 +992,26 @@ class App {
   saveMatch() {
     const g = this.game;
     if (!g) return false;
-    const liveUnits = g.units.filter((u) => !u.dead);
+    /* Supply carts are deliberately not saved. Each one belongs to a
+       building that re-issues it on load (`onBuildingComplete` runs for
+       every restored camp), so saving them too would double the fleet on
+       every reload. Their cargo is not lost: it is folded back into the
+       camp's pile below, as though the cart were standing in the yard when
+       the game was put down. */
+    const liveUnits = g.units.filter((u) => !u.dead && !u.def.supply);
     const liveBuildings = g.buildings.filter((b) => !b.dead);
+    /* A camp's pile, plus whatever its cart happens to be carrying. */
+    const storeOf = (b) => {
+      if (b.def.stockpile === undefined) return undefined;
+      const out = {};
+      let any = 0;
+      for (const [k, v] of Object.entries(b.store || {})) if (v > 0) { out[k] = Math.round(v); any += v; }
+      const cart = b.cart;
+      if (cart && !cart.dead && cart.load) {
+        for (const [k, v] of Object.entries(cart.load)) if (v > 0) { out[k] = Math.round((out[k] || 0) + v); any += v; }
+      }
+      return any > 0 ? out : undefined;
+    };
     const unitIndex = new Map(liveUnits.map((u, i) => [u, i]));
     const buildingIndex = new Map(liveBuildings.map((b, i) => [b, i]));
     const ref = e => {
@@ -1048,7 +1066,7 @@ class App {
       // The indices below share exactly the same live arrays as squads,
       // guards and workshop state; no volatile runtime entity ids are used.
       units: liveUnits.map((u) => [u.type, u.team, Math.round(u.x * 10) / 10, Math.round(u.z * 10) / 10, Math.round(u.hp), u.rank || 0, Math.round((u.xp || 0) * 10) / 10, Math.round(u.survived || 0), (u.garrisoned ? buildingIndex.get(u.garrisonTarget) : undefined) ?? -1, u.maxHp, (u.garrisoned ? unitIndex.get(u.garrisonTarget) : undefined) ?? -1, order(u)]),
-      buildings: liveBuildings.map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0, { queue: b.queue, researchQueue: b.researchQueue, rally: b.rally, amount: b.def && b.def.resKind ? Math.round(b.amount || 0) : undefined, poiType: b.poiType, poiId: b.poiId, siteOwner: b.siteOwner, captureTeam: b.captureTeam, captureProgress: b.captureProgress }]),
+      buildings: liveBuildings.map((b) => [b.type, b.team, Math.round(b.x * 10) / 10, Math.round(b.z * 10) / 10, Math.round(b.hp), b.buildProgress, b.facing || 0, { queue: b.queue, researchQueue: b.researchQueue, rally: b.rally, amount: b.def && b.def.resKind ? Math.round(b.amount || 0) : undefined, poiType: b.poiType, poiId: b.poiId, siteOwner: b.siteOwner, captureTeam: b.captureTeam, captureProgress: b.captureProgress, store: storeOf(b) }]),
       resources: g.resources.filter((r) => !r.dead).map((r) => [r.type, Math.round(r.x * 10) / 10, Math.round(r.z * 10) / 10, Math.round(r.amount), r.variant || 0, r.worldResourceIndex ?? null])
     };
     const ok = Menu.writeSave(data);
@@ -1098,6 +1116,16 @@ class App {
         b.rally = extra.rally || null;
         /* a half-harvested field comes back half-harvested */
         if (Number.isFinite(extra.amount)) b.amount = clamp(extra.amount, 0, b.maxAmount);
+        /* and a camp comes back with its pile, cart included */
+        if (extra.store && b.def.stockpile !== undefined) {
+          b.store = {};
+          b.storeTotal = 0;
+          for (const [k, v] of Object.entries(extra.store)) {
+            if (!(v > 0)) continue;
+            b.store[k] = v;
+            b.storeTotal += v;
+          }
+        }
       }
       if (b.type === 'outpost_shrine') {
         const source = (game.world.poi || []).find(p => Math.hypot(p.x - x, p.z - z) < 0.2);

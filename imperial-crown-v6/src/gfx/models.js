@@ -1299,6 +1299,65 @@ U('trade_cart', () => {
   return { geo: g, height: 2.0, stride: 2.2 };
 });
 
+/**
+ * The camp cart.
+ *
+ * A working vehicle, deliberately plainer than the merchant's trade cart:
+ * an open flatbed with stake sides, piled with the camp's output, drawn by
+ * one ox. The load sits proud of the rails so a loaded cart reads as loaded
+ * from across the map -- this is a unit the player is meant to notice and
+ * defend, and the silhouette has to do that work at full camera height.
+ * The pennant is the one team-tinted surface; everything else is timber and
+ * sacking, because a neutral prop wearing team colour reads as a mistake.
+ */
+U('supply_cart', () => {
+  const g = new Geo();
+  g.part_(PART.BODY, 0, 0.6, 0);
+  // flatbed
+  g.material(M.WOOD).color(0.58, 0.44, 0.29);
+  g.box(0, 0.72, 0, 1.3, 0.22, 2.2);
+  g.material(M.WOOD_DARK).color(0.4, 0.3, 0.2);
+  g.box(0, 0.6, 0, 1.15, 0.18, 2.0);
+  // stake sides
+  g.material(M.WOOD).color(0.5, 0.38, 0.25);
+  for (const sx of [-0.62, 0.62]) {
+    for (const sz of [-0.85, 0.85]) g.box(sx, 1.0, sz, 0.1, 0.42, 0.1);
+    g.box(sx, 1.18, 0, 0.09, 0.09, 2.1);
+  }
+  g.box(0, 1.0, -1.08, 1.25, 0.46, 0.1);
+  // the load: crates and sacks, stacked above the rails
+  crate(g, -0.3, -0.55, 0.83, 0.54);
+  crate(g, 0.32, -0.5, 0.83, 0.48);
+  g.material(M.THATCH).color(0.66, 0.58, 0.4);
+  g.sphere(0.26, 1.02, 0.62, 0.3, 6, 4);
+  g.sphere(-0.28, 1.0, 1.0, 0.26, 6, 4);
+  g.material(M.WOOD_DARK).color(0.36, 0.27, 0.18);
+  g.cyl(0.1, 1.08, -0.2, 0.14, 0.14, 1.0, 6, { axis: 'z' });
+  // wheels, one part each so they turn with the gait
+  for (const sx of [-0.72, 0.72]) {
+    g.part_(sx > 0 ? PART.LEG_L : PART.LEG_R, sx, 0.5, 0);
+    g.material(M.WOOD).color(0.47, 0.35, 0.24);
+    g.cyl(sx, 0, 0, 0.5, 0.5, 0.14, 9, { rot: Math.PI / 2 });
+    g.material(M.IRON).color(0.32, 0.32, 0.34);
+    g.cyl(sx, 0, 0, 0.17, 0.17, 0.18, 6, { rot: Math.PI / 2 });
+  }
+  // team pennant on the forward stake
+  g.part_(PART.BODY, 0, 0.6, 0);
+  g.material(M.WOOD_DARK).color(0.38, 0.29, 0.19);
+  g.cyl(-0.62, 1.2, 1.0, 0.05, 0.05, 0.95, 5);
+  g.material(M.CLOTH).color(1, 1, 1);
+  g.box(-0.44, 1.92, 1.0, 0.36, 0.26, 0.04);
+  // ox in the traces
+  g.part_(PART.EXTRA, 0, 1.0, 1.6);
+  g.material(M.LEATHER).color(0.52, 0.42, 0.33);
+  g.box(0, 0.88, 0, 0.84, 0.86, 1.7);
+  g.sphere(0, 1.02, 1.02, 0.34, 7, 4);
+  g.material(M.WOOD_DARK).color(0.35, 0.26, 0.18);
+  g.box(0, 1.34, 0.72, 0.9, 0.1, 0.1);
+  g.color(1, 1, 1);
+  return { geo: g, height: 2.1, stride: 2.4 };
+});
+
 /* ---- siege ---- */
 U('ram', () => {
   const g = new Geo();

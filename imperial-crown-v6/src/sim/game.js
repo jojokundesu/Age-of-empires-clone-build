@@ -1161,6 +1161,11 @@ export class Game {
       if (!b.def.dropoff) continue;
       if (unit?.def?.naval && b.type !== 'dock') continue;
       if (kind !== 'any' && b.def.dropoff.indexOf(kind) < 0) continue;
+      /* A camp with no room left is not a drop-off. The villager is not
+         stalled by it -- he simply falls through to the next one, which is
+         the town centre, and walks the distance the camp existed to save.
+         That is the whole cost of letting a supply line be cut. */
+      if (b.def.stockpile && this.stockRoom(b) < 1) continue;
       const [px, pz] = this.dropPointOf(b);
       const d = dist2(x, z, px, pz);
       if (d < bestD) { bestD = d; best = b; }
@@ -1168,8 +1173,22 @@ export class Game {
     return best;
   }
 
-  deposit(unit, kind, amount) {
+  /**
+   * Hand a load over.
+   *
+   * A town centre is the treasury and credits the empire on the spot. A
+   * forward camp is not: it is a woodpile beside a forest, and what is piled
+   * there is not yet wealth. It becomes wealth when the camp's cart carries
+   * it home, which is a journey an enemy can interrupt.
+   */
+  deposit(unit, kind, amount, into = null) {
     if (!kind || amount <= 0) return;
+    if (into && into.def.stockpile && !into.dead) {
+      this.stock(into, kind, amount);
+      if (unit.team === TEAM_PLAYER) this.trackFloat?.(kind, amount, unit.x, unit.z, true);
+      this.onEvent('stocked', { team: unit.team, kind, amount, building: into });
+      return;
+    }
     this.addResource(unit.team, kind, amount);
     if (unit.team === TEAM_PLAYER) {
       this.trackFloat?.(kind, amount, unit.x, unit.z);
@@ -1177,6 +1196,156 @@ export class Game {
     const st = this.teams.get(unit.team);
     if (st) st.gathered += amount;
     this.onEvent('deposit', { team: unit.team, kind, amount });
+  }
+
+  /* ==========================================================
+     LOCAL STOCKPILES AND THEIR CARTS
+     ----------------------------------------------------------
+     A camp holds what it is given until its cart comes. The rules are
+     deliberately forgiving at the edges -- a full camp reroutes its
+     villagers rather than stalling them, and a burned cart is replaced --
+     because the interesting pressure is the *distance*, not a soft-lock.
+     ========================================================== */
+
+  /** Add to a camp's local pile. */
+  stock(b, kind, amount) {
+    if (!b.store) b.store = {};
+    b.store[kind] = (b.store[kind] || 0) + amount;
+    b.storeTotal = (b.storeTotal || 0) + amount;
+  }
+
+  /** What a camp is holding, all kinds together. */
+  stockTotal(b) {
+    return b.storeTotal || 0;
+  }
+
+  /** Room left in a camp, or Infinity for a building that is a treasury. */
+  stockRoom(b) {
+    const cap = b.def.stockpile;
+    if (!cap) return Infinity;
+    return Math.max(0, cap - this.stockTotal(b));
+  }
+
+  /**
+   * Where a camp's cart waits and loads.
+   *
+   * For an ordinary camp that is the camp. For the pulley lift it is the
+   * foot of the cliff: the miners tip their baskets into the crate at the
+   * brow and the hoist lowers it, so the cart never has to climb -- which
+   * is exactly what the footAnchor was computed for.
+   */
+  supplyPoint(b) {
+    if (b.def.climb && b.climb && b.climb.footAnchor) {
+      const a = b.climb.footAnchor;
+      return [a.x, a.z];
+    }
+    return [b.x, b.z];
+  }
+
+  /** The nearest building that can actually bank a load for this team. */
+  treasuryFor(team, x, z) {
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (b.dead || b.team !== team || b.buildProgress < 0.99) continue;
+      if (!b.def.dropoff || b.def.stockpile) continue;
+      const d = dist2(x, z, b.x, b.z);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  /** Issue a camp its cart, at the point the cart works from. */
+  spawnSupplyCart(b) {
+    if (b.dead || b.def.stockpile === undefined) return null;
+    if (b.cart && !b.cart.dead) return b.cart;
+    const [px, pz] = this.supplyPoint(b);
+    const u = this.spawnUnit('supply_cart', b.team, px, pz, null, { force: true });
+    if (!u) return null;
+    u.home = b;
+    u.load = {};
+    u.loadTotal = 0;
+    u.supplyPhase = 'wait';
+    u.state = STATE.SUPPLY;
+    b.cart = u;
+    b.cartLostAt = 0;
+    return u;
+  }
+
+  /** Bank whatever a cart is carrying. */
+  unloadSupplyCart(cart, silent = false) {
+    if (!cart || !cart.load) return 0;
+    let total = 0;
+    const st = this.teams.get(cart.team);
+    for (const kind of Object.keys(cart.load)) {
+      const amount = cart.load[kind];
+      if (!(amount > 0)) continue;
+      this.addResource(cart.team, kind, amount);
+      if (st) st.gathered += amount;
+      total += amount;
+      if (!silent && cart.team === TEAM_PLAYER) this.trackFloat?.(kind, amount, cart.x, cart.z);
+      this.onEvent('deposit', { team: cart.team, kind, amount });
+    }
+    cart.load = {};
+    cart.loadTotal = 0;
+    return total;
+  }
+
+  /** Move up to `cap` out of a camp's pile and onto its cart. */
+  loadSupplyCart(cart, b, cap = 120) {
+    if (!b || b.dead || !b.store) return 0;
+    let room = cap - (cart.loadTotal || 0);
+    let taken = 0;
+    for (const kind of Object.keys(b.store)) {
+      if (room <= 0) break;
+      const have = b.store[kind];
+      if (!(have > 0)) continue;
+      const take = Math.min(have, room);
+      b.store[kind] = have - take;
+      cart.load[kind] = (cart.load[kind] || 0) + take;
+      cart.loadTotal = (cart.loadTotal || 0) + take;
+      room -= take;
+      taken += take;
+    }
+    b.storeTotal = Math.max(0, (b.storeTotal || 0) - taken);
+    return taken;
+  }
+
+  /**
+   * Keep every camp's cart on the road.
+   *
+   * Called on a slow tick: carts are issued when a camp finishes, and a
+   * replacement is sent out some time after one is lost, so that cutting a
+   * supply line hurts for a while without ending the camp forever.
+   */
+  updateSupplyCarts(dt) {
+    const REPLACE_AFTER = 30;
+    for (let i = 0; i < this.buildings.length; i++) {
+      const b = this.buildings[i];
+      if (b.dead || b.def.stockpile === undefined || b.buildProgress < 0.99) continue;
+      if (b.cart && !b.cart.dead) {
+        /* Put a cart that has fallen idle back on its round. The cart has no
+           owner to re-task it, and a dozen different systems legitimately
+           set a unit IDLE -- the stall watchdog, `unstick`, a finished
+           player move order, leaving a garrison. Any one of them used to
+           retire the cart permanently: it kept its load, kept its phase, and
+           simply stood there while the camp filled to its cap. Restoring the
+           state here (and only from IDLE, so a player's own move order still
+           runs to completion) makes the round self-healing rather than
+           something that survives only while nothing touches it. */
+        const c = b.cart;
+        if (c.state === STATE.IDLE && !c.garrisoned) {
+          c.state = STATE.SUPPLY;
+          c.stallT = 0;
+          c.supplyT = 0;
+        }
+        continue;
+      }
+      if (!b.cartLostAt) { b.cartLostAt = this.time; continue; }
+      if (this.time - b.cartLostAt < REPLACE_AFTER) continue;
+      const cart = this.spawnSupplyCart(b);
+      if (cart && b.team === TEAM_PLAYER) this.notify(`${b.name}: a new supply cart has been sent out`, 'info');
+    }
   }
 
   onGather(unit, node, amount) {
@@ -2299,6 +2468,26 @@ export class Game {
 
   onBuildingKilled(building, attacker) {
     this.markBuildingFootprint(building, false);
+    /* The pile burns with the camp, and its cart has no road left to run.
+       Whatever the cart was already carrying is banked: it is on the road,
+       not in the fire. */
+    if (building.def.stockpile !== undefined) {
+      const cart = building.cart;
+      if (cart && !cart.dead) {
+        this.unloadSupplyCart(cart, true);
+        cart.kill();
+      }
+      const lost = Math.round(building.storeTotal || 0);
+      building.cart = null;
+      building.store = {};
+      building.storeTotal = 0;
+      /* Say so. Losing the camp costs the pile standing in it, and that is
+         the point of raiding one -- but an unannounced four hundred wood
+         going up in smoke reads as a bug rather than as a defeat. */
+      if (lost >= 20 && building.team === TEAM_PLAYER) {
+        this.notify(`${building.name}: ${lost} goods lost in the fire`, 'bad');
+      }
+    }
     /* Burn the ladder and the mountain closes behind it. This is the whole
        point of the structure being destructible: whoever is up there is up
        there, and whatever they were carrying down is not coming down. */
@@ -2335,6 +2524,7 @@ export class Game {
       }
       this.setClimbTier(building);
     }
+    if (building.def.stockpile !== undefined) this.spawnSupplyCart(building);
     if (this.modHost) this.modHost.onBuildingComplete(building);
     if (building.team === TEAM_PLAYER) {
       this.notify(`${building.name} complete`, 'good');
@@ -2720,6 +2910,10 @@ export class Game {
       this.compact();
     }
     if (this.popDirty || this.frame % 30 === 0) this.recomputePop();
+    /* Camps and their carts. A second between checks is far finer than the
+       thirty-second replacement it governs, and it keeps the scan off the
+       hot path. */
+    if (this.frame % 30 === 0) this.updateSupplyCarts(dt);
 
     // vision
     this.fowTimer -= dt;
