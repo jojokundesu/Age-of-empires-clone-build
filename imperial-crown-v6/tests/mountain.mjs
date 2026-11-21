@@ -279,6 +279,38 @@ check("animals are nobody's faction", () => {
   return `${wild.length} animals, no crown, no pop`;
 });
 
+/* The leash keeps the animals in place. This keeps them *quiet*: a leashed
+   animal that cannot reach what it wants will re-ask the pathfinder for a
+   route down a sealed ramp every tick, and a ridge of them turns into a
+   permanent A* tax nobody sees until the frame budget is gone. The spec
+   asked for leashed *and* not spamming failed queries; the check above only
+   proved the first half. */
+check('a leashed animal does not hammer the pathfinder at a sealed ramp', () => {
+  const r = crownEncounter({ escort: 0, seconds: 0 });
+  const g = r.game;
+  const pf = g.pathFinder;
+  const wildIds = new Set(g.units.filter((u) => u.team === TEAM_WILD && !u.dead).map((u) => u.id));
+  assert(wildIds.size > 0, 'no wildlife on this crown to measure');
+  const realFind = pf.find.bind(pf);
+  let calls = 0, failed = 0;
+  pf.find = (...args) => {
+    const out = realFind(...args);
+    calls++;
+    if (!out || !out.length) failed++;
+    return out;
+  };
+  const SECONDS = 30;
+  try { for (let i = 0; i < 30 * SECONDS; i++) g.update(1 / 30); }
+  finally { pf.find = realFind; }
+  /* Generous on purpose: this is a runaway detector, not a budget. One
+     failed query per animal every two seconds is already plenty of slack,
+     and a per-tick re-ask would be thirty times that. */
+  const ceiling = wildIds.size * SECONDS * 0.5;
+  assert(failed <= ceiling,
+    `${failed} failed path queries in ${SECONDS} s from ${wildIds.size} animals (ceiling ${Math.round(ceiling)})`);
+  return `${failed} failed of ${calls} queries, ${wildIds.size} animals over ${SECONDS} s`;
+});
+
 check('animals stay on their mountain', () => {
   const r = crownEncounter({ escort: 0, seconds: 0 });
   const g = r.game;
