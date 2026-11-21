@@ -1312,50 +1312,64 @@ U('trade_cart', () => {
  */
 U('supply_cart', () => {
   const g = new Geo();
+  /* The cart faces +Z: bed at the origin, shafts and ox ahead of it. Part
+     pivots only set a rotation centre -- the shader never translates a
+     part -- so every piece is placed at the position it is meant to
+     occupy. Putting the ox at the origin like a pivot offset would leave
+     it standing in the cart bed. */
   g.part_(PART.BODY, 0, 0.6, 0);
-  // flatbed
+  // bed and frame
   g.material(M.WOOD).color(0.58, 0.44, 0.29);
-  g.box(0, 0.72, 0, 1.3, 0.22, 2.2);
+  g.box(0, 0.78, -0.1, 1.24, 0.2, 1.9);
   g.material(M.WOOD_DARK).color(0.4, 0.3, 0.2);
-  g.box(0, 0.6, 0, 1.15, 0.18, 2.0);
-  // stake sides
+  g.box(0, 0.63, -0.1, 1.06, 0.16, 1.7);
+  // stake sides and tailboard
   g.material(M.WOOD).color(0.5, 0.38, 0.25);
-  for (const sx of [-0.62, 0.62]) {
-    for (const sz of [-0.85, 0.85]) g.box(sx, 1.0, sz, 0.1, 0.42, 0.1);
-    g.box(sx, 1.18, 0, 0.09, 0.09, 2.1);
+  for (const sx of [-0.58, 0.58]) {
+    for (const sz of [-0.8, 0.5]) g.box(sx, 1.03, sz, 0.09, 0.4, 0.09);
+    g.box(sx, 1.2, -0.1, 0.08, 0.08, 1.85);
   }
-  g.box(0, 1.0, -1.08, 1.25, 0.46, 0.1);
-  // the load: crates and sacks, stacked above the rails
-  crate(g, -0.3, -0.55, 0.83, 0.54);
-  crate(g, 0.32, -0.5, 0.83, 0.48);
+  g.box(0, 1.03, -1.0, 1.2, 0.42, 0.09);
+  // the load, stood proud of the rails so a cart reads as loaded at range
+  crate(g, -0.28, -0.55, 0.88, 0.52);
+  crate(g, 0.3, -0.5, 0.88, 0.46);
   g.material(M.THATCH).color(0.66, 0.58, 0.4);
-  g.sphere(0.26, 1.02, 0.62, 0.3, 6, 4);
-  g.sphere(-0.28, 1.0, 1.0, 0.26, 6, 4);
-  g.material(M.WOOD_DARK).color(0.36, 0.27, 0.18);
-  g.cyl(0.1, 1.08, -0.2, 0.14, 0.14, 1.0, 6, { axis: 'z' });
-  // wheels, one part each so they turn with the gait
+  g.sphere(0.24, 1.06, 0.22, 0.3, 6, 4);
+  g.sphere(-0.26, 1.02, 0.58, 0.26, 6, 4);
+  // shafts running forward to the yoke
+  g.material(M.WOOD_DARK).color(0.42, 0.32, 0.21);
+  for (const sx of [-0.42, 0.42]) g.box(sx, 0.86, 1.15, 0.08, 0.08, 1.3);
+  // wheels: a real disc on a left-right axle, not a pancake on the ground
   for (const sx of [-0.72, 0.72]) {
-    g.part_(sx > 0 ? PART.LEG_L : PART.LEG_R, sx, 0.5, 0);
+    g.part_(sx > 0 ? PART.LEG_L : PART.LEG_R, sx, 0.52, -0.3);
     g.material(M.WOOD).color(0.47, 0.35, 0.24);
-    g.cyl(sx, 0, 0, 0.5, 0.5, 0.14, 9, { rot: Math.PI / 2 });
+    g.cyl(sx, 0.52, -0.3, 0.52, 0.52, 0.14, 9, { axis: 'x' });
     g.material(M.IRON).color(0.32, 0.32, 0.34);
-    g.cyl(sx, 0, 0, 0.17, 0.17, 0.18, 6, { rot: Math.PI / 2 });
+    g.cyl(sx, 0.52, -0.3, 0.16, 0.16, 0.2, 6, { axis: 'x' });
   }
-  // team pennant on the forward stake
+  // team pennant on the tailboard corner -- the one tinted surface
   g.part_(PART.BODY, 0, 0.6, 0);
   g.material(M.WOOD_DARK).color(0.38, 0.29, 0.19);
-  g.cyl(-0.62, 1.2, 1.0, 0.05, 0.05, 0.95, 5);
+  g.cyl(-0.58, 1.2, -1.0, 0.05, 0.05, 0.9, 5);
   g.material(M.CLOTH).color(1, 1, 1);
-  g.box(-0.44, 1.92, 1.0, 0.36, 0.26, 0.04);
-  // ox in the traces
-  g.part_(PART.EXTRA, 0, 1.0, 1.6);
-  g.material(M.LEATHER).color(0.52, 0.42, 0.33);
-  g.box(0, 0.88, 0, 0.84, 0.86, 1.7);
-  g.sphere(0, 1.02, 1.02, 0.34, 7, 4);
+  g.box(-0.4, 1.86, -1.0, 0.34, 0.24, 0.04);
+  /* The ox, ahead of the shafts. M.SKIN is the hide material every animal
+     in the game uses and carries no team tint; M.LEATHER would, and a
+     lavender ox is what that looks like on a blue team. */
+  g.part_(PART.EXTRA, 0, 1.0, 1.9);
+  g.material(M.SKIN).color(0.44, 0.34, 0.25);
+  g.box(0, 0.95, 2.0, 0.72, 0.74, 1.3);
+  g.sphere(0, 0.95, 2.7, 0.3, 7, 4);
+  for (const [sx, sz] of [[-0.26, 2.42], [0.26, 2.42], [-0.26, 1.6], [0.26, 1.6]]) {
+    g.beam(sx, 0.66, sz, sx, 0.05, sz, 0.1);
+  }
+  g.material(M.BARK).color(0.3, 0.24, 0.17);
+  g.beam(-0.16, 1.1, 2.66, -0.34, 1.3, 2.56, 0.045);
+  g.beam(0.16, 1.1, 2.66, 0.34, 1.3, 2.56, 0.045);
   g.material(M.WOOD_DARK).color(0.35, 0.26, 0.18);
-  g.box(0, 1.34, 0.72, 0.9, 0.1, 0.1);
+  g.box(0, 1.32, 1.95, 0.86, 0.1, 0.1);
   g.color(1, 1, 1);
-  return { geo: g, height: 2.1, stride: 2.4 };
+  return { geo: g, height: 2.0, stride: 2.4 };
 });
 
 /* ---- siege ---- */
